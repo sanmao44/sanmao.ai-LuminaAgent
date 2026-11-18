@@ -7,7 +7,7 @@ import SelectMenu from "@/components/SelectMenu";
 import CangyuanMediaUploadField from "@/components/cangyuan/CangyuanMediaUploadField";
 import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from "@/components/cangyuan/CangyuanTripoQualityOptions";
 import ThreeDModelPreview from "@/components/ThreeDModelPreview";
-import { buildCanvasThreeDRequest, canvasThreeDPreviewUrl } from "@/lib/canvas/three-d-generation";
+import { buildCanvasThreeDRequest, canvasThreeDOutputDownload, canvasThreeDPreviewUrl, isCanvasThreeDModelOutput, isCanvasThreeDPreviewOutput } from "@/lib/canvas/three-d-generation";
 import {
   getCangyuan3DModelProfile,
   reconcileCangyuan3DMode,
@@ -77,10 +77,6 @@ function readError(payload: unknown, fallback: string) {
     if (typeof error === "string" && error.trim()) return error;
   }
   return fallback;
-}
-
-function isModelOutput(output: CangyuanMediaOutput) {
-  return output.artifactType === "glb" || output.artifactType === "fbx" || /\.(?:glb|fbx)(?:$|\?)/i.test(output.url || "");
 }
 
 export default function CanvasThreeDNodePanel({
@@ -357,10 +353,11 @@ export default function CanvasThreeDNodePanel({
           </div>
           {ACTIVE_STATUSES.has(task.status) && <div className={styles.taskProgress} role="progressbar" aria-label="三维模型生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuetext={taskStatusLabel(task.status)}><span /></div>}
           {task.error && <p className={styles.error} role="status">{task.error}</p>}
-          {task.outputs.filter(isModelOutput).map((output, index) => {
+          {task.outputs.filter(isCanvasThreeDModelOutput).map((output, index) => {
             const outputIndex = task.outputs.indexOf(output);
+            const download = canvasThreeDOutputDownload({ taskId: task.id, outputIndex, output });
             let previewUrl = "";
-            if (output.artifactType === "glb" || /\.glb(?:$|\?)/i.test(output.url || "")) {
+            if (isCanvasThreeDPreviewOutput(output)) {
               try { previewUrl = canvasThreeDPreviewUrl(task.id, outputIndex); } catch { previewUrl = ""; }
             }
             return (
@@ -368,12 +365,12 @@ export default function CanvasThreeDNodePanel({
                 {previewUrl && <ThreeDModelPreview url={previewUrl} label={output.name || `模型结果 ${index + 1}`} />}
                 <div className={styles.outputMeta}>
                   <div><strong>{output.name || output.title || `模型结果 ${index + 1}`}</strong><span>{output.artifactType?.toUpperCase() || "模型文件"}</span></div>
-                  {output.url && <a href={output.url} target="_blank" rel="noreferrer" download>{output.artifactType === "fbx" ? "下载 FBX" : "打开模型文件"}</a>}
+                  {output.url && <a href={download.href} target={download.targetBlank ? "_blank" : undefined} rel={download.targetBlank ? "noreferrer" : undefined} download>{download.label}</a>}
                 </div>
               </article>
             );
           })}
-          {!ACTIVE_STATUSES.has(task.status) && !task.outputs.some(isModelOutput) && !task.error && <p className={styles.hint}>任务已完成，但服务暂未返回可预览的模型文件。</p>}
+          {!ACTIVE_STATUSES.has(task.status) && !task.outputs.some(isCanvasThreeDModelOutput) && !task.error && <p className={styles.hint}>任务已完成，但服务暂未返回可预览的模型文件。</p>}
         </section>
       )}
     </section>

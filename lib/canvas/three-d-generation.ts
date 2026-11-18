@@ -3,6 +3,8 @@ import {
   reconcileCangyuan3DMode,
   validateCangyuan3DInput,
   type Cangyuan3DOptions,
+  type CangyuanMediaOutput,
+  type CangyuanMediaTaskStatus,
 } from "@/packages/contracts/cangyuan-media";
 
 export type CanvasThreeDRequest = {
@@ -45,6 +47,55 @@ export function canvasThreeDPreviewUrl(taskId: string, outputIndex: number) {
     throw new Error("模型任务或结果序号无效。");
   }
   return `/api/media/model-preview/${taskId}/${outputIndex}`;
+}
+
+export function isCanvasThreeDModelOutput(output: CangyuanMediaOutput) {
+  return output.artifactType === "glb" || output.artifactType === "fbx"
+    || /\.(?:glb|fbx)(?:$|[?#])/i.test(output.url || "");
+}
+
+export function isCanvasThreeDPreviewOutput(output: CangyuanMediaOutput) {
+  return output.artifactType === "glb" || /\.glb(?:$|[?#])/i.test(output.url || "");
+}
+
+export function canvasThreeDTaskNodeProjection(task: { status: CangyuanMediaTaskStatus; error?: string }) {
+  const terminal = task.status === "succeeded" || task.status === "failed" || task.status === "cancelled";
+  const status = task.status === "succeeded" ? "completed" as const
+    : task.status === "failed" || task.status === "cancelled" ? "failed" as const
+      : "running" as const;
+  return {
+    status,
+    visualStatus: task.status === "cancelled" ? "cancelled" as const : status,
+    statusLabel: task.status === "succeeded" ? "三维模型生成完成"
+      : task.status === "cancelled" ? "三维模型已取消"
+        : task.status === "failed" ? task.error || "三维模型生成失败"
+          : "三维模型生成中",
+    terminal,
+    progress: task.status === "succeeded" ? 100 : undefined,
+  };
+}
+
+export function canvasThreeDOutputDownload(input: {
+  taskId: string;
+  outputIndex: number;
+  output: CangyuanMediaOutput;
+}) {
+  const url = String(input.output.url || "");
+  const isGlb = isCanvasThreeDPreviewOutput(input.output);
+  const isFbx = input.output.artifactType === "fbx" || /\.fbx(?:$|[?#])/i.test(url);
+  let href = url;
+  if (isGlb) {
+    try {
+      href = canvasThreeDPreviewUrl(input.taskId, input.outputIndex);
+    } catch {
+      href = url;
+    }
+  }
+  return {
+    href,
+    label: isGlb ? "下载 GLB" : isFbx ? "下载 FBX" : "下载模型文件",
+    targetBlank: !isGlb,
+  };
 }
 
 function optionsForProfile(

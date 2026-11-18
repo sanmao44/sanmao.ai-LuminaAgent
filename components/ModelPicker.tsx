@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react';
 import type { ModelCapability, RegistryModel } from '@/lib/types';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import { getFavoriteModelIds, getRecentModelIds, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
@@ -80,6 +80,29 @@ export function resolveModelPickerTriggerValueLabel(input: {
     || input.fullLabel;
 }
 
+export function modelPickerKeyboardAction(key: string): 'previous' | 'next' | 'first' | 'last' | 'activate' | 'close' | null {
+  if (key === 'ArrowUp') return 'previous';
+  if (key === 'ArrowDown') return 'next';
+  if (key === 'Home') return 'first';
+  if (key === 'End') return 'last';
+  if (key === 'Enter' || key === ' ') return 'activate';
+  if (key === 'Escape') return 'close';
+  return null;
+}
+
+export function modelPickerKeyboardTarget(action: 'previous' | 'next' | 'first' | 'last', currentIndex: number, itemCount: number) {
+  if (itemCount < 1) return -1;
+  if (action === 'first') return 0;
+  if (action === 'last') return itemCount - 1;
+  if (action === 'next') return currentIndex < 0 ? 0 : (currentIndex + 1) % itemCount;
+  return currentIndex < 0 ? itemCount - 1 : (currentIndex - 1 + itemCount) % itemCount;
+}
+
+export function modelPickerKeyboardActivationTarget(activeChoice: string, visibleChoiceIds: readonly string[]) {
+  if (visibleChoiceIds.includes(activeChoice)) return activeChoice;
+  return visibleChoiceIds[0] || null;
+}
+
 function selectCloneAutomaticModel(models: RegistryModel[]) {
   const candidates = models.filter((model) => model.capabilities.includes('video-generate'));
   const score = (model: RegistryModel) => {
@@ -126,10 +149,16 @@ export default function ModelPicker({
   const [favorites, setFavorites] = useState<string[]>([]);
   const [recent, setRecent] = useState<string[]>([]);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>({ visibility: 'hidden' });
+  const [quickActiveChoice, setQuickActiveChoice] = useState('__auto__');
+  const [dialogActiveChoice, setDialogActiveChoice] = useState('__auto__');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const quickPanelRef = useRef<HTMLDivElement | null>(null);
+  const quickListRef = useRef<HTMLDivElement | null>(null);
+  const dialogListRef = useRef<HTMLDivElement | null>(null);
   const dialogSearchRef = useRef<HTMLInputElement | null>(null);
+  const quickPanelId = useId();
+  const dialogId = useId();
 
   // The quick picker is an anchored, scrollable popover. Locking the page for
   // it removes the viewport scrollbar and shifts fixed conversation chrome by
@@ -166,6 +195,19 @@ export default function ModelPicker({
     return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
   }, [availableModels]);
   const dialogModels = useMemo(() => availableModels.filter((model) => (dialogProviderId === 'all' || model.providerId === dialogProviderId) && modelPickerMatches(model, dialogQuery)), [availableModels, dialogProviderId, dialogQuery]);
+  const quickShowsAll = availableModels.length <= 8;
+  const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
+  const quickChoiceIds = useMemo(() => ['__auto__', ...(quickShowsAll ? quickModels : [
+    ...quickModelGroups.recommended,
+    ...quickModelGroups.recent,
+    ...quickModelGroups.favorites,
+  ]).map((model) => model.id)], [quickModelGroups, quickModels, quickShowsAll]);
+  const dialogChoiceIds = useMemo(() => [
+    ...(dialogProviderId === 'all' && !dialogQuery.trim() ? ['__auto__'] : []),
+    ...dialogModels.map((model) => model.id),
+  ], [dialogModels, dialogProviderId, dialogQuery]);
+  const effectiveQuickActiveChoice = quickChoiceIds.includes(quickActiveChoice) ? quickActiveChoice : quickChoiceIds.includes(value) ? value : quickChoiceIds[0];
+  const effectiveDialogActiveChoice = dialogChoiceIds.includes(dialogActiveChoice) ? dialogActiveChoice : dialogChoiceIds.includes(value) ? value : dialogChoiceIds[0];
 
   useEffect(() => {
     const sync = () => { setFavorites(getFavoriteModelIds()); setRecent(getRecentModelIds()); };
@@ -204,9 +246,9 @@ export default function ModelPicker({
 
   useEffect(() => {
     if (!quickOpen && !dialogOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (dialogOpen) setDialogOpen(false); else setQuickOpen(false);
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (modelPickerKeyboardAction(event.key) !== 'close') return;
+      if (dialogOpen) closeDialog(); else closeQuick();
     };
     const closeQuickOnOutsidePointer = (event: PointerEvent) => {
       if (!quickOpen) return;
@@ -222,6 +264,63 @@ export default function ModelPicker({
     };
   }, [dialogOpen, quickOpen]);
 
+  useEffect(() => {
+    if (!quickOpen) return;
+    requestAnimationFrame(() => quickListRef.current?.querySelector<HTMLElement>('[data-model-picker-choice="__auto__"]')?.focus());
+  }, [quickOpen]);
+
+  function focusChoiceInList(event: ReactKeyboardEvent<HTMLDivElement>, listRef: RefObject<HTMLDivElement | null>) {
+    const action = modelPickerKeyboardAction(event.key);
+    if (action !== 'next' && action !== 'previous' && action !== 'first' && action !== 'last') return;
+    const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>('[data-model-picker-choice]') : null;
+    if (!target || target.matches('[data-model-picker-favorite]')) return;
+    const choices = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-model-picker-choice]') || [])];
+    const currentIndex = choices.indexOf(target);
+    if (currentIndex < 0) return;
+    event.preventDefault();
+    const next = choices[modelPickerKeyboardTarget(action, currentIndex, choices.length)];
+    if (next) {
+      if (listRef === quickListRef) setQuickActiveChoice(next.dataset.modelPickerChoice || '__auto__');
+      else setDialogActiveChoice(next.dataset.modelPickerChoice || '__auto__');
+      next.focus();
+    }
+  }
+
+  function restoreTriggerFocus() {
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  function closeQuick() {
+    setQuickOpen(false);
+    restoreTriggerFocus();
+  }
+
+  function closeDialog() {
+    setDialogOpen(false);
+    restoreTriggerFocus();
+  }
+
+  function trapDialogTab(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Tab') return;
+    const dialog = event.currentTarget;
+    const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      .filter((element) => element.tabIndex >= 0 && element.offsetParent !== null);
+    if (!focusable.length) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   function toggleQuick() {
     setDialogOpen(false);
     setQuickOpen((current) => {
@@ -235,6 +334,7 @@ export default function ModelPicker({
     setQuickOpen(false);
     setDialogQuery(initialQuery);
     setDialogProviderId('all');
+    setDialogActiveChoice('__auto__');
     setDialogOpen(true);
   }
 
@@ -243,15 +343,17 @@ export default function ModelPicker({
     setQuickOpen(false);
     setDialogOpen(false);
     setDialogQuery('');
+    restoreTriggerFocus();
   }
 
   function toggleFavorite(modelId: string) {
     setModelFavorite(modelId, !favorites.includes(modelId));
   }
 
-  function renderModel(model: RegistryModel) {
+  function renderModel(model: RegistryModel, scope: 'quick' | 'dialog') {
     const isFavorite = favorites.includes(model.id);
     const isSelected = model.id === value;
+    const activeChoice = scope === 'quick' ? effectiveQuickActiveChoice : effectiveDialogActiveChoice;
     const modelHealth = healthByModel.get(model.id);
     const healthLabel = modelHealth?.state === 'cooldown'
       ? '暂时跳过'
@@ -260,23 +362,24 @@ export default function ModelPicker({
         : modelHealth?.lastLatencyMs
           ? `${Math.round(modelHealth.lastLatencyMs / 100) / 10}s`
           : '';
-    return <div className={`model-picker-option ${isSelected ? 'selected' : ''}`} key={model.id}>
-      <button type="button" className="model-picker-option-main" onClick={() => choose(model.id)} role="option" aria-selected={isSelected}>
+    return <div className={`model-picker-option ${isSelected ? 'selected' : ''}`} key={model.id} role={scope === 'dialog' ? 'listitem' : 'group'}>
+      <button type="button" className="model-picker-option-main" onClick={() => choose(model.id)} aria-pressed={isSelected} data-model-picker-choice={model.id} tabIndex={activeChoice === model.id ? 0 : -1} onFocus={() => scope === 'quick' ? setQuickActiveChoice(model.id) : setDialogActiveChoice(model.id)}>
         <span className="model-picker-option-copy"><strong>{model.displayName}</strong><small>{model.providerName} · {model.rawId}</small><span className="model-picker-capabilities">{model.capabilities.filter((item) => modelCapabilityLabel(item)).slice(0, 4).map((item) => <em className={capabilityClasses[item] || ''} key={item}>{modelCapabilityLabel(item)}</em>)}{healthLabel && <em className={`model-picker-health ${modelHealth?.state || ''}`}>{healthLabel}</em>}</span></span>
         {isSelected && <b className="model-picker-check">✓</b>}
       </button>
-      <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `取消收藏 ${model.displayName}` : `收藏 ${model.displayName}`} onClick={() => toggleFavorite(model.id)}>★</button>
+      <button type="button" className={`model-picker-favorite ${isFavorite ? 'active' : ''}`} aria-label={isFavorite ? `取消收藏 ${model.displayName}` : `收藏 ${model.displayName}`} aria-pressed={isFavorite} data-model-picker-favorite onClick={() => toggleFavorite(model.id)}>★</button>
     </div>;
   }
 
-  function renderAutoChoice() {
+  function renderAutoChoice(scope: 'quick' | 'dialog') {
+    const activeChoice = scope === 'quick' ? effectiveQuickActiveChoice : effectiveDialogActiveChoice;
     const autoHealth = autoModel ? healthByModel.get(autoModel.id) : undefined;
     const autoHealthHint = autoHealth?.state === 'cooldown'
       ? '当前推荐暂时不可用，自动模式会跳过并尝试其他模型'
       : autoHealth?.consecutiveFailures
         ? `最近 ${autoHealth.consecutiveFailures} 次失败，自动模式会优先尝试其他模型`
         : '';
-    return <button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')}>
+    return <button type="button" className={`model-picker-auto ${value === 'auto' ? 'selected' : ''}`} onClick={() => choose('auto')} aria-pressed={value === 'auto'} data-model-picker-choice="__auto__" tabIndex={activeChoice === '__auto__' ? 0 : -1} onFocus={() => scope === 'quick' ? setQuickActiveChoice('__auto__') : setDialogActiveChoice('__auto__')}>
       <span><strong>{automaticMode === 'clone' ? '自动选择（克隆策略）' : '自动选择'}</strong><small>{autoHealthHint || automaticHint || (defaultProviderName ? `默认厂商：${defaultProviderName}` : '使用默认厂商，失败时自动回退')}{autoModel ? ` · 当前推荐 ${autoModel.displayName}` : ''}</small></span>
       {value === 'auto' && <b className="model-picker-check">✓</b>}
     </button>;
@@ -308,9 +411,6 @@ export default function ModelPicker({
     automaticModelLabel: autoModel?.displayName,
   });
   const triggerAccessibleLabel = triggerLabelMode === 'model' ? triggerValueLabel : triggerLabel;
-  const quickShowsAll = availableModels.length <= 8;
-  const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
-
   const fullDialog = dialogOpen && typeof document !== 'undefined' ? createPortal(
     <div
       className="model-picker-dialog-backdrop"
@@ -324,18 +424,35 @@ export default function ModelPicker({
       onClick={(event) => event.stopPropagation()}
       onMouseDown={(event) => {
         event.stopPropagation();
-        if (event.currentTarget === event.target) setDialogOpen(false);
+        if (event.currentTarget === event.target) closeDialog();
       }}
     >
-      <section className="model-picker-dialog" role="dialog" aria-modal="true" aria-label="浏览全部模型">
-        <div className="model-picker-dialog-head"><div><strong>浏览全部模型</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" className="model-picker-dialog-close" onClick={() => setDialogOpen(false)} aria-label="关闭">×</button></div>
-        <label className="model-picker-dialog-search"><span>⌕</span><input ref={dialogSearchRef} value={dialogQuery} onChange={(event) => setDialogQuery(event.target.value)} placeholder="搜索模型、原始 ID 或服务商…"/><kbd>Esc</kbd>{dialogQuery && <button type="button" aria-label="清空搜索" onClick={() => setDialogQuery('')}>×</button>}</label>
+      <section id={dialogId} className="model-picker-dialog" role="dialog" aria-modal="true" aria-labelledby={`${dialogId}-title`} tabIndex={-1} onKeyDown={trapDialogTab}>
+        <div className="model-picker-dialog-head"><div><strong id={`${dialogId}-title`}>浏览全部模型</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" className="model-picker-dialog-close" onClick={closeDialog} aria-label="关闭模型选择">×</button></div>
+        <label className="model-picker-dialog-search"><span>⌕</span><input ref={dialogSearchRef} value={dialogQuery} onChange={(event) => setDialogQuery(event.target.value)} placeholder="搜索模型、原始 ID 或服务商…" aria-label="搜索模型" onKeyDown={(event) => {
+          const action = modelPickerKeyboardAction(event.key);
+          if (action === 'next' || action === 'previous') {
+            const choices = dialogListRef.current?.querySelectorAll<HTMLElement>('[data-model-picker-choice]');
+            if (!choices?.length) return;
+            event.preventDefault();
+            const preferredId = dialogChoiceIds.includes(effectiveDialogActiveChoice) ? effectiveDialogActiveChoice : dialogChoiceIds[0];
+            const preferred = action === 'previous'
+              ? choices[choices.length - 1]
+              : [...choices].find((choice) => choice.dataset.modelPickerChoice === preferredId) || choices[0];
+            preferred?.focus();
+          } else if (action === 'activate') {
+            const target = modelPickerKeyboardActivationTarget(effectiveDialogActiveChoice, dialogChoiceIds);
+            if (target) { event.preventDefault(); choose(target); }
+          }
+        }}/><kbd>Esc</kbd>{dialogQuery && <button type="button" aria-label="清空搜索" onClick={() => setDialogQuery('')}>×</button>}</label>
         <div className="model-picker-dialog-body">
-          <aside className="model-picker-provider-filter" aria-label="按服务商筛选"><button type="button" className={dialogProviderId === 'all' ? 'active' : ''} onClick={() => setDialogProviderId('all')}><span>全部模型</span><b>{availableModels.length}</b></button>{providerOptions.map((provider) => <button type="button" className={dialogProviderId === provider.id ? 'active' : ''} key={provider.id} onClick={() => setDialogProviderId(provider.id)}><span>{provider.name}</span><b>{provider.count}</b></button>)}</aside>
+          <aside className="model-picker-provider-filter" aria-label="按服务商筛选"><button type="button" className={dialogProviderId === 'all' ? 'active' : ''} aria-pressed={dialogProviderId === 'all'} onClick={() => setDialogProviderId('all')}><span>全部模型</span><b>{availableModels.length}</b></button>{providerOptions.map((provider) => <button type="button" className={dialogProviderId === provider.id ? 'active' : ''} aria-pressed={dialogProviderId === provider.id} key={provider.id} onClick={() => setDialogProviderId(provider.id)}><span>{provider.name}</span><b>{provider.count}</b></button>)}</aside>
           <main className="model-picker-dialog-main">
-            {dialogProviderId === 'all' && !dialogQuery.trim() && <section className="model-picker-dialog-auto"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}</section>}
             <div className="model-picker-dialog-summary"><strong>{dialogModels.length} 个匹配模型</strong><span>{dialogQuery.trim() ? `搜索“${dialogQuery.trim()}”` : dialogProviderId === 'all' ? '全部服务商' : providerOptions.find((provider) => provider.id === dialogProviderId)?.name}</span></div>
-            <div className="model-picker-dialog-list" role="listbox" aria-label="模型列表">{dialogModels.map(renderModel)}</div>
+            <div ref={dialogListRef} className="model-picker-dialog-list" role="list" aria-label="模型列表" onKeyDown={(event) => focusChoiceInList(event, dialogListRef)}>
+              {dialogProviderId === 'all' && !dialogQuery.trim() && <div className="model-picker-dialog-auto" role="listitem"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice('dialog')}</div>}
+              {dialogModels.map((model) => renderModel(model, 'dialog'))}
+            </div>
             {!dialogModels.length && <div className="model-picker-empty">没有找到支持“{capabilityLabel || '当前任务'}”的模型</div>}
           </main>
         </div>
@@ -347,6 +464,7 @@ export default function ModelPicker({
   const quickPanel = quickOpen && typeof document !== 'undefined' ? createPortal(
     <div
       ref={quickPanelRef}
+      id={quickPanelId}
       className="model-picker-panel model-picker-quick-panel"
       style={{ ...menuStyle, zIndex: portalZIndex }}
       role="dialog"
@@ -358,13 +476,15 @@ export default function ModelPicker({
       onWheel={(event) => event.stopPropagation()}
       onClick={(event) => event.stopPropagation()}
     >
-      <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={() => setQuickOpen(false)} aria-label="关闭">×</button></div>
+      <div className="model-picker-panel-head"><div><strong>快速选择</strong><small>{capabilityLabel || '当前能力'} · {availableModels.length} 个可用模型</small></div><button type="button" onClick={closeQuick} aria-label="关闭模型选择">×</button></div>
       <div className="model-picker-scroll">
-        <section className="model-picker-section model-picker-auto-section"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice()}{!quickShowsAll && quickModelGroups.recommended.map(renderModel)}</section>
-        {quickShowsAll ? <section className="model-picker-section"><div className="model-picker-section-title"><span>全部模型</span><small>{quickModels.length} 个模型</small></div>{quickModels.map(renderModel)}</section> : <>
-          {quickModelGroups.recent.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>最近调用</span><small>{quickModelGroups.recent.length} 个常用模型</small></div>{quickModelGroups.recent.map(renderModel)}</section>}
-          {quickModelGroups.favorites.length > 0 && <section className="model-picker-section"><div className="model-picker-section-title"><span>收藏模型</span><small>{quickModelGroups.favorites.length} 个常用模型</small></div>{quickModelGroups.favorites.map(renderModel)}</section>}
+        <div ref={quickListRef} role="group" aria-label="快速选择模型" onKeyDown={(event) => focusChoiceInList(event, quickListRef)}>
+        <section className="model-picker-section model-picker-auto-section" aria-label="推荐模型"><div className="model-picker-section-title"><span>推荐模型</span><small>普通情况下使用自动</small></div>{renderAutoChoice('quick')}{!quickShowsAll && quickModelGroups.recommended.map((model) => renderModel(model, 'quick'))}</section>
+        {quickShowsAll ? <section className="model-picker-section" aria-label="全部模型"><div className="model-picker-section-title"><span>全部模型</span><small>{quickModels.length} 个模型</small></div>{quickModels.map((model) => renderModel(model, 'quick'))}</section> : <>
+          {quickModelGroups.recent.length > 0 && <section className="model-picker-section" aria-label="最近调用"><div className="model-picker-section-title"><span>最近调用</span><small>{quickModelGroups.recent.length} 个常用模型</small></div>{quickModelGroups.recent.map((model) => renderModel(model, 'quick'))}</section>}
+          {quickModelGroups.favorites.length > 0 && <section className="model-picker-section" aria-label="收藏模型"><div className="model-picker-section-title"><span>收藏模型</span><small>{quickModelGroups.favorites.length} 个常用模型</small></div>{quickModelGroups.favorites.map((model) => renderModel(model, 'quick'))}</section>}
         </>}
+        </div>
         <button type="button" className="model-picker-browse-all" onClick={() => openDialog()}>浏览全部 {availableModels.length} 个模型 <span>→</span></button>
       </div>
     </div>,
@@ -372,7 +492,7 @@ export default function ModelPicker({
   ) : null;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerAccessibleLabel} data-tooltip={triggerAccessibleLabel} disabled={disabled}>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-controls={dialogOpen ? dialogId : quickOpen ? quickPanelId : undefined} aria-label={triggerAccessibleLabel} data-tooltip={triggerAccessibleLabel} disabled={disabled}>
       <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerValueLabel}</span></span><i aria-hidden="true"/>
     </button>
     {quickPanel}

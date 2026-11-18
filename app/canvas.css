@@ -455,6 +455,7 @@ html[data-theme="dark"] .canvas-workspace{
 .canvas-node[data-node-kind="upscale"]{--node-color:var(--canvas-node-upscale);--node-text:var(--canvas-node-upscale-text);--node-soft:color-mix(in srgb,var(--canvas-node-upscale) 14%,transparent);--node-effective:var(--canvas-node-upscale)}
 .canvas-minimap-node.type-upscale{--node-color:var(--canvas-node-upscale);--node-text:var(--canvas-node-upscale-text);--node-soft:color-mix(in srgb,var(--canvas-node-upscale) 14%,transparent);--node-effective:var(--canvas-node-upscale)}
 .canvas-node.status-failed,.canvas-minimap-node.status-failed{--node-effective:var(--danger)}
+.canvas-node.status-cancelled,.canvas-minimap-node.status-cancelled{--node-effective:var(--node-color)}
 .canvas-node.status-queued,.canvas-minimap-node.status-queued{--node-effective:var(--canvas-node-queued)}
 .canvas-node.status-running,.canvas-minimap-node.status-running{--node-effective:var(--canvas-node-running)}
 .canvas-media-card.three-d .canvas-media-stage{background:color-mix(in srgb,var(--canvas-node-three-d) 10%,var(--panel-2))}

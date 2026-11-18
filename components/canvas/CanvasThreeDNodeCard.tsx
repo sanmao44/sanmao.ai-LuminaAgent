@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import ThreeDModelPreview from "@/components/ThreeDModelPreview";
 import { observeCanvasThreeDPreview } from "@/components/canvas/three-d-preview-visibility";
 import type { CanvasNode } from "@/lib/canvas/types";
-import { canvasThreeDPreviewUrl } from "@/lib/canvas/three-d-generation";
+import { canvasThreeDPreviewUrl, isCanvasThreeDPreviewOutput } from "@/lib/canvas/three-d-generation";
 import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
 
 export default function CanvasThreeDNodeCard({
@@ -25,10 +25,11 @@ export default function CanvasThreeDNodeCard({
   onRenamingChange?: (editing: boolean) => void;
 }) {
   const task = node.data.threeDTask;
-  const output = task?.outputs.find((item) => item.artifactType === "glb" || /\.glb(?:$|\?)/i.test(item.url || ""));
+  const output = task?.outputs.find(isCanvasThreeDPreviewOutput);
   const outputIndex = output ? task?.outputs.indexOf(output) ?? -1 : -1;
   const previewUrl = task && outputIndex >= 0 ? canvasThreeDPreviewUrl(task.id, outputIndex) : "";
-  const status = pending ? processingLabel : failed ? "生成失败" : task?.status === "succeeded" ? "三维模型结果" : "等待配置";
+  const cancelled = task?.status === "cancelled";
+  const status = pending ? processingLabel : failed ? "生成失败" : cancelled ? "已取消" : task?.status === "succeeded" ? "三维模型结果" : "等待配置";
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [nearViewport, setNearViewport] = useState(false);
 
@@ -49,6 +50,8 @@ export default function CanvasThreeDNodeCard({
           <div className="canvas-media-state pending"><span className="canvas-three-d-glyph" aria-hidden="true">◇</span><b>{processingLabel}</b><small>任务完成后会在此显示模型预览</small></div>
         ) : failed ? (
           <div className="canvas-media-state failed"><span>!</span><b>生成失败</b><small>{node.data.statusLabel || task?.error || "请打开面板重试"}</small></div>
+        ) : cancelled && !previewUrl ? (
+          <div className="canvas-media-state cancelled"><span aria-hidden="true">Ⅱ</span><b>生成已取消</b><small>可调整参数后重新生成</small></div>
         ) : previewUrl && nearViewport ? (
           <ThreeDModelPreview url={previewUrl} label={output?.name || "三维模型"} />
         ) : previewUrl ? (

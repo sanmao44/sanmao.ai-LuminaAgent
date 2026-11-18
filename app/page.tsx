@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import ModelLibraryProviderPicker from '@/components/ModelLibraryProviderPicker';
+import { modelLibraryEmptyStateCopy } from '@/components/model-library-empty-state';
 import UpdateNotice from '@/components/UpdateNotice';
 import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
@@ -2809,6 +2810,7 @@ export default function Page() {
         state.models,
         state.providers
     ]);
+    const modelLibraryEmptyState = modelLibraryEmptyStateCopy({ modelCount: state.models.length, providerCount: state.providers.length });
     const availableChatModels = useMemo(()=>activeProviderModels.filter((m)=>!isInternalIntentModel(m) && m.enabled && m.published && m.kind === 'chat' && !m.capabilities.includes('generate') && !m.capabilities.includes('upscale')), [
         activeProviderModels
     ]);
@@ -12696,15 +12698,15 @@ export default function Page() {
                                                 })
                                             }),
                                             /*#__PURE__*/ _jsx("h2", {
-                                                 children: state.models.length ? "还没有加入模型库的模型" : "还没有读取模型"
+                                                 children: modelLibraryEmptyState.title
                                             }),
                                             /*#__PURE__*/ _jsx("p", {
-                                                 children: state.models.length ? "请先在接口服务中勾选要加入模型库的服务商。" : "先添加接口服务，再读取它提供的模型列表。"
+                                                 children: modelLibraryEmptyState.description
                                             }),
                                             /*#__PURE__*/ _jsx("button", {
                                                 className: "primary-action compact",
                                                 onClick: ()=>setSection('providers'),
-                                                children: "去添加接口服务"
+                                                children: modelLibraryEmptyState.actionLabel
                                             })
                                         ]
                                     }) : /*#__PURE__*/ _jsxs(_Fragment, {
