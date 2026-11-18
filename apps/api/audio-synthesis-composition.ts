@@ -21,6 +21,17 @@ const audioSynthesisPort: AudioSynthesisPort = {
         ...(input.voice ? { voice: input.voice } : {}),
         ...(input.format ? { format: input.format } : {}),
         ...(input.speed !== undefined ? { speed: input.speed } : {}),
+        ...(input.applyTextNormalization ? { applyTextNormalization: input.applyTextNormalization } : {}),
+        ...(input.engine ? { engine: input.engine } : {}),
+        ...(input.languageCode ? { languageCode: input.languageCode } : {}),
+        ...(input.language ? { language: input.language } : {}),
+        ...(input.seed !== undefined ? { seed: input.seed } : {}),
+        ...(input.similarityBoost !== undefined ? { similarityBoost: input.similarityBoost } : {}),
+        ...(input.stability !== undefined ? { stability: input.stability } : {}),
+        ...(input.voiceId ? { voiceId: input.voiceId } : {}),
+        ...(input.emotion ? { emotion: input.emotion } : {}),
+        ...(input.instruct ? { instruct: input.instruct } : {}),
+        ...(input.dialogue?.length ? { dialogue: input.dialogue } : {}),
         signal,
       });
       return {

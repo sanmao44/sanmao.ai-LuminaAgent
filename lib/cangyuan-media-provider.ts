@@ -38,6 +38,7 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt?: strin
     ...(normalized.sourceAudioId ? { source_audio_id: normalized.sourceAudioId } : {}),
     ...(normalized.sourceTrack !== undefined ? { source_track: normalized.sourceTrack } : {}),
     ...(normalized.instrumental !== undefined ? { instrumental: normalized.instrumental } : {}),
+    ...(normalized.force_instrumental !== undefined ? { force_instrumental: normalized.force_instrumental } : {}),
     ...('title' in normalized && normalized.title !== undefined ? { title: normalized.title } : {}),
     ...('lyrics' in normalized && normalized.lyrics !== undefined ? { lyrics: normalized.lyrics } : {}),
     ...('style_text' in normalized && normalized.style_text !== undefined ? { style_text: normalized.style_text } : {}),
@@ -45,6 +46,7 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt?: strin
     ...('seed' in normalized && normalized.seed !== undefined ? { seed: normalized.seed } : {}),
     ...('bpm' in normalized && normalized.bpm !== undefined ? { bpm: normalized.bpm } : {}),
     ...('audio_format' in normalized && normalized.audio_format !== undefined ? { audio_format: normalized.audio_format } : {}),
+    ...('output_format' in normalized && normalized.output_format !== undefined ? { output_format: normalized.output_format } : {}),
     ...('audioWeight' in normalized && normalized.audioWeight !== undefined ? { audioWeight: normalized.audioWeight } : {}),
     ...('negativeTags' in normalized && normalized.negativeTags !== undefined ? { negativeTags: normalized.negativeTags } : {}),
     ...('personaId' in normalized && normalized.personaId !== undefined ? { personaId: normalized.personaId } : {}),
@@ -61,6 +63,8 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt?: strin
     ...('sound_key' in normalized && normalized.sound_key !== undefined ? { sound_key: normalized.sound_key } : {}),
     ...('sound_loop' in normalized && normalized.sound_loop !== undefined ? { sound_loop: normalized.sound_loop } : {}),
     ...('sound_tempo' in normalized && normalized.sound_tempo !== undefined ? { sound_tempo: normalized.sound_tempo } : {}),
+    ...('loop' in normalized && normalized.loop !== undefined ? { loop: normalized.loop } : {}),
+    ...('prompt_influence' in normalized && normalized.prompt_influence !== undefined ? { prompt_influence: normalized.prompt_influence } : {}),
   };
 }
 

@@ -1,5 +1,6 @@
 import { CANGYUAN_VIDEO_MODEL_CATALOG } from './cangyuan-video-model-catalog.generated';
 import type { CangyuanVideoModelCatalogEntry, CangyuanVideoModelSpec, CangyuanVideoParameterSpec } from '@/packages/contracts/video-generation';
+import { speechVoiceLabel } from '@/packages/contracts/audio-synthesis';
 
 const catalog = CANGYUAN_VIDEO_MODEL_CATALOG as readonly CangyuanVideoModelCatalogEntry[];
 const byModel = new Map(catalog.map((entry) => [entry.publicModel, entry]));
@@ -58,6 +59,15 @@ const PARAMETER_HELP: Readonly<Record<string, string>> = Object.freeze({
 type VideoParameterOption = { value: string; label: string };
 
 const PARAMETER_OPTIONS: Readonly<Record<string, readonly VideoParameterOption[]>> = {
+  aspect_ratio: [
+    { value: 'auto', label: '自动' },
+    { value: 'adaptive', label: '自适应' },
+    { value: '16:9', label: '16:9（横屏）' },
+    { value: '9:16', label: '9:16（竖屏）' },
+    { value: '1:1', label: '1:1（正方形）' },
+    { value: '4:3', label: '4:3（横屏）' },
+    { value: '3:4', label: '3:4（竖屏）' },
+  ],
   camera_movement: [
     { value: 'pan_left', label: '向左摇镜' },
     { value: 'zoom_in', label: '向前推进' },
@@ -66,6 +76,13 @@ const PARAMETER_OPTIONS: Readonly<Record<string, readonly VideoParameterOption[]
     { value: 'static', label: '固定机位' },
   ],
   language: [{ value: 'zh', label: '中文' }, { value: 'en', label: '英文' }],
+  resolution: [
+    { value: '480p', label: '480p（标清）' },
+    { value: '720p', label: '720p（高清）' },
+    { value: '1080p', label: '1080p（全高清）' },
+    { value: '2k', label: '2K（超高清）' },
+    { value: '4k', label: '4K（超高清）' },
+  ],
   skill_preset: [
     { value: 'occlusion_wipe', label: '遮挡转场' },
     { value: 'micro_drama_hook', label: '短剧悬念' },
@@ -82,18 +99,8 @@ const PARAMETER_OPTIONS: Readonly<Record<string, readonly VideoParameterOption[]
     { value: 'ecommerce_ugc', label: '电商生活实拍' },
     { value: 'none', label: '不使用内置画风' },
   ],
-  voices: [
-    { value: 'alloy', label: '清亮女声一' },
-    { value: 'aria', label: '清亮女声二' },
-    { value: 'coral', label: '清亮女声三' },
-    { value: 'nova', label: '温暖女声一' },
-    { value: 'shimmer', label: '温暖女声二' },
-    { value: 'sage', label: '温暖女声三' },
-    { value: 'echo', label: '沉稳男声一' },
-    { value: 'helio', label: '沉稳男声二' },
-    { value: 'onyx', label: '沉稳男声三' },
-    { value: 'fable', label: '叙事男声' },
-  ],
+  voices: ['alloy', 'aria', 'coral', 'nova', 'shimmer', 'sage', 'echo', 'helio', 'onyx', 'fable']
+    .map((value) => ({ value, label: speechVoiceLabel(value, 'mu1-muse-tts') })),
 };
 
 const UI_HANDLED_PARAMETERS = new Set([
@@ -119,7 +126,10 @@ export function getCangyuanVideoParameter(spec: CangyuanVideoModelSpec, name: st
 
 export function getCangyuanVideoAdvancedParameters(spec: CangyuanVideoModelSpec): CangyuanVideoParameterSpec[] {
   return spec.params.filter((parameter) => {
-    if (parameter.name === 'generate_audio' && parameter.type !== 'boolean') return true;
+    // Some upstream catalog entries expose generate_audio as an untyped string
+    // without an enum. The dedicated video editor owns the documented boolean
+    // control, so never turn this unresolved field into a free-text control.
+    if (parameter.name === 'generate_audio' && parameter.type !== 'boolean') return false;
     return !UI_HANDLED_PARAMETERS.has(parameter.name) && parameter.name !== 'generate_audio';
   });
 }
@@ -133,8 +143,9 @@ export function cangyuanVideoParameterLabelByName(name: string): string {
 }
 
 export function cangyuanVideoParameterValueLabel(name: string, value: string): string {
-  return PARAMETER_OPTIONS[name]?.find((option) => option.value === value)?.label
-    || (name === 'mode' ? ({ edit: '编辑视频', extend: '续写视频' } as Record<string, string>)[value] : undefined)
+  const normalizedValue = value.toLowerCase();
+  return PARAMETER_OPTIONS[name]?.find((option) => option.value.toLowerCase() === normalizedValue)?.label
+    || (name === 'mode' ? ({ edit: '编辑视频', extend: '续写视频' } as Record<string, string>)[normalizedValue] : undefined)
     || value;
 }
 

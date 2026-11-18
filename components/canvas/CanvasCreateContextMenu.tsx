@@ -50,6 +50,11 @@ export default function CanvasCreateContextMenu({
             <span className="canvas-menu-copy"><b>音频节点</b><small>导入后连接到视频作为参考音频</small></span>
             <span className="canvas-menu-arrow" aria-hidden="true">›</span>
           </button>
+          <button type="button" className="canvas-menu-item canvas-menu-item-three-d" onClick={create("threeD")}>
+            <span className="canvas-menu-icon" aria-hidden="true">◇</span>
+            <span className="canvas-menu-copy"><b>三维模型节点</b><small>配置模型、上传参考并预览 GLB</small></span>
+            <span className="canvas-menu-arrow" aria-hidden="true">›</span>
+          </button>
           <button type="button" className="canvas-menu-item canvas-menu-item-video-editor" onClick={create("videoEditor")}>
             <span className="canvas-menu-icon" aria-hidden="true">✂</span>
             <span className="canvas-menu-copy"><b>视频编辑节点</b><small>多轨剪辑、裁剪、分割和字幕</small></span>

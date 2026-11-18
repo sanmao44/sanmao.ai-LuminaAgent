@@ -1,5 +1,6 @@
 import type { PublicState, RegistryModel } from "../types";
 import type { ImageModelParameters, ImageOutputFormat } from "@/packages/contracts/creative";
+import { parseVideoModelParameterValues, type VideoModelParameterValues } from "@/packages/contracts/video-generation";
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
@@ -56,7 +57,7 @@ export type ImageCreationSettings = Omit<ImageModelParameters, "resolution"> & {
 };
 
 export function imageModelParametersFromSettings(settings: ImageCreationSettings): ImageModelParameters {
-  return {
+  const parameters: ImageModelParameters = {
     resolution: settings.resolution,
     tier: settings.tier,
     series: settings.series,
@@ -90,6 +91,10 @@ export function imageModelParametersFromSettings(settings: ImageCreationSettings
     styleWeight: settings.styleWeight,
     weird: settings.weird,
   };
+  for (const key of Object.keys(parameters) as Array<keyof ImageModelParameters>) {
+    if (parameters[key] === undefined) delete parameters[key];
+  }
+  return parameters;
 }
 
 export type VideoCreationSettings = {
@@ -105,6 +110,7 @@ export type VideoCreationSettings = {
   agnesHeight: number;
   agnesNumFrames: number;
   agnesFrameRate: number;
+  modelParameters: VideoModelParameterValues;
 };
 
 export type AgentCreationSettings = {
@@ -306,6 +312,7 @@ export function defaultVideoCreationSettings(
     agnesHeight: AGNES_V20_DEFAULT_PARAMS.height,
     agnesNumFrames: AGNES_V20_DEFAULT_PARAMS.numFrames,
     agnesFrameRate: AGNES_V20_DEFAULT_PARAMS.frameRate,
+    modelParameters: {},
   };
 }
 
@@ -608,6 +615,12 @@ export function normalizeVideoCreationSettings(
     const clamped = Math.max(1, Math.min(441, Math.round(parsed)));
     return Math.max(1, Math.min(441, Math.round((clamped - 1) / 8) * 8 + 1));
   };
+  let modelParameters: VideoModelParameterValues = {};
+  try {
+    modelParameters = parseVideoModelParameterValues(raw.modelParameters);
+  } catch {
+    modelParameters = {};
+  }
   return {
     kind: "video",
     model: availableModel(runtime, "video", raw.model || raw.modelId),
@@ -631,6 +644,7 @@ export function normalizeVideoCreationSettings(
       60,
       fallback.agnesFrameRate,
     ),
+    modelParameters,
   };
 }
 

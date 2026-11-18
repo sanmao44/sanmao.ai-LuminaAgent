@@ -2,6 +2,7 @@ import type { CanvasDocument, CanvasNode } from "./types";
 
 export const CANVAS_NODE_COLOR_KEYS = [
   "image",
+  "three-d",
   "video",
   "video-editor",
   "angle",
@@ -23,7 +24,7 @@ export function canvasNodeColorKey(
       ? "video-generator"
       : "image-generator";
   if (node.type === "upscale") return "image-generator";
-  return node.data.kind === "video" ? "video" : "image";
+  return node.data.kind === "video" ? "video" : node.data.kind === "3d" ? "three-d" : "image";
 }
 
 export function canvasSourceColorKey(

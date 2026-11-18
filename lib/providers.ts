@@ -10,6 +10,7 @@ import { inspectJimengCli } from './jimeng-cli';
 import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import type { CangyuanImageAdvancedParameter, CangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
+import { getCangyuanVideoModelCatalogEntry } from './cangyuan-video-model-catalog';
 import { isSvgImageBytes } from './svg-image';
 import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';
 import { isIP } from 'node:net';
@@ -186,6 +187,15 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     if (/first[_ -]?frame|image2video|first_frame/.test(text)) capabilities.push('video-first-frame');
     if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
     if (/audio|sound/.test(text)) capabilities.push('video-audio');
+  }
+  const cangyuanVideoEntry = getCangyuanVideoModelCatalogEntry(id);
+  if (
+    isCangyuanProvider(provider)
+    && cangyuanVideoEntry?.status === 'current'
+    && cangyuanVideoEntry.spec.capabilityRefs?.includes('video')
+    && !capabilities.includes('video-generate')
+  ) {
+    capabilities.push('video-generate');
   }
   if (/audio[-_ ]?transcri|\/audio\/transcriptions|speech[-_ ]?to[-_ ]?text|\basr\b|\bstt\b/i.test(text)) {
     capabilities.push('transcription');
@@ -956,7 +966,9 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
     if (typeof item === 'string' || typeof item === 'number') {
       const id = String(item).trim();
       const inferred = inferNativeSearch(id, provider?.platform);
-      return id ? { id, name: id, ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol, nativeSearchDetection: inferred.detection } : {}), ...(inferred.detected ? { capabilities: ['web-search' as const] } : {}) } : null;
+      const capabilities = discoveredModelCapabilities({ id }, provider, id);
+      if (inferred.detected && !capabilities.includes('web-search')) capabilities.push('web-search');
+      return id ? { id, name: id, ...(capabilities.length ? { capabilities } : {}), ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol, nativeSearchDetection: inferred.detection } : {}) } : null;
     }
     const id = String(item?.id || item?.model || item?.model_id || item?.modelId || item?.name || item?.slug || '').trim();
     if (!id) return null;

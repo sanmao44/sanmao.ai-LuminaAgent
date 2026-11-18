@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import EditableSuggestionField from '@/components/EditableSuggestionField';
 import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
@@ -1471,8 +1472,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           {!usesAgnesV20 && !usesCangyuan && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{modelLimits.durationScope === 'per-transition' ? '每段转场时长' : modelLimits.durationScope === 'total' ? '总时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={modelLimits.durationScope === 'per-transition' ? '每段转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={modelLimits.aspectRatioSource === 'first-reference' ? 'auto' : ratio} onChange={setRatio} disabled={modelLimits.aspectRatioSource === 'first-reference'} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
           {usesCangyuan && cangyuanProfile && <div className="video-option-segment cangyuan-video-parameters"><span>{selectedModel?.displayName || cangyuanProfile.publicModel} 参数</span><div>
             <label>时长<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel="沧元视频时长" /></label>
-            <label>比例建议，可自定义<input aria-label="沧元视频比例" list="video-studio-cangyuan-ratios" value={ratio} onChange={(event) => setRatio(event.target.value)} placeholder="例如 16:9" /><datalist id="video-studio-cangyuan-ratios">{cangyuanProfile.suggestedAspectRatios.map((value) => <option key={value} value={value} />)}</datalist></label>
-            <label>分辨率建议，可自定义<input aria-label="沧元视频分辨率" list="video-studio-cangyuan-resolutions" value={resolution} onChange={(event) => setResolution(event.target.value)} placeholder="例如 720p" /><datalist id="video-studio-cangyuan-resolutions">{cangyuanProfile.suggestedResolutions.map((value) => <option key={value} value={value} />)}</datalist></label>
+            <label>比例建议，可自定义<EditableSuggestionField value={ratio} options={cangyuanProfile.suggestedAspectRatios} ariaLabel="沧元视频比例" placeholder="例如 16:9" onChange={setRatio} /></label>
+            <label>分辨率建议，可自定义<EditableSuggestionField value={resolution} options={cangyuanProfile.suggestedResolutions} ariaLabel="沧元视频分辨率" placeholder="例如 720p" onChange={setResolution} /></label>
             {cangyuanProfile.supportsSeed && <label>随机种子（可选）<input aria-label="沧元视频随机种子" type="number" min={cangyuanProfile.seedMin} max={cangyuanProfile.seedMax} step={1} value={cangyuanSeed} onChange={(event) => setCangyuanSeed(event.target.value)} placeholder="留空使用随机种子" /></label>}
             {cangyuanProfile.supportsGenerateAudio && <label className="video-cangyuan-audio-field"><span>生成原生音频</span><input aria-label="生成原生音频" type="checkbox" checked={cangyuanGenerateAudio} onChange={(event) => setCangyuanGenerateAudio(event.target.checked)} /></label>}
           </div></div>}

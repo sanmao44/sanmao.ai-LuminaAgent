@@ -12,7 +12,15 @@ const [videoStudio, parameterEditor] = await Promise.all([
 
 const loadEditor = createTsRequire(process.cwd(), {
   '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: () => null },
+  '@/components/cangyuan/CangyuanVideoModelParameters': {
+    __esModule: true,
+    default: ({ spec, values }) => createElement('output', {
+      'aria-label': '当前型号的更多设置',
+      'data-model': spec.publicModel,
+    }, JSON.stringify(values)),
+  },
   './ModelPicker': { __esModule: true, default: () => null },
+  './EditableSuggestionField': { __esModule: true, default: () => null },
   './SelectMenu': {
     __esModule: true,
     default: ({ options, ariaLabel }) => createElement('div', { 'aria-label': ariaLabel },
@@ -21,7 +29,7 @@ const loadEditor = createTsRequire(process.cwd(), {
 });
 const CreationParameterEditor = loadEditor('./components/CreationParameterEditor').default;
 
-function renderVideoEditor({ provider, rawId, capabilities = ['video-generate'] }) {
+function renderVideoEditor({ provider, rawId, capabilities = ['video-generate'], modelParameters = {} }) {
   const model = {
     id: `${provider.id}-model`,
     providerId: provider.id,
@@ -51,6 +59,7 @@ function renderVideoEditor({ provider, rawId, capabilities = ['video-generate'] 
     agnesHeight: 768,
     agnesNumFrames: 81,
     agnesFrameRate: 24,
+    modelParameters,
   };
   return renderToStaticMarkup(createElement(CreationParameterEditor, {
     settings,
@@ -61,7 +70,8 @@ function renderVideoEditor({ provider, rawId, capabilities = ['video-generate'] 
 
 test('video studio uses the shared model library picker', () => {
   assert.match(videoStudio, /import ModelPicker from '@\/components\/ModelPicker'/);
-  assert.match(videoStudio, /<ModelPicker\s+models=\{models\}[\s\S]*?capability="video-generate"/);
+  assert.match(videoStudio, /const videoPickerModels =/);
+  assert.match(videoStudio, /<ModelPicker[\s\S]*?models=\{videoPickerModels\}[\s\S]*?capability="video-generate"/);
   assert.doesNotMatch(videoStudio, /const modelOptions = \[\{ value: 'auto'/);
 });
 
@@ -109,4 +119,19 @@ test('unlisted Cangyuan models render prompt-only controls while Seedance expose
   assert.doesNotMatch(seedance, /首尾帧必须成对/);
   assert.match(seedance, /参考图生视频/);
   assert.doesNotMatch(seedance, /原生音频/);
+});
+
+test('canvas video editor exposes only the selected Cangyuan model parameters', () => {
+  const provider = { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan', videoTransport: 'cangyuan-videos' };
+  const markup = renderVideoEditor({
+    provider,
+    rawId: 'doubao-seedance-2-0-260128',
+    modelParameters: { face_mode: 'asset', seed: '42', stale_parameter: 'remove-me' },
+  });
+
+  assert.match(markup, /aria-label="当前型号的更多设置"/);
+  assert.match(markup, /data-model="doubao-seedance-2-0-260128"/);
+  assert.match(markup, /face_mode/);
+  assert.match(markup, /seed/);
+  assert.doesNotMatch(markup, /stale_parameter|remove-me/);
 });

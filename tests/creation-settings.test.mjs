@@ -14,8 +14,14 @@ async function compileTypeScript(path, transform = (source) => source) {
 
 const localEditRuntime = (await compileTypeScript('../lib/local-edit.ts'))
   .replace(/\bexport\s+/g, '');
+const videoContractRuntime = (await compileTypeScript('../packages/contracts/video-generation.ts'))
+  .replace(/\bexport\s+/g, '');
 const sourceUrl = new URL('../lib/creation/settings.ts', import.meta.url);
 const compiled = await compileTypeScript('../lib/creation/settings.ts', (source) => source
+  .replace(
+    /^import\s+\{\s*parseVideoModelParameterValues,\s*type\s+VideoModelParameterValues\s*\}\s+from\s+["']@\/packages\/contracts\/video-generation["'];?\s*$/m,
+    videoContractRuntime,
+  )
   .replace(
     /^import\s+\{\s*normalizeLocalEditAnnotations\s*,\s*type\s+LocalEditAnnotation\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m,
     localEditRuntime,
@@ -146,6 +152,22 @@ test('Agnes V2.0 custom video settings are normalized to provider constraints', 
     numFrames: invalid.agnesNumFrames,
     frameRate: invalid.agnesFrameRate,
   }, { width: 64, height: 64, numFrames: 1, frameRate: 1 });
+});
+
+test('video creation settings preserve typed model parameters for canvas node persistence', () => {
+  const result = settings.normalizeVideoCreationSettings({
+    kind: 'video',
+    model: 'cangyuan-video-model',
+    modelParameters: { camera_movement: 'orbit', seed: '42', generate_audio: false },
+  }, runtime);
+  assert.deepEqual(result.modelParameters, {
+    camera_movement: 'orbit',
+    seed: '42',
+    generate_audio: false,
+  });
+
+  const malformed = settings.normalizeVideoCreationSettings({ kind: 'video', modelParameters: ['invalid'] }, runtime);
+  assert.deepEqual(malformed.modelParameters, {});
 });
 
 test('image settings retain local-edit annotations in the persisted mask', () => {

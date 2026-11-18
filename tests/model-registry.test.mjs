@@ -68,6 +68,20 @@ test('builds manual music and 3D models with their specific generation capabilit
   assert.ok(threeD.capabilities.includes('3d-generate'));
 });
 
+test('keeps manually selected transcription models out of the speech bucket', () => {
+  const transcription = registry.buildManualModelRecord({
+    id: 'manual-asr',
+    providerId: 'provider-1',
+    providerName: '通用接口',
+    rawId: 'asr-v1',
+    displayName: '语音转写 v1',
+    kind: 'audio',
+    inferred: { kind: 'audio', capabilities: ['transcription'] },
+  });
+  assert.ok(transcription.capabilities.includes('transcription'));
+  assert.ok(!transcription.capabilities.includes('speech'));
+});
+
 test('preserves manual models and enabled state when upstream returns the same ID', () => {
   const existing = model({ id: 'manual-1', source: 'manual', enabled: true, published: true });
   const discovered = model({ id: 'discovered-1', source: 'discovered', enabled: false, published: false, displayName: 'Upstream name' });

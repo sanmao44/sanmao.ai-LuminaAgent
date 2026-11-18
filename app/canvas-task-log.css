@@ -80,12 +80,13 @@
 .canvas-batch-video-retry-confirm button.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent,#fff)}
 .canvas-batch-video-retry-confirm button:disabled{opacity:.55;cursor:not-allowed}
 .canvas-batch-video-retry-progress{grid-template-columns:minmax(0,1fr) 100px;align-items:center;color:var(--text-2);font-size:8px}
-.canvas-batch-video-retry-progress progress{width:100%;height:7px;accent-color:var(--accent)}
+.canvas-batch-progress-bar{display:block;width:100%;height:7px;overflow:hidden;border:1px solid var(--line);border-radius:999px;background:var(--panel-3)}
+.canvas-batch-progress-bar>i{display:block;height:100%;border-radius:inherit;background:var(--accent);transition:width .2s ease}
 .canvas-batch-video-retry-result ul{display:grid;gap:5px;margin:0;padding:0;list-style:none}
 .canvas-batch-video-retry-result li{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;min-width:0;padding-top:5px;border-top:1px solid var(--line)}
 .canvas-batch-video-retry-result li b{overflow:hidden;color:var(--text-2);font-size:8px;text-overflow:ellipsis;white-space:nowrap}
 .canvas-batch-video-retry-result li small{color:var(--danger);font-size:8px;line-height:1.4;overflow-wrap:anywhere}
-@media(max-width:720px){.canvas-batch-video-retry{grid-template-columns:minmax(0,1fr)}.canvas-batch-video-retry-trigger{width:100%}.canvas-batch-video-retry-progress{grid-template-columns:minmax(0,1fr)}.canvas-batch-video-retry-progress progress{width:100%}.canvas-batch-video-retry-confirm>div{display:grid;grid-template-columns:1fr 1.4fr}.canvas-batch-video-retry-confirm button{min-height:34px}}
+@media(max-width:720px){.canvas-batch-video-retry{grid-template-columns:minmax(0,1fr)}.canvas-batch-video-retry-trigger{width:100%}.canvas-batch-video-retry-progress{grid-template-columns:minmax(0,1fr)}.canvas-batch-video-retry-confirm>div{display:grid;grid-template-columns:1fr 1.4fr}.canvas-batch-video-retry-confirm button{min-height:34px}}
 .canvas-batch-upscale-retry{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;margin:8px 0;padding:9px 0;border-block:1px solid var(--line);color:var(--text)}
 .canvas-batch-upscale-retry-copy{display:grid;gap:3px;min-width:0}
 .canvas-batch-upscale-retry-copy strong{font-size:9px;line-height:1.4}
@@ -100,12 +101,11 @@
 .canvas-batch-upscale-retry-confirm button.primary{border-color:var(--accent);background:var(--accent);color:var(--on-accent,#fff)}
 .canvas-batch-upscale-retry-confirm button:disabled{opacity:.55;cursor:not-allowed}
 .canvas-batch-upscale-retry-progress{grid-template-columns:minmax(0,1fr) 100px;align-items:center;color:var(--text-2);font-size:8px}
-.canvas-batch-upscale-retry-progress progress{width:100%;height:7px;accent-color:var(--accent)}
 .canvas-batch-upscale-retry-result ul{display:grid;gap:5px;margin:0;padding:0;list-style:none}
 .canvas-batch-upscale-retry-result li{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;min-width:0;padding-top:5px;border-top:1px solid var(--line)}
 .canvas-batch-upscale-retry-result li b{overflow:hidden;color:var(--text-2);font-size:8px;text-overflow:ellipsis;white-space:nowrap}
 .canvas-batch-upscale-retry-result li small{color:var(--danger);font-size:8px;line-height:1.4;overflow-wrap:anywhere}
-@media(max-width:720px){.canvas-batch-upscale-retry{grid-template-columns:minmax(0,1fr)}.canvas-batch-upscale-retry-trigger{width:100%}.canvas-batch-upscale-retry-progress{grid-template-columns:minmax(0,1fr)}.canvas-batch-upscale-retry-progress progress{width:100%}.canvas-batch-upscale-retry-confirm>div{display:grid;grid-template-columns:1fr 1.4fr}.canvas-batch-upscale-retry-confirm button{min-height:34px}}
+@media(max-width:720px){.canvas-batch-upscale-retry{grid-template-columns:minmax(0,1fr)}.canvas-batch-upscale-retry-trigger{width:100%}.canvas-batch-upscale-retry-progress{grid-template-columns:minmax(0,1fr)}.canvas-batch-upscale-retry-confirm>div{display:grid;grid-template-columns:1fr 1.4fr}.canvas-batch-upscale-retry-confirm button{min-height:34px}}
 
 .canvas-log-tabs{grid-template-columns:repeat(3,minmax(0,1fr))}
 .canvas-project-progress{display:grid;gap:14px;min-width:0}

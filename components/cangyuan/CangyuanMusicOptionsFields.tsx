@@ -7,7 +7,17 @@ import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInp
 import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
 import './CangyuanMusicOptionsFields.css';
 
-const SFX_KEYS = ['Any', 'Cm', 'C#m', 'Dm', 'D#m', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'A#m', 'Bm', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const NOTES = [
+  { value: 'C', label: 'C' }, { value: 'C#', label: '升 C' }, { value: 'D', label: 'D' },
+  { value: 'D#', label: '升 D' }, { value: 'E', label: 'E' }, { value: 'F', label: 'F' },
+  { value: 'F#', label: '升 F' }, { value: 'G', label: 'G' }, { value: 'G#', label: '升 G' },
+  { value: 'A', label: 'A' }, { value: 'A#', label: '升 A' }, { value: 'B', label: 'B' },
+];
+export const SFX_KEY_OPTIONS = [
+  { value: 'Any', label: '任意调性' },
+  ...NOTES.map(({ value, label }) => ({ value: `${value}m`, label: `${label} 小调` })),
+  ...NOTES.map(({ value, label }) => ({ value, label: `${label} 大调` })),
+];
 const SUNO_VERSIONS = [
   { value: 'v6', label: '自然人声' },
   { value: 'v6-wild', label: '大胆明亮' },
@@ -29,6 +39,10 @@ type Props = {
   onUploadStateChange?: (fieldId: string, uploading: boolean) => void;
 };
 
+export function cangyuanMusicTaskKindName(profile: Pick<CangyuanMusicModelProfile, 'family'> | null | undefined) {
+  return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx' ? '音效' : '音乐';
+}
+
 export default function CangyuanMusicOptionsFields({ profile, options, onChange, onUploadStateChange }: Props) {
   const supports = (key: keyof CangyuanMusicOptions) => profile.allowedOptions.includes(key);
   const update = (patch: Partial<CangyuanMusicOptions>) => onChange({ ...options, ...patch });
@@ -41,12 +55,12 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
     setCustomPersonaModelSelected(Boolean(options.personaModel && !PERSONA_MODEL_PRESETS.includes(options.personaModel as typeof PERSONA_MODEL_PRESETS[number])));
   }, [profile.modelId]);
   const numberField = (label: string, key: 'audioWeight' | 'styleWeight' | 'weirdnessConstraint') => supports(key) && (
-    <label className="cangyuan-music-range-field" key={key}>
+    profile.weightRange && <label className="cangyuan-music-range-field" key={key}>
       <span>{label}</span>
       <input
         type="range"
-        min="0"
-        max="1"
+        min={profile.weightRange[0]}
+        max={profile.weightRange[1]}
         step="0.01"
         value={options[key] ?? 0}
         onChange={(event) => update({ [key]: Number(event.target.value) })}
@@ -70,19 +84,22 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
   }
 
   if (profile.family === 'lyria') {
+    const durationRange = profile.durationRange;
+    const bpmRange = profile.bpmRange;
+    const seedRange = profile.seedRange;
     return (
       <div className="cangyuan-music-options">
         <div className="cangyuan-music-fields-grid">
-          <label className="cangyuan-music-text-field"><span>曲名</span><input value={options.title ?? ''} maxLength={160} onChange={(event) => update({ title: event.target.value || undefined })} placeholder="可选，最多 160 字符" /></label>
-          <label className="cangyuan-music-text-field"><span>目标时长（秒）</span><input type="number" min="5" max="300" step="1" value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="自动，或填写 5–300" /></label>
+          <label className="cangyuan-music-text-field"><span>曲名</span><input value={options.title ?? ''} maxLength={profile.titleMaxLength} onChange={(event) => update({ title: event.target.value || undefined })} placeholder={profile.titleMaxLength ? `可选，最多 ${profile.titleMaxLength} 字符` : '可选'} /></label>
+          <label className="cangyuan-music-text-field"><span>目标时长（秒）</span><input type="number" min={durationRange?.[0]} max={durationRange?.[1]} step="1" value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={durationRange ? `自动，或填写 ${durationRange[0]}–${durationRange[1]}` : '自动'} /></label>
         </div>
         <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.instrumental ?? false} onChange={(event) => update({ instrumental: event.target.checked })} /><span>纯音乐</span></label>
-        <label className="cangyuan-music-text-field"><span>歌词</span><textarea value={options.lyrics ?? ''} maxLength={20000} rows={5} onChange={(event) => update({ lyrics: event.target.value || undefined })} placeholder="可选，最多 20,000 字符；与创作描述分开填写" /></label>
+        <label className="cangyuan-music-text-field"><span>歌词</span><textarea value={options.lyrics ?? ''} maxLength={profile.lyricsMaxLength} rows={5} onChange={(event) => update({ lyrics: event.target.value || undefined })} placeholder={profile.lyricsMaxLength ? `可选，最多 ${profile.lyricsMaxLength.toLocaleString('zh-CN')} 字符；与创作描述分开填写` : '可选；与创作描述分开填写'} /></label>
         <details className="cangyuan-music-advanced">
           <summary>节奏与输出</summary>
           <div className="cangyuan-music-fields-grid">
-            <label className="cangyuan-music-text-field"><span>节奏速度</span><input aria-label="节奏速度，每分钟节拍数" type="number" min="30" max="300" step="1" value={options.bpm ?? ''} onChange={(event) => update({ bpm: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="自动，或填写 30–300" /><small>每分钟的节拍数，越大节奏越快。</small></label>
-            <label className="cangyuan-music-text-field"><span>固定创作变化</span><input aria-label="固定创作变化编号" type="number" min="0" max="2147483647" step="1" value={options.seed ?? ''} onChange={(event) => update({ seed: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="留空则每次不同" /><small>相同描述使用相同编号，便于生成接近的结果。</small></label>
+            <label className="cangyuan-music-text-field"><span>节奏速度</span><input aria-label="节奏速度，每分钟节拍数" type="number" min={bpmRange?.[0]} max={bpmRange?.[1]} step="1" value={options.bpm ?? ''} onChange={(event) => update({ bpm: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={bpmRange ? `自动，或填写 ${bpmRange[0]}–${bpmRange[1]}` : '自动'} /><small>每分钟的节拍数，越大节奏越快。</small></label>
+            <label className="cangyuan-music-text-field"><span>固定生成编号</span><input aria-label="固定生成编号" type="number" min={seedRange?.[0]} max={seedRange?.[1]} step="1" value={options.seed ?? ''} onChange={(event) => update({ seed: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="留空则每次不同" /><small>相同描述使用相同编号，便于生成接近的结果。</small></label>
             <div className="cangyuan-music-text-field"><span>保存格式</span><SelectMenu value={options.audio_format ?? ''} ariaLabel="音乐输出格式" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: '', label: '自动选择' }, { value: 'mp3', label: 'MP3 · 通用播放' }, { value: 'wav', label: 'WAV · 后期编辑' }, { value: 'm4a', label: 'M4A · 便于分享' }]} onChange={(value) => update({ audio_format: value ? value as CangyuanMusicOptions['audio_format'] : undefined })} /></div>
           </div>
         </details>
@@ -91,12 +108,78 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
     );
   }
 
-  if (profile.family === 'suno-sfx') {
+  if (profile.family === 'elevenlabs-music') {
+    const durationOptions = profile.durationValues || [];
+    const formatOptions = (profile.outputFormatSuggestions || []).map((value) => ({
+      value,
+      label: value === 'mp3_hq' ? 'MP3 高码率（更高费用）' : 'MP3（通用播放）',
+    }));
     return (
       <div className="cangyuan-music-options">
         <div className="cangyuan-music-fields-grid">
-          <label className="cangyuan-music-text-field"><span>调性</span><CangyuanSuggestionInput ariaLabel="音效调性" value={options.sound_key ?? ''} onChange={(value) => update({ sound_key: value || undefined })} options={SFX_KEYS} placeholder="自动" /></label>
-          <label className="cangyuan-music-text-field"><span>音效速度（BPM，1–300）</span><input type="number" min="1" max="300" step="any" value={options.sound_tempo ?? ''} onChange={(event) => update({ sound_tempo: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="可选" /></label>
+          <div className="cangyuan-music-text-field">
+            <span>目标时长</span>
+            <SelectMenu value={options.duration === undefined ? '' : String(options.duration)} ariaLabel="音乐目标时长" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: '', label: `默认（${profile.durationDefault ?? 30} 秒）` }, ...durationOptions.map((duration) => ({ value: String(duration), label: `${duration} 秒` }))]} onChange={(value) => update({ duration: value ? Number(value) : undefined })} />
+          </div>
+          <label className="cangyuan-music-text-field">
+            <span>随机种子</span>
+            <input aria-label="音乐随机种子" type="number" min={profile.seedRange?.[0]} max={profile.seedRange?.[1]} step="1" value={options.seed ?? ''} onChange={(event) => update({ seed: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="留空则随机" />
+          </label>
+        </div>
+        <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.force_instrumental ?? false} onChange={(event) => update({ force_instrumental: event.target.checked })} /><span>只生成伴奏</span></label>
+        <div className="cangyuan-music-text-field">
+          <span>输出格式</span>
+          <CangyuanSuggestionInput value={options.output_format ?? ''} ariaLabel="音乐输出格式" options={formatOptions} placeholder="默认 MP3，也可输入其他服务支持格式" onChange={(value) => update({ output_format: value || undefined })} />
+          <small>高码率 MP3 会增加费用；一次任务可能返回多段音频。</small>
+        </div>
+        <p className="cangyuan-model-note">提示词最多 4000 字符。时长只支持 10、30、60、120 或 180 秒；未指定时默认 30 秒。</p>
+      </div>
+    );
+  }
+
+  if (profile.family === 'elevenlabs-sfx') {
+    const durationRange = profile.durationRange;
+    const formatOptions = (profile.outputFormatSuggestions || []).map((value) => ({
+      value,
+      label: value === 'mp3_hq' ? 'MP3 高码率' : 'MP3（通用播放）',
+    }));
+    const durationNote = profile.modelId === 'elevenlabs-sound-effects-v2'
+      ? '时长 0.5–22 秒，默认 5 秒。'
+      : '最长 30 秒，默认 5 秒。';
+    return (
+      <div className="cangyuan-music-options">
+        <div className="cangyuan-music-fields-grid">
+          <label className="cangyuan-music-text-field">
+            <span>音效时长（秒）</span>
+            <input aria-label="音效时长" type="number" min={durationRange?.[0]} max={durationRange?.[1]} step={profile.durationInteger === false ? 'any' : '1'} value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={`默认 ${profile.durationDefault ?? 5} 秒`} />
+            <small>{durationNote}</small>
+          </label>
+          {profile.promptInfluenceRange && (
+            <label className="cangyuan-music-text-field">
+              <span>描述影响度</span>
+              <input aria-label="描述影响度" type="number" min={profile.promptInfluenceRange[0]} max={profile.promptInfluenceRange[1]} step="0.01" value={options.prompt_influence ?? ''} onChange={(event) => update({ prompt_influence: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="默认约 0.3" />
+              <small>范围 0–1；留空使用模型默认值。</small>
+            </label>
+          )}
+        </div>
+        <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.loop ?? false} onChange={(event) => update({ loop: event.target.checked })} /><span>生成可循环音效</span></label>
+        <div className="cangyuan-music-text-field">
+          <span>输出格式</span>
+          <CangyuanSuggestionInput value={options.output_format ?? ''} ariaLabel="音效输出格式" options={formatOptions} placeholder="默认 MP3，也可输入其他服务支持格式" onChange={(value) => update({ output_format: value || undefined })} />
+          <small>MP3 与高码率 MP3 不改变价格；提示词最多 4000 字符。</small>
+        </div>
+        <p className="cangyuan-model-note">{profile.modelId === 'elevenlabs-sound-effects-v2' ? '短音效模型，不适合生成完整歌曲。' : '短音效模型，适合生成较长音效，不适合生成完整歌曲。'}</p>
+      </div>
+    );
+  }
+
+  if (profile.family === 'suno-sfx') {
+    const soundTempoRange = profile.soundTempoRange;
+    return (
+      <div className="cangyuan-music-options">
+        <div className="cangyuan-music-fields-grid">
+          <label className="cangyuan-music-text-field"><span>调性</span><CangyuanSuggestionInput ariaLabel="音效调性" value={options.sound_key ?? ''} onChange={(value) => update({ sound_key: value || undefined })} options={SFX_KEY_OPTIONS} placeholder="自动" /></label>
+          <label className="cangyuan-music-text-field"><span>节奏速度（每分钟拍数{soundTempoRange ? `，${soundTempoRange[0]}–${soundTempoRange[1]}` : ''}）</span><input type="number" min={soundTempoRange?.[0]} max={soundTempoRange?.[1]} step="any" value={options.sound_tempo ?? ''} onChange={(event) => update({ sound_tempo: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="可选" /></label>
           <label className="cangyuan-music-text-field"><span>生成风格</span><CangyuanSuggestionInput ariaLabel="音效生成版本" value={options.version ?? ''} onChange={(value) => update({ version: value || undefined })} options={SUNO_VERSIONS} placeholder="自动选择，也可输入服务支持的版本" /></label>
         </div>
         <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.sound_loop ?? false} onChange={(event) => update({ sound_loop: event.target.checked })} /><span>循环音效</span></label>
@@ -147,9 +230,9 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
         <div className="cangyuan-music-fields-grid">
           {supports('sourceAudioId') && (modelId !== 'suno-cover-audio' || !options.uploadUrl) && <label className="cangyuan-music-text-field"><span>指定结果曲目编号</span><input maxLength={200} value={options.sourceAudioId ?? ''} onChange={(event) => update({ sourceAudioId: event.target.value || undefined, sourceTrack: undefined })} placeholder="可从作品记录中复制" /><small>需同时提供源作品任务编号</small></label>}
           {supports('sourceTrack') && (modelId !== 'suno-cover-audio' || !options.uploadUrl) && <label className="cangyuan-music-text-field"><span>曲目序号（从 0 开始）</span><input type="number" min="0" max="11" step="1" value={options.sourceTrack ?? ''} onChange={(event) => update({ sourceTrack: event.target.value === '' ? undefined : Number(event.target.value), sourceAudioId: undefined })} placeholder="自动选择" /><small>需同时提供源作品任务编号</small></label>}
-          {supports('title') && <label className="cangyuan-music-text-field"><span>曲名</span><input value={options.title ?? ''} maxLength={80} onChange={(event) => update({ title: event.target.value || undefined })} placeholder="可选，最多 80 字符" /></label>}
-          {supports('style_text') && <label className="cangyuan-music-text-field"><span>音乐风格</span><textarea value={options.style_text ?? ''} maxLength={1000} rows={3} onChange={(event) => update({ style_text: event.target.value || undefined })} placeholder="曲风、编曲、乐器与氛围" /></label>}
-          {supports('lyrics') && <label className="cangyuan-music-text-field"><span>完整歌词</span><textarea value={options.lyrics ?? ''} maxLength={20000} rows={5} onChange={(event) => update({ lyrics: event.target.value || undefined })} placeholder="包含替换片段的完整歌词" /></label>}
+          {supports('title') && <label className="cangyuan-music-text-field"><span>曲名</span><input value={options.title ?? ''} maxLength={profile.titleMaxLength} onChange={(event) => update({ title: event.target.value || undefined })} placeholder={profile.titleMaxLength ? `可选，最多 ${profile.titleMaxLength} 字符` : '可选'} /></label>}
+          {supports('style_text') && <label className="cangyuan-music-text-field"><span>音乐风格</span><textarea value={options.style_text ?? ''} maxLength={profile.styleTextMaxLength} rows={3} onChange={(event) => update({ style_text: event.target.value || undefined })} placeholder={profile.styleTextMaxLength ? `曲风、编曲、乐器与氛围，最多 ${profile.styleTextMaxLength} 字符` : '曲风、编曲、乐器与氛围'} /></label>}
+          {supports('lyrics') && <label className="cangyuan-music-text-field"><span>完整歌词</span><textarea value={options.lyrics ?? ''} maxLength={profile.lyricsMaxLength} rows={5} onChange={(event) => update({ lyrics: event.target.value || undefined })} placeholder={profile.lyricsMaxLength ? `包含替换片段的完整歌词，最多 ${profile.lyricsMaxLength.toLocaleString('zh-CN')} 字符` : '包含替换片段的完整歌词'} /></label>}
           {supports('customMode') && <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.customMode ?? false} onChange={(event) => update({ customMode: event.target.checked })} /><span>自定义曲名与风格</span></label>}
           {supports('instrumental') && <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.instrumental ?? false} onChange={(event) => update({ instrumental: event.target.checked })} /><span>仅生成伴奏</span></label>}
           {supports('tags') && <label className="cangyuan-music-text-field"><span>风格标签</span><input value={options.tags ?? ''} onChange={(event) => update({ tags: event.target.value || undefined })} placeholder="例如：轻松、钢琴" /></label>}
@@ -204,19 +287,19 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
       {supports('title') && (
         <label className="cangyuan-music-text-field">
           <span>曲名</span>
-          <input value={options.title ?? ''} maxLength={80} onChange={(event) => update({ title: event.target.value || undefined })} placeholder="可选，最多 80 字符" />
+          <input value={options.title ?? ''} maxLength={profile.titleMaxLength} onChange={(event) => update({ title: event.target.value || undefined })} placeholder={profile.titleMaxLength ? `可选，最多 ${profile.titleMaxLength} 字符` : '可选'} />
         </label>
       )}
       {supports('style_text') && (
         <label className="cangyuan-music-text-field">
           <span>风格描述</span>
-          <textarea value={options.style_text ?? ''} maxLength={1000} rows={3} onChange={(event) => update({ style_text: event.target.value || undefined })} placeholder="曲风、编曲、乐器与氛围" />
+          <textarea value={options.style_text ?? ''} maxLength={profile.styleTextMaxLength} rows={3} onChange={(event) => update({ style_text: event.target.value || undefined })} placeholder={profile.styleTextMaxLength ? `曲风、编曲、乐器与氛围，最多 ${profile.styleTextMaxLength} 字符` : '曲风、编曲、乐器与氛围'} />
         </label>
       )}
       {supports('duration') && (
         <label className="cangyuan-music-text-field cangyuan-music-duration">
           <span>时长（秒）</span>
-          <input type="number" min={10} max={360} step={1} value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="10–360" />
+          <input type="number" min={profile.durationRange?.[0]} max={profile.durationRange?.[1]} step={1} value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={profile.durationRange ? `${profile.durationRange[0]}–${profile.durationRange[1]}` : '按模型默认'} />
         </label>
       )}
       {supports('instrumental') && (
@@ -285,13 +368,13 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
           </label>
         )}
       </div>
-      <p className="cangyuan-model-note">单次固定生成 1 首；参考曲目的续作参数由结果操作自动附带。</p>
+      <p className="cangyuan-model-note">请求数量参数固定为 1；实际结果通常返回 2 首。参考曲目的续作参数由结果操作自动附带。</p>
     </div>
   );
 }
 
 function workflowNote(modelId: string) {
-  if (modelId === 'suno-extend-audio') return '上传本地音频后会生成沧元可访问的链接；续写位置以秒为单位。';
+  if (modelId === 'suno-extend-audio') return '上传本地音频后会生成服务商可访问的链接；续写位置以秒为单位。';
   if (modelId === 'suno-add-instrumental') return '上传要添加伴奏的原曲音频，或在高级选项中填写公网 URL。';
   if (modelId === 'suno-add-vocals') return '上传原曲音频；人声性别可选。';
   if (modelId === 'suno-cover-audio') return '可上传音频，或粘贴结果卡中的任务编号。';

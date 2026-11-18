@@ -39,6 +39,17 @@ test('model capability requirements require every requested capability', () => {
   assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['edit']), false);
 });
 
+test('speech pickers exclude audio recognition models even when stale metadata marks them as speech', () => {
+  const tts = { ...model('tts-model'), kind: 'audio', rawId: 'vendor/cosyvoice-v2', capabilities: ['speech'] };
+  const dualTaggedAsr = { ...model('asr-model'), kind: 'audio', rawId: 'vendor/asr-v1', capabilities: ['speech', 'transcription'] };
+  const misTaggedAsr = { ...model('whisper-model'), kind: 'audio', rawId: 'vendor/whisper-large-v3', capabilities: ['speech'] };
+
+  assert.equal(picker.modelSupportsCapabilityRequirements(tts, ['speech']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(dualTaggedAsr, ['speech']), false);
+  assert.equal(picker.modelSupportsCapabilityRequirements(misTaggedAsr, ['speech']), false);
+  assert.equal(picker.modelSupportsCapabilityRequirements(dualTaggedAsr, ['transcription']), true);
+});
+
 test('ordinary chat pickers exclude active and legacy internal JEV models', () => {
   const chatModel = (rawId) => ({
     ...model(rawId),

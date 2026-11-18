@@ -23,6 +23,7 @@ import CanvasAgentNodeCard from "@/components/canvas/CanvasAgentNodeCard";
 import CanvasAngleNodeCard from "@/components/canvas/CanvasAngleNodeCard";
 import CanvasGeneratorNodeCard from "@/components/canvas/CanvasGeneratorNodeCard";
 import CanvasMediaNodeCard from "@/components/canvas/CanvasMediaNodeCard";
+import CanvasThreeDNodeCard from "@/components/canvas/CanvasThreeDNodeCard";
 import CanvasUpscaleNodeCard from "@/components/canvas/CanvasUpscaleNodeCard";
 import { CanvasVariantRequirementsEditor } from "@/components/canvas/CanvasVariantEditors";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
@@ -169,7 +170,7 @@ function CanvasNodeCard({
       )
     : processingProgress;
   const processingMediaLabel =
-    data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : "图片";
+    data.kind === "video" ? "视频" : data.kind === "audio" ? "音频" : data.kind === "3d" ? "三维模型" : "图片";
   const processingLabel =
     data.status === "queued"
       ? data.statusLabel || "排队等待中"
@@ -188,9 +189,11 @@ function CanvasNodeCard({
           ? "angle"
           : node.type === "upscale"
             ? "upscale"
-            : data.kind === "video"
-              ? "video"
-              : "image";
+          : data.kind === "video"
+                ? "video"
+                : data.kind === "audio"
+                  ? "audio"
+                  : "image";
   const mediaFooterStatus =
     node.type === "media" && data.kind === "video"
       ? pending
@@ -238,7 +241,7 @@ function CanvasNodeCard({
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}
-      data-node-kind={node.type === "angle" ? "angle" : node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
+      data-node-kind={node.type === "angle" ? "angle" : node.type === "video-editor" ? "video-editor" : node.type === "upscale" ? "upscale" : node.type === "prompt" ? "agent" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : data.kind === "3d" ? "three-d" : "image"}
       aria-busy={pending}
       style={{
         left: node.x,
@@ -319,6 +322,16 @@ function CanvasNodeCard({
           onOpenAngle={onOpenAngle}
           onCancelAngle={onCancelAngle}
           node={node}
+          onRename={onRename}
+          renaming={renaming}
+          onRenamingChange={onRenamingChange}
+        />
+      ) : node.type === "media" && data.kind === "3d" ? (
+        <CanvasThreeDNodeCard
+          node={node}
+          pending={pending}
+          failed={failed}
+          processingLabel={processingLabel}
           onRename={onRename}
           renaming={renaming}
           onRenamingChange={onRenamingChange}

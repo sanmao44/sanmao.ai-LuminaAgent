@@ -25,7 +25,7 @@ export function buildManualModelRecord(input: {
   } else if (input.kind === 'video') {
     capabilities.add('video-generate');
   } else if (input.kind === 'audio') {
-    if (!capabilities.has('music-generate')) capabilities.add('speech');
+    if (!capabilities.has('music-generate') && !capabilities.has('transcription') && !capabilities.has('speech')) capabilities.add('speech');
   } else if (input.kind === '3d') {
     capabilities.add('3d-generate');
   }

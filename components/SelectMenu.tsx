@@ -9,6 +9,7 @@ export type SelectMenuOption<T extends string | number> = {
   label: ReactNode;
   icon?: ReactNode;
   description?: ReactNode;
+  action?: ReactNode;
   disabled?: boolean;
   deletable?: boolean;
 };
@@ -209,6 +210,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       >
         {option.icon && <span className="select-menu-option-icon" aria-hidden="true">{option.icon}</span>}
         <span className="select-menu-option-copy"><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+        {option.action && <span className="select-menu-option-action" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>{option.action}</span>}
         {option.deletable && onDelete && (
           <span
             className="select-menu-option-delete"

@@ -10,6 +10,9 @@
 .cangyuan-media-upload-status,.cangyuan-media-upload-hint,.cangyuan-media-upload-error{margin:0;color:var(--muted);font-size:9px;line-height:1.4;overflow-wrap:anywhere}
 .cangyuan-media-upload-error{color:var(--danger,#c75151)}
 .cangyuan-media-manual-url{display:grid;gap:6px;color:var(--muted);font-size:9px}
-.cangyuan-media-manual-url summary{width:max-content;max-width:100%;cursor:pointer;user-select:none}
+.cangyuan-media-manual-url summary{display:flex;align-items:center;gap:6px;width:max-content;max-width:100%;list-style:none;cursor:pointer;user-select:none}
+.cangyuan-media-manual-url summary::-webkit-details-marker{display:none}
+.cangyuan-media-manual-url summary::after{content:"⌄";color:var(--accent-text);font-size:12px;line-height:1;transition:transform .16s ease}
+.cangyuan-media-manual-url[open]>summary::after{transform:rotate(180deg)}
 .cangyuan-media-manual-url input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font:inherit;font-size:10px;outline:0}
 .cangyuan-media-manual-url input:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent)}

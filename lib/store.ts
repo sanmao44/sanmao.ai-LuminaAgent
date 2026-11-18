@@ -17,6 +17,7 @@ import { isRetiredAgnesModel } from './agnes';
 import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
+import type { ManualProviderModelInput } from '@/packages/contracts/model-library';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -739,13 +740,7 @@ export async function replaceProviderModels(providerId: string, providerName: st
   });
 }
 
-type ManualModelInput = {
-  rawId: string;
-  displayName?: string;
-  kind?: ModelKind | 'auto';
-};
-
-export async function addManualProviderModel(providerId: string, input: ManualModelInput) {
+export async function addManualProviderModel(providerId: string, input: ManualProviderModelInput) {
   return mutateState((state) => {
     const provider = state.providers.find((item) => item.id === providerId);
     if (!provider) throw new Error('服务商不存在');
@@ -756,7 +751,20 @@ export async function addManualProviderModel(providerId: string, input: ManualMo
     const displayName = typeof input.displayName === 'string' ? input.displayName.trim() || rawId : rawId;
     const selectedKind = input.kind === undefined || input.kind === 'auto' ? undefined : input.kind;
     if (selectedKind && !['chat', 'image', 'video', 'audio', '3d'].includes(selectedKind)) throw new Error('模型类型无效');
+    if (input.audioTask && !['speech', 'music-generate', 'transcription'].includes(input.audioTask)) throw new Error('音频用途无效');
     const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
+    const audioTask = input.audioTask || (inferred.capabilities.includes('music-generate')
+      ? 'music-generate'
+      : inferred.capabilities.includes('transcription')
+        ? 'transcription'
+        : 'speech');
+    const selectedInference = selectedKind === 'audio'
+      ? {
+          ...inferred,
+          kind: 'audio' as const,
+          capabilities: [...inferred.capabilities.filter((capability) => !['speech', 'music-generate', 'transcription'].includes(capability)), audioTask],
+        }
+      : inferred;
     const model = normalizeModel(buildManualModelRecord({
       id: randomUUID(),
       providerId,
@@ -764,7 +772,7 @@ export async function addManualProviderModel(providerId: string, input: ManualMo
       rawId,
       displayName,
       kind: selectedKind || inferred.kind,
-      inferred,
+      inferred: selectedInference,
     }), provider.platform);
     state.models.push(model);
     return model;
@@ -803,6 +811,20 @@ export async function patchModel(id: string, patch: Partial<Pick<RegistryModel, 
     if (model.kind !== 'image' && state.settings.defaultImageModelId === id) state.settings.defaultImageModelId = null;
     if (model.kind !== 'video' && state.settings.defaultVideoModelId === id) state.settings.defaultVideoModelId = null;
     return model;
+  });
+}
+
+export async function setModelsEnabled(ids: string[], enabled: boolean) {
+  return mutateState((state) => {
+    const uniqueIds = Array.from(new Set(ids));
+    const requestedIds = new Set(uniqueIds);
+    const existingModels = state.models.filter((model) => requestedIds.has(model.id));
+    if (existingModels.length !== uniqueIds.length) throw new Error('部分模型不存在或已被移除，请刷新后重试');
+    state.models = state.models.map((model) => requestedIds.has(model.id)
+      ? { ...normalizeModel(model, state.providers.find((provider) => provider.id === model.providerId)?.platform), enabled, published: enabled }
+      : model);
+    if (!enabled && requestedIds.has(state.settings.intentClassifierModelId || '')) state.settings.intentClassifierModelId = null;
+    return { updatedCount: uniqueIds.length };
   });
 }
 

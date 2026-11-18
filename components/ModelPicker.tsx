@@ -305,6 +305,7 @@ export default function ModelPicker({
     value,
     automaticModelLabel: autoModel?.displayName,
   });
+  const triggerAccessibleLabel = triggerLabelMode === 'model' ? triggerValueLabel : triggerLabel;
   const quickShowsAll = availableModels.length <= 8;
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
 
@@ -369,7 +370,7 @@ export default function ModelPicker({
   ) : null;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerLabel} data-tooltip={triggerLabel} disabled={disabled}>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerAccessibleLabel} data-tooltip={triggerAccessibleLabel} disabled={disabled}>
       <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerValueLabel}</span></span><i aria-hidden="true"/>
     </button>
     {quickPanel}

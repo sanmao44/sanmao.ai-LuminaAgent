@@ -6,7 +6,10 @@ import sharp from 'sharp';
 import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
-const source = await readFile(sourceUrl, 'utf8');
+const source = (await readFile(sourceUrl, 'utf8')).replace(
+  "import { getCangyuanVideoModelCatalogEntry } from './cangyuan-video-model-catalog';",
+  'const { getCangyuanVideoModelCatalogEntry } = globalThis.__providerCompatCangyuanVideoModelCatalog;',
+);
 const agnes = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
 const cangyuanCapabilities = await readFile(new URL('../lib/cangyuan-image-capabilities.ts', import.meta.url), 'utf8');
 const cangyuanProvider = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
@@ -16,6 +19,7 @@ const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.ur
 const detection = await readFile(detectionUrl, 'utf8');
 globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
 globalThis.__providerCompatSharp = sharp;
+globalThis.__providerCompatCangyuanVideoModelCatalog = createTsRequire(process.cwd())('./lib/cangyuan-video-model-catalog');
 const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${svgImage.replace('export function isSvgImageBytes', 'function isSvgImageBytes')}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });").replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isSvgImageBytes } from './svg-image';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;').replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerCompatSharp;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
@@ -27,6 +31,7 @@ const compiled = ts.transpileModule(bundledSource, {
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 delete globalThis.__providerImageReferenceReaderModule;
 delete globalThis.__providerCompatSharp;
+delete globalThis.__providerCompatCangyuanVideoModelCatalog;
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
@@ -1461,7 +1466,7 @@ test('Cangyuan image generation forwards independent resolution, tier, and requi
     }), /不支持生成档位“8k”/);
     await assert.rejects(() => providers.generateImage(provider, 'flux-3-image', {
       prompt: '不支持的选项', seed: 'seed-42',
-    }), /参数 seed=seed-42/);
+    }), /不支持随机种子/);
     assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = previousFetch;

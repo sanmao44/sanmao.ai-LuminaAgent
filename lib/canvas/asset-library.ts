@@ -12,6 +12,7 @@ export const CANVAS_ASSET_SMART_COLLECTION_IDS = new Set([
   "image",
   "video",
   "audio",
+  "3d",
 ]);
 export const CANVAS_ASSET_NON_READY_STATUSES = new Set(["queued", "running", "failed"]);
 export const CANVAS_ASSET_LAST_COLLECTION_KEY = "sanmao.canvas.asset.lastCollection";
@@ -48,7 +49,7 @@ export function filterCanvasAssets(
     if (options.collection === "all") return true;
     if (options.collection === "uncategorized") return !asset.collectionIds?.length;
     if (options.collection === "favorite") return asset.favorite;
-    if (options.collection === "image" || options.collection === "video" || options.collection === "audio")
+    if (options.collection === "image" || options.collection === "video" || options.collection === "audio" || options.collection === "3d")
       return asset.kind === options.collection;
     if (options.collection === "generated")
       return asset.source === "history" || asset.source === "video-task" || asset.source === "canvas-output";

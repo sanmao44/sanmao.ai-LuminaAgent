@@ -8,7 +8,7 @@ export type AssetRecord = {
   id: string;
   /** Transient link used when a canvas projection references an existing asset. */
   sourceAssetId?: string;
-  kind: 'image' | 'video' | 'audio';
+  kind: 'image' | 'video' | 'audio' | '3d';
   url: string;
   storageKey?: string;
   sha256?: string;

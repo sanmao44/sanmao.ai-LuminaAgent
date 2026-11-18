@@ -12,6 +12,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       rawId: body?.rawId,
       displayName: body?.displayName,
       kind: body?.kind,
+      audioTask: body?.audioTask,
     });
     return Response.json({ ok: true, model, state: await getPublicState() });
   } catch (error) {

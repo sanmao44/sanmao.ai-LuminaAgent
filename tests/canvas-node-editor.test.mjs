@@ -18,7 +18,9 @@ const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-option
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
 const editorUi = createTsRequire(process.cwd(), {
   "./ModelPicker": { __esModule: true, default: () => null },
+  "./EditableSuggestionField": { __esModule: true, default: () => null },
   "@/components/cangyuan/CangyuanImageModelOptions": { __esModule: true, default: () => null },
+  "@/components/cangyuan/CangyuanVideoModelParameters": { __esModule: true, default: () => null },
   "./SelectMenu": {
     __esModule: true,
     default: ({ options, ariaLabel }) => createElement("div", { "aria-label": ariaLabel },

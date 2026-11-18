@@ -3,6 +3,50 @@ import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const { supportedSpeechModels, supportedTranscriptionModels, supportedMusicModels, supportedThreeDModels } = createTsRequire(process.cwd())('./components/audio/model-options');
+const { inferModel } = createTsRequire(process.cwd())('./lib/store');
+
+test('all five Cangyuan speech models are inferred into the speech picker while Muse ASR stays excluded', () => {
+  const provider = { id: 'cangyuan', type: 'openai-compatible', platform: 'cangyuan' };
+  const speechModelIds = [
+    'elevenlabs-dialogue',
+    'elevenlabs-v4-tts',
+    'gemini-tts',
+    'mu1-muse-tts',
+    'voice-clone-tts',
+  ];
+  const models = speechModelIds.map((rawId, index) => {
+    const inferred = inferModel(rawId, 'cangyuan');
+    assert.equal(inferred.kind, 'audio', rawId);
+    assert.ok(inferred.capabilities.includes('speech'), rawId);
+    return {
+      id: `cangyuan-speech-${index}`,
+      providerId: provider.id,
+      providerName: '沧元算力',
+      rawId,
+      kind: inferred.kind,
+      enabled: true,
+      published: true,
+      capabilities: inferred.capabilities,
+    };
+  });
+  const asr = inferModel('mu1-muse-asr', 'cangyuan');
+  assert.equal(asr.kind, 'audio');
+  assert.ok(asr.capabilities.includes('transcription'));
+  models.push({
+    id: 'cangyuan-asr',
+    providerId: provider.id,
+    providerName: '沧元算力',
+    rawId: 'mu1-muse-asr',
+    kind: asr.kind,
+    enabled: true,
+    published: true,
+    capabilities: asr.capabilities,
+  });
+
+  const state = { providers: [provider], models };
+  assert.deepEqual(supportedSpeechModels(state).map((model) => model.rawId), speechModelIds);
+  assert.deepEqual(supportedTranscriptionModels(state).map((model) => model.rawId), ['mu1-muse-asr']);
+});
 
 test('music and 3D pickers require the declared creative task protocol', () => {
   const state = {

@@ -24,6 +24,8 @@ import type {
   CanvasAudioTranscriptionMeta,
   CanvasAudioMusicDraft,
   CanvasAudioMusicTask,
+  CanvasThreeDDraft,
+  CanvasThreeDTaskSnapshot,
   CanvasDocument,
   CanvasGenerationParams,
   CanvasInputRole,
@@ -67,6 +69,7 @@ import CanvasMaskSummary from "@/components/canvas/CanvasMaskSummary";
 import CanvasNodeReferenceStrip from "@/components/canvas/CanvasNodeReferenceStrip";
 import CanvasProjectReferencePreview from "@/components/canvas/CanvasProjectReferencePreview";
 import CanvasUpscaleSettingsPanel from "@/components/canvas/CanvasUpscaleSettingsPanel";
+import CanvasThreeDNodePanel from "@/components/canvas/CanvasThreeDNodePanel";
 import ReferenceMentionEditor from "@/components/ReferenceMentionEditor";
 
 export type CanvasNodeEditorPopoverProps = {
@@ -127,6 +130,8 @@ export type CanvasNodeEditorPopoverProps = {
   onMusicDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
   onMusicTaskChange: (nodeId: string, task: CanvasAudioMusicTask) => void;
   onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
+  onThreeDDraftChange: (nodeId: string, draft: CanvasThreeDDraft) => void;
+  onThreeDTaskChange: (nodeId: string, task: CanvasThreeDTaskSnapshot) => void;
   projectId?: string;
   canvasId?: string;
   resolveInputRoles: (document: CanvasDocument, targetId: string) => ReadonlyMap<string, CanvasInputRole | undefined>;
@@ -204,6 +209,8 @@ function CanvasNodeEditorPopover({
   onMusicDraftChange,
   onMusicTaskChange,
   onAudioDurationChange,
+  onThreeDDraftChange,
+  onThreeDTaskChange,
   projectId,
   canvasId,
   imagePresets,
@@ -243,10 +250,11 @@ function CanvasNodeEditorPopover({
   const imageDockFileRef = useRef<HTMLInputElement | null>(null);
   const data = node.data;
   const audioNode = node.type === "media" && data.kind === "audio";
+  const threeDNode = node.type === "media" && data.kind === "3d";
   useEffect(() => {
     setPromptExpanded(audioNode);
   }, [audioNode, node.id]);
-  const isImageNode = !audioNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
+  const isImageNode = !audioNode && !threeDNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
   const isVariantGenerator = node.type === "generator" && data.kind === "video";
   const isDockNode = isImageNode || isVariantGenerator;
   const stackedEditor = !promptExpanded && !audioNode && !isDockNode;
@@ -852,7 +860,17 @@ function CanvasNodeEditorPopover({
         </div>
       </div>
       <div className="canvas-node-editor-body">
-         {audioNode ? (
+         {threeDNode ? (
+           <CanvasThreeDNodePanel
+             nodeId={node.id}
+             models={runtime?.models || []}
+             draft={data.threeDDraft}
+             task={data.threeDTask}
+             onDraftChange={onThreeDDraftChange}
+             onTaskChange={onThreeDTaskChange}
+             onNotify={onNotify}
+           />
+         ) : audioNode ? (
            <CanvasAudioNodePanel
              node={node}
              onReplaceAudio={onReplaceAudio}

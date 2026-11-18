@@ -1,4 +1,5 @@
 import type { ModelCapability, RegistryModel } from './types';
+import { isAudioTranscriptionModelId } from './model-kind';
 
 export const MODEL_PICKER_QUICK_LIMIT = 4;
 
@@ -6,6 +7,10 @@ export function modelSupportsCapabilityRequirements(
   model: RegistryModel,
   requiredCapabilities: readonly ModelCapability[],
 ) {
+  if (requiredCapabilities.includes('speech') && (
+    model.capabilities.includes('transcription')
+    || isAudioTranscriptionModelId(`${model.rawId} ${model.displayName}`)
+  )) return false;
   return requiredCapabilities.every((capability) => {
     if (capability === 'video-generate') return model.capabilities.includes(capability);
     return model.capabilities.includes(capability) || (capability.startsWith('video-') && model.kind === 'video');

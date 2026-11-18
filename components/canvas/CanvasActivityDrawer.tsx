@@ -397,7 +397,9 @@ export default function CanvasActivityDrawer({
             </div>
             {batchRetryRunning && batchRetryKind === "video" && batchRetryProgress ? <div className="canvas-batch-video-retry-progress" role="status" aria-live="polite">
               <span>正在提交 {batchRetryProgress.completed} / {batchRetryProgress.total}</span>
-              <progress value={batchRetryProgress.completed} max={batchRetryProgress.total} aria-label="批量重试进度" />
+              <span className="canvas-batch-progress-bar" role="progressbar" aria-label="批量重试进度" aria-valuemin={0} aria-valuemax={batchRetryProgress.total} aria-valuenow={batchRetryProgress.completed}>
+                <i style={{ width: `${batchRetryProgress.total ? Math.round((batchRetryProgress.completed / batchRetryProgress.total) * 100) : 0}%` }} />
+              </span>
             </div> : batchRetryConfirm === "video" ? <div className="canvas-batch-video-retry-confirm">
               <span>将仅重试当前筛选列表中的失败项，按原参数创建新视频任务；每项可能产生费用，原失败记录会保留。</span>
               <div>
@@ -417,7 +419,9 @@ export default function CanvasActivityDrawer({
             </div>
             {batchRetryRunning && batchRetryKind === "upscale" && batchRetryProgress ? <div className="canvas-batch-upscale-retry-progress" role="status" aria-live="polite">
               <span>正在提交 {batchRetryProgress.completed} / {batchRetryProgress.total}</span>
-              <progress value={batchRetryProgress.completed} max={batchRetryProgress.total} aria-label="超分批量重试进度" />
+              <span className="canvas-batch-progress-bar" role="progressbar" aria-label="超分批量重试进度" aria-valuemin={0} aria-valuemax={batchRetryProgress.total} aria-valuenow={batchRetryProgress.completed}>
+                <i style={{ width: `${batchRetryProgress.total ? Math.round((batchRetryProgress.completed / batchRetryProgress.total) * 100) : 0}%` }} />
+              </span>
             </div> : batchRetryConfirm === "upscale" ? <div className="canvas-batch-upscale-retry-confirm">
               <span>将仅重试当前筛选列表中符合条件的超分失败项，按原参数新建任务；可能产生费用，原失败记录会保留。</span>
               <div>

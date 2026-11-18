@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentType, FormEvent } from "react";
+import type { ManualModelAudioTask } from "@/packages/contracts/model-library";
 import type { ModelKind } from "@/lib/types";
 
 export type ManualModelKind = "auto" | Extract<ModelKind, "chat" | "image" | "video" | "audio" | "3d">;
@@ -9,6 +10,7 @@ export type ManualModelFormState = {
   rawId: string;
   displayName: string;
   kind: ManualModelKind;
+  audioTask: ManualModelAudioTask;
 };
 
 type ManualModelDialogIcon = ComponentType<{ name: string; size?: number }>;
@@ -74,6 +76,16 @@ export default function ManualModelDialog({
               <button type="button" className={form.kind === "3d" ? "active" : ""} onClick={() => onChange({ kind: "3d" })}>三维</button>
             </div>
           </div>
+          {form.kind === "audio" && (
+            <div className="manual-model-kind-field">
+              <span>音频用途</span>
+              <div className="segmented manual-model-kind manual-model-audio-task" aria-label="音频模型用途">
+                <button type="button" className={form.audioTask === "speech" ? "active" : ""} onClick={() => onChange({ audioTask: "speech" })}>配音</button>
+                <button type="button" className={form.audioTask === "music-generate" ? "active" : ""} onClick={() => onChange({ audioTask: "music-generate" })}>音乐生成</button>
+                <button type="button" className={form.audioTask === "transcription" ? "active" : ""} onClick={() => onChange({ audioTask: "transcription" })}>语音转写</button>
+              </div>
+            </div>
+          )}
         </div>
         <div className="manual-model-notice">
           <Icon name="agent" size={16} />

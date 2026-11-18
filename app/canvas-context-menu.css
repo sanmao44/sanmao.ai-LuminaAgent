@@ -19,6 +19,7 @@
 .canvas-menu-icon{width:32px;height:32px;display:grid;place-items:center;flex:none;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:10px;background:var(--accent-soft);color:var(--accent-text);font-size:14px;font-weight:900;line-height:1}
 .canvas-menu-item-image .canvas-menu-icon{border-color:color-mix(in srgb,#f59e0b 36%,var(--line));background:color-mix(in srgb,#f59e0b 14%,var(--panel-3));color:#f59e0b}
 .canvas-menu-item-video .canvas-menu-icon{border-color:color-mix(in srgb,#60a5fa 36%,var(--line));background:color-mix(in srgb,#60a5fa 14%,var(--panel-3));color:#60a5fa;font-size:11px}
+.canvas-menu-item-three-d .canvas-menu-icon{border-color:color-mix(in srgb,var(--canvas-node-three-d) 40%,var(--line));background:color-mix(in srgb,var(--canvas-node-three-d) 14%,var(--panel-3));color:var(--canvas-node-three-d);font-size:13px}
 .canvas-menu-item-agent .canvas-menu-icon{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent-soft) 78%,var(--panel));color:var(--accent-text)}
 .canvas-menu-item-tool .canvas-menu-icon{border-color:color-mix(in srgb,var(--muted) 34%,var(--line));background:var(--panel-3);color:var(--text-2);font-size:17px}
 .canvas-menu-copy{display:grid;gap:3px;min-width:0;flex:1}

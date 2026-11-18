@@ -153,9 +153,24 @@ export default function ThreeDModelPreview({ url, label, className, variant }: P
       {loading && <div className={styles.loading} role="status" aria-live="polite">
         <div className={styles.loadingPanel}>
           <strong>{loadingStage === "download" ? "正在下载模型" : "正在解析模型"}</strong>
-          {loadingStage === "download" && downloadProgress.percentage !== null
-            ? <progress max={100} value={downloadProgress.percentage} aria-label="模型下载进度" />
-            : <progress aria-label={loadingStage === "download" ? "模型下载进度" : "模型解析进度"} />}
+          <div
+            className={styles.progressTrack}
+            role="progressbar"
+            aria-label={loadingStage === "download" ? "模型下载进度" : "模型解析进度"}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={loadingStage === "download" ? downloadProgress.percentage ?? undefined : undefined}
+            aria-valuetext={loadingStage === "download" && downloadProgress.percentage !== null
+              ? `${downloadProgress.percentage}%`
+              : loadingStage === "parse" ? "正在解析模型" : "下载进度未知"}
+          >
+            <span
+              className={loadingStage === "parse" || downloadProgress.percentage === null ? styles.indeterminateProgress : styles.progressValue}
+              style={loadingStage === "download" && downloadProgress.percentage !== null
+                ? { width: `${downloadProgress.percentage}%` }
+                : undefined}
+            />
+          </div>
           <small>{loadingStage === "parse"
             ? `已下载 ${modelPreviewBytesLabel(downloadProgress.loadedBytes)}，正在准备预览`
             : downloadProgress.percentage === null

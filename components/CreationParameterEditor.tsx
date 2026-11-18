@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import ModelPicker from "./ModelPicker";
 import SelectMenu from "./SelectMenu";
+import EditableSuggestionField from "./EditableSuggestionField";
 import CangyuanImageModelOptions from "@/components/cangyuan/CangyuanImageModelOptions";
+import CangyuanVideoModelParameters from "@/components/cangyuan/CangyuanVideoModelParameters";
 import {
   IMAGE_QUALITY_OPTIONS,
   IMAGE_RATIOS,
@@ -21,6 +23,8 @@ import { normalizeImageCreationSettings, resolveAvailableCreationModel } from "@
 import { getCangyuanImageModelProfile } from "@/lib/cangyuan-image-capabilities";
 import { isCangyuanProvider } from "@/lib/cangyuan-provider";
 import { getCangyuanVideoModelProfile } from "@/lib/cangyuan-video-capabilities";
+import { getCangyuanVideoAdvancedParameters, getCangyuanVideoModelSpec } from "@/lib/cangyuan-video-model-catalog";
+import type { CangyuanVideoModelSpec, VideoModelParameterValues } from "@/packages/contracts/video-generation";
 import { getVideoModelLimitsForInput, type VideoModelInputContext } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
 import type { ModelCapability, PublicState } from "@/lib/types";
@@ -1003,6 +1007,20 @@ function durationValues(
   ].sort((left, right) => left - right);
 }
 
+function cangyuanVideoParameterValues(
+  spec: CangyuanVideoModelSpec | null,
+  values: VideoModelParameterValues = {},
+): VideoModelParameterValues {
+  if (!spec) return {};
+  const parameters = getCangyuanVideoAdvancedParameters(spec);
+  const allowedNames = new Set(parameters.map((parameter) => parameter.name));
+  const defaults = Object.fromEntries(parameters
+    .filter((parameter) => parameter.suggestedDefault !== undefined)
+    .map((parameter) => [parameter.name, parameter.suggestedDefault])) as VideoModelParameterValues;
+  const stored = Object.fromEntries(Object.entries(values).filter(([name]) => allowedNames.has(name))) as VideoModelParameterValues;
+  return { ...defaults, ...stored };
+}
+
 function VideoEditor({
   settings,
   runtime,
@@ -1046,6 +1064,10 @@ function VideoEditor({
   const cangyuanProfile = usesCangyuan && model
     ? getCangyuanVideoModelProfile(model.rawId)
     : null;
+  const cangyuanSpec = usesCangyuan && model && cangyuanProfile
+    ? getCangyuanVideoModelSpec(model.rawId)
+    : null;
+  const cangyuanParameters = cangyuanVideoParameterValues(cangyuanSpec, settings.modelParameters);
   const limits = useMemo(
     () => getVideoModelLimitsForInput(model || undefined, provider, videoModelInput || {}),
     [
@@ -1282,7 +1304,20 @@ function VideoEditor({
                 )?.name
               }
               defaultModelId={runtime?.settings.defaultVideoModelId}
-              onChange={(value) => update("model", value)}
+              onChange={(value) => {
+                const nextSettings = { ...settings, model: value };
+                const nextModel = runtime
+                  ? resolveAvailableCreationModel(nextSettings, runtime).model
+                  : null;
+                const nextProvider = runtime?.providers.find((item) => item.id === nextModel?.providerId);
+                const nextSpec = nextProvider?.videoTransport === "cangyuan-videos" && nextModel
+                  ? getCangyuanVideoModelSpec(nextModel.rawId)
+                  : null;
+                onChange({
+                  ...nextSettings,
+                  modelParameters: cangyuanVideoParameterValues(nextSpec),
+                });
+              }}
             />
           </label>
         )}
@@ -1370,29 +1405,23 @@ function VideoEditor({
           </label>
           <label className="creation-field">
             <small>比例（建议值，可自定义）</small>
-            <input
-              aria-label="沧元视频比例"
-              list="creation-cangyuan-video-ratios"
+            <EditableSuggestionField
               value={settings.aspect}
-              onChange={(event) => update("aspect", event.target.value)}
+              options={cangyuanProfile.suggestedAspectRatios}
+              ariaLabel="沧元视频比例"
               placeholder="例如 16:9"
+              onChange={(value) => update("aspect", value)}
             />
-            <datalist id="creation-cangyuan-video-ratios">
-              {cangyuanProfile.suggestedAspectRatios.map((value) => <option key={value} value={value} />)}
-            </datalist>
           </label>
           <label className="creation-field">
             <small>分辨率（建议值，可自定义）</small>
-            <input
-              aria-label="沧元视频分辨率"
-              list="creation-cangyuan-video-resolutions"
+            <EditableSuggestionField
               value={settings.resolution}
-              onChange={(event) => update("resolution", event.target.value)}
+              options={cangyuanProfile.suggestedResolutions}
+              ariaLabel="沧元视频分辨率"
               placeholder="例如 720p"
+              onChange={(value) => update("resolution", value)}
             />
-            <datalist id="creation-cangyuan-video-resolutions">
-              {cangyuanProfile.suggestedResolutions.map((value) => <option key={value} value={value} />)}
-            </datalist>
           </label>
         </>}
         {!usesCangyuan && <label className="creation-field creation-toggle">
@@ -1458,6 +1487,11 @@ function VideoEditor({
           </div>
         )
       )}
+      {cangyuanSpec && <CangyuanVideoModelParameters
+        spec={cangyuanSpec}
+        values={cangyuanParameters}
+        onChange={(modelParameters) => onChange({ ...settings, modelParameters })}
+      />}
       {(limits.notes.length > 0 || inheritSettings || omitRatio || usesCangyuan) && (
         <div className="creation-model-notes">
           <b>

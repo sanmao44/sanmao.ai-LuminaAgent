@@ -70,7 +70,7 @@ test("generation log details display localized image and speech options", () => 
     format: "wav",
     speed: 1.25,
   }), [
-    { label: "音色", value: "大熊" },
+    { label: "音色", value: "乌尔萨" },
     { label: "输出格式", value: "WAV" },
     { label: "语速", value: "1.25 倍" },
   ]);

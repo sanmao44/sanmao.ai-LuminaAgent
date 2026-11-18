@@ -115,7 +115,7 @@ function clip(value: unknown, max: number) {
 
 export function canvasAgentDockNodeKind(node: CanvasNode) {
   if (node.type === "media")
-    return node.data.kind === "video" ? "视频" : node.data.kind === "audio" ? "音频" : "图片";
+    return node.data.kind === "video" ? "视频" : node.data.kind === "audio" ? "音频" : node.data.kind === "3d" ? "三维" : "图片";
   if (node.type === "prompt") return "Agent 文本";
   if (node.type === "generator") return "生成器";
   if (node.type === "upscale") return "超分";

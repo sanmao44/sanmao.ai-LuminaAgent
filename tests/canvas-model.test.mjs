@@ -64,6 +64,9 @@ async function loadTypeScript(path) {
     ).replace(
       /^\s*import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
       '',
+    ).replace(
+      /^\s*import\s+\{\s*parseVideoModelParameterValues[\s\S]*?\}\s+from\s+["']@\/packages\/contracts\/video-generation["'];?\s*$/m,
+      'const parseVideoModelParameterValues = () => ({});',
     );
     const maskCompiled = ts.transpileModule(maskSource, {
       compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },

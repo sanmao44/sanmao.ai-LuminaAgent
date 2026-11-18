@@ -10,7 +10,9 @@ test('Gemini TTS displays Chinese voice names while preserving documented reques
   const options = voiceOptions.speechVoiceOptions(profile);
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
-  assert.deepEqual(options.map(({ label }) => label), ['五车二', '厄尔萨', '织女星', '伊克利普斯', '天琴座', '奥比特', '迪珀', '诺娃', '佩伽索斯']);
+  assert.deepEqual(options.map(({ label }) => label), [
+    '五车二', '乌尔萨', '织女星', '日食', '天琴座', '轨道', '北斗七星', '新星', '飞马座',
+  ]);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
 });
 
@@ -21,9 +23,10 @@ test('Muse TTS labels explain documented voice groups without changing request I
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [
     '艾洛伊（清亮女声）', '阿丽娅（清亮女声）', '科拉尔（清亮女声）',
-    '诺娃（温暖女声）', '希默（温暖女声）', '赛奇（温暖女声）',
-    '艾可（沉稳男声）', '赫利欧（沉稳男声）', '奥尼克斯（沉稳男声）',
-    '费布尔（叙事男声）',
+    '诺娃（温暖女声）', '希默尔（温暖女声）', '塞奇（温暖女声）',
+    '埃科（沉稳男声）', '赫利奥（沉稳男声）', '奥尼克斯（沉稳男声）', '费布尔（叙事男声）',
   ]);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
+  assert.equal(options.find(({ value }) => value === 'sage')?.description, '该音色暂无样音');
+  assert.equal(options.find(({ value }) => value === 'alloy')?.description, '可播放本地样音，不消耗额度');
 });

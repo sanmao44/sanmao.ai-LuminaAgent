@@ -21,6 +21,7 @@
 .select-menu-trigger-icon svg,.select-menu-option-icon svg{display:block}
 .select-menu-option-icon{width:24px;height:24px;border-radius:7px;background:color-mix(in srgb,var(--accent-soft) 82%,var(--panel))}
 .select-menu-option-copy{flex:1}
+.select-menu-option-action{flex:none;display:inline-flex;align-items:center;justify-content:center}
 .select-menu-option-delete{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:7px;color:var(--muted);font-size:16px;line-height:1;cursor:pointer}.select-menu-option-delete:hover,.select-menu-option-delete:focus-visible{background:var(--danger-soft,var(--accent-soft));color:var(--danger);outline:0}
 
 /* Video studio is viewport-locked: the form body and task list own their
@@ -720,4 +721,8 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
   .video-task-actions a,.video-task-actions button{flex:none;min-height:25px;padding-inline:8px;font-size:9px;white-space:nowrap}
 }
 .video-option-segment .video-cangyuan-audio-field{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:39px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2)}
-.video-option-segment .video-cangyuan-audio-field input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:var(--accent)}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]{display:grid;place-items:center;flex:none;width:18px;height:18px;margin:0;appearance:none;border:1px solid var(--line-strong);border-radius:5px;background:var(--panel);color:var(--accent-contrast,#fff);cursor:pointer;transition:border-color .14s,background .14s,box-shadow .14s}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]::before{content:"✓";font:700 11px/1 system-ui,sans-serif;transform:scale(0);transition:transform .12s ease}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]:checked{border-color:var(--accent);background:var(--accent)}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]:checked::before{transform:scale(1)}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:2px}

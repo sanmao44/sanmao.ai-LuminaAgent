@@ -40,7 +40,26 @@ async function loadTypeScript(path) {
     const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
     compiled = compiled.replace('from "../video-task-output"', `from "${dependencyDataUrl}"`);
   }
-  compiled = compiled.replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
+  if (compiled.includes('from "@/packages/contracts/video-generation"')) {
+    const dependencyUrl = new URL('../packages/contracts/video-generation.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replace('from "@/packages/contracts/video-generation"', `from "${dependencyDataUrl}"`);
+  }
+  if (compiled.includes('from "@/packages/contracts/creative"')) {
+    const dependencyUrl = new URL('../packages/contracts/creative.ts', import.meta.url);
+    const dependencySource = await readFile(dependencyUrl, 'utf8');
+    const dependencyCompiled = ts.transpileModule(dependencySource, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      fileName: dependencyUrl.pathname,
+    }).outputText;
+    const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
+    compiled = compiled.replace('from "@/packages/contracts/creative"', `from "${dependencyDataUrl}"`);
+  }
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 }
 
@@ -170,7 +189,7 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   assert.equal(request.input, '/api/generate');
   assert.deepEqual(JSON.parse(request.options.body), {
     source: 'canvas', imageOperation: 'generate', prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
-    resolution: '自动', quality: '自动', references: [], referenceImages: [],
+    quality: '自动', references: [], referenceImages: [],
   });
 });
 
@@ -441,12 +460,12 @@ test('canvas upload blocks oversized images when local encoding fails', async ()
   }
 });
 
-test('canvas video generation creates a task without leaking boolean audio', async () => {
+test('canvas video generation keeps provider-specific parameters off non-Cangyuan requests', async () => {
   let request;
   const task = await withFetch(async (input, options) => {
     request = { input, options };
     return jsonResponse({ task: { id: 'video-1', status: 'pending' } });
-  }, () => api.generateCanvasVideo({ prompt: '镜头推进', model: 'video-model', duration: 8, audio: true }));
+  }, () => api.generateCanvasVideo({ prompt: '镜头推进', model: 'video-model', duration: 8, audio: true, modelParameters: { camera_movement: 'orbit' } }));
 
   assert.deepEqual(task, { id: 'video-1', status: 'pending' });
   const payload = JSON.parse(request.options.body);
@@ -455,9 +474,10 @@ test('canvas video generation creates a task without leaking boolean audio', asy
   assert.equal(payload.model, 'video-model');
   assert.deepEqual(payload.input, { prompt: '镜头推进', seconds: 8, aspectRatio: '16:9', resolution: '720p', referenceImages: [] });
   assert.equal('audio' in payload.input, false);
+  assert.equal('modelParameters' in payload.input, false);
 });
 
-test('canvas Cangyuan video generation omits default controls and only sends prompt to its task input', async () => {
+test('canvas Cangyuan video generation serializes saved model parameters beside the prompt', async () => {
   let request;
   await withFetch(async (input, options) => {
     request = { input, options };
@@ -465,19 +485,38 @@ test('canvas Cangyuan video generation omits default controls and only sends pro
   }, () => api.generateCanvasVideo({
     prompt: 'a paper boat',
     model: 'cangyuan-video-model',
+    modelRawId: 'sd20-seedance-2.0-fast',
     videoTransport: 'cangyuan-videos',
     operation: 'generate',
     inputMode: 'text',
     duration: 5,
     aspect: '16:9',
     resolution: '720p',
+    modelParameters: { face_mode: 'asset', seed: '42' },
   }));
 
   const payload = JSON.parse(request.options.body);
   assert.equal(request.input, '/api/video/generate');
   assert.equal(payload.model, 'cangyuan-video-model');
-  assert.deepEqual(payload.input, { prompt: 'a paper boat', referenceImages: [] });
+  assert.deepEqual(payload.input, { prompt: 'a paper boat', referenceImages: [], modelParameters: { face_mode: 'asset', seed: '42', duration: 5, aspect_ratio: '16:9', resolution: '720p' } });
   assert.equal('videoTransport' in payload, false);
+});
+
+test('canvas Cangyuan video generation rejects malformed model parameters before submission', async () => {
+  let fetchCalled = false;
+  await assert.rejects(
+    () => withFetch(async () => {
+      fetchCalled = true;
+      return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'a paper boat',
+      model: 'cangyuan-video-model',
+      videoTransport: 'cangyuan-videos',
+      modelParameters: [],
+    })),
+    /视频模型高级设置格式无效/,
+  );
+  assert.equal(fetchCalled, false);
 });
 
 test('canvas Cangyuan video generation blocks connected media before encoding or network submission', async () => {
@@ -504,21 +543,22 @@ test('canvas Cangyuan video generation blocks connected media before encoding or
   }
 });
 
-test('canvas Cangyuan video generation rejects non-default parameters before submission', async () => {
-  let fetchCalled = false;
-  await assert.rejects(
-    () => withFetch(async () => {
-      fetchCalled = true;
-      return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
-    }, () => api.generateCanvasVideo({
-      prompt: 'a paper boat',
-      model: 'cangyuan-video-model',
-      videoTransport: 'cangyuan-videos',
-      duration: 8,
-    })),
-    /只提交模型和提示词/,
-  );
-  assert.equal(fetchCalled, false);
+test('canvas Cangyuan video generation forwards non-default controls as model parameters', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ task: { id: 'cangyuan-video-custom', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: 'a paper boat',
+    model: 'cangyuan-video-model',
+    modelRawId: 'sd20-seedance-2.0-fast',
+    videoTransport: 'cangyuan-videos',
+    duration: 8,
+    aspect: '9:16',
+    resolution: '480p',
+  }));
+  const payload = JSON.parse(request.options.body);
+  assert.deepEqual(payload.input.modelParameters, { duration: 8, aspect_ratio: '9:16', resolution: '480p' });
 });
 
 test('canvas video generation includes saved project style and constraints in its prompt', async () => {

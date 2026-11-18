@@ -161,6 +161,7 @@ import { waitForEditorTaskLog } from '@/lib/image-editor/editor-task-recovery';
 import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
+import { modelLibraryCategoryLabel, modelMatchesLibraryCategory } from '@/lib/model-library-categories';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile, isVideoChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
@@ -2478,7 +2479,7 @@ export default function Page() {
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
     const [manualModelProvider, setManualModelProvider] = useState(null);
-    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto' });
+    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto', audioTask: 'speech' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
     const providerModalOpen = providerEditor || !state.providers.length && !providerSetupDismissed;
@@ -2497,6 +2498,7 @@ export default function Page() {
     const [modelProviderFilter, setModelProviderFilter] = useState('all');
     const [modelKindFilter, setModelKindFilter] = useState('all');
     const [modelQuickFilter, setModelQuickFilter] = useState('all');
+    const [bulkModelBusy, setBulkModelBusy] = useState(false);
     const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
     const modelKindBusyRef = useRef(new Set());
     const [modelKindBusy, setModelKindBusy] = useState(new Set());
@@ -2869,10 +2871,15 @@ export default function Page() {
         modelFavorites,
         modelRecent
     ]);
-    const visibleModels = useMemo(()=>quickFilteredModels.filter((model)=>modelKindFilter === 'all' || model.kind === modelKindFilter), [
+    const visibleModels = useMemo(()=>quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, modelKindFilter)), [
         quickFilteredModels,
         modelKindFilter
     ]);
+    const bulkModelCounts = useMemo(()=>({
+        enabled: visibleModels.filter((model)=>model.kind !== 'unknown' && !(model.enabled && model.published)).length,
+        disabled: visibleModels.filter((model)=>model.kind !== 'unknown' && model.enabled && model.published).length,
+        unclassified: visibleModels.filter((model)=>model.kind === 'unknown').length
+    }), [visibleModels]);
     const modelQuickCounts = useMemo(()=>({
             all: matchingModels.length,
             enabled: matchingModels.filter((model)=>model.enabled && model.published).length,
@@ -2888,7 +2895,9 @@ export default function Page() {
             chat: quickFilteredModels.filter((model)=>model.kind === 'chat').length,
             image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
             video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
-            audio: quickFilteredModels.filter((model)=>model.kind === 'audio').length,
+            speech: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'speech')).length,
+            music: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'music')).length,
+            transcription: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'transcription')).length,
             '3d': quickFilteredModels.filter((model)=>model.kind === '3d').length,
             unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
         }), [
@@ -5167,7 +5176,7 @@ export default function Page() {
     }
     function openManualModelDialog(provider) {
         setManualModelProvider(provider);
-        setManualModelForm({ rawId: '', displayName: '', kind: 'auto' });
+        setManualModelForm({ rawId: '', displayName: '', kind: 'auto', audioTask: 'speech' });
     }
     function applyProviderPreset(platform) {
         const preset = getProviderPreset(platform);
@@ -5305,7 +5314,8 @@ export default function Page() {
                 body: JSON.stringify({
                     rawId: manualModelForm.rawId.trim(),
                     displayName: manualModelForm.displayName.trim(),
-                    kind: manualModelForm.kind
+                    kind: manualModelForm.kind,
+                    audioTask: manualModelForm.audioTask
                 })
             });
             const data = await applyReturnedState(res);
@@ -5424,6 +5434,47 @@ export default function Page() {
         });
         if (model.kind === 'video' && !nextState.settings.defaultVideoModelId) await patchSettings({
             defaultVideoModelId: model.id
+        });
+    }
+    function askBulkModelState(enabled) {
+        const ids = visibleModels.filter((model)=>model.kind !== 'unknown' && (model.enabled && model.published) !== enabled).map((model)=>model.id);
+        if (!ids.length) return notify(enabled ? '当前筛选中没有可启用的模型' : '当前筛选中没有已启用的模型');
+        const skipped = bulkModelCounts.unclassified;
+        setConfirmState({
+            title: `${enabled ? '启用' : '停用'}当前筛选中的模型？`,
+            text: `将${enabled ? '启用' : '停用'} ${ids.length} 个模型${skipped ? `，跳过 ${skipped} 个未分类模型` : ''}。操作范围包括当前搜索、服务商、快捷筛选和分类结果。`,
+            danger: !enabled,
+            confirmText: enabled ? `启用 ${ids.length} 个模型` : `停用 ${ids.length} 个模型`,
+            action: async ()=>{
+                setBulkModelBusy(true);
+                try {
+                    const res = await fetch('/api/models/bulk-state', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids, enabled })
+                    });
+                    const result = await applyReturnedState(res);
+                    if (enabled && result.state) {
+                        if (!result.state.settings.agentModelId) {
+                            const model = visibleModels.find((item)=>ids.includes(item.id) && item.kind === 'chat' && !isInternalIntentModel(item));
+                            if (model) await patchSettings({ agentModelId: model.id });
+                        }
+                        if (!result.state.settings.defaultImageModelId) {
+                            const model = visibleModels.find((item)=>ids.includes(item.id) && item.kind === 'image' && item.capabilities.includes('generate'));
+                            if (model) await patchSettings({ defaultImageModelId: model.id });
+                        }
+                        if (!result.state.settings.defaultVideoModelId) {
+                            const model = visibleModels.find((item)=>ids.includes(item.id) && item.kind === 'video');
+                            if (model) await patchSettings({ defaultVideoModelId: model.id });
+                        }
+                    }
+                    notify(`已${enabled ? '启用' : '停用'} ${ids.length} 个模型${skipped ? `，跳过 ${skipped} 个未分类模型` : ''}`);
+                } catch (error) {
+                    notify(error instanceof Error ? error.message : '批量更新模型失败');
+                } finally {
+                    setBulkModelBusy(false);
+                }
+            }
         });
     }
     function askDeleteManualModel(model) {
@@ -8417,7 +8468,7 @@ export default function Page() {
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
-        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap === 'music-generate' ? '音乐生成' : cap === '3d-generate' ? '三维生成' : cap;
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap === 'music-generate' ? '音乐生成' : cap === 'transcription' ? '语音转写' : cap === '3d-generate' ? '三维生成' : cap;
         return /*#__PURE__*/ _jsxs("article", {
             className: `model-card surface ${inUse ? 'in-use' : ''}`,
             children: [
@@ -8459,7 +8510,7 @@ export default function Page() {
                                 }),
                                 /*#__PURE__*/ _jsx("span", {
                                 className: `kind-badge ${model.kind}`,
-                                    children: modelKindLabel(model.kind)
+                                    children: modelLibraryCategoryLabel(model)
                                 }),
                                 model.source === 'manual' && /*#__PURE__*/ _jsx("span", {
                                     className: "model-source-badge",
@@ -8528,7 +8579,7 @@ export default function Page() {
                                     className: `model-kind-option audio ${model.kind === 'audio' ? 'active' : ''}`,
                                     disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'audio'),
-                                    children: "配音"
+                                    children: "音频"
                                 }),
                                 /*#__PURE__*/ _jsx("button", {
                                     type: "button",
@@ -12562,12 +12613,45 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                              /*#__PURE__*/ _jsxs("div", {
                                                 className: "model-count",
                                                 children: [
-                                                    "已选择 ",
+                                                    "已启用 ",
                                                     /*#__PURE__*/ _jsx("strong", {
-                                                    children: availableChatModels.length + availableImageModels.length + availableVideoModels.length + activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === 'audio').length + activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === '3d').length
+                                                    children: activeProviderModels.filter((model)=>model.enabled && model.published).length
                                                     }),
                                                     " / ",
                                                      activeProviderModels.length
+                                                ]
+                                            })
+                                        ]
+                                    }),
+                                    /*#__PURE__*/ _jsxs("div", {
+                                        className: "model-bulk-actions surface",
+                                        children: [
+                                            /*#__PURE__*/ _jsxs("span", {
+                                                children: [
+                                                    "当前范围 ",
+                                                    /*#__PURE__*/ _jsx("strong", { children: visibleModels.length }),
+                                                    " 个 · 可启用 ",
+                                                    /*#__PURE__*/ _jsx("strong", { children: bulkModelCounts.enabled }),
+                                                    " · 可停用 ",
+                                                    /*#__PURE__*/ _jsx("strong", { children: bulkModelCounts.disabled }),
+                                                    bulkModelCounts.unclassified ? ` · 未分类 ${bulkModelCounts.unclassified} 个将跳过` : ''
+                                                ]
+                                            }),
+                                            /*#__PURE__*/ _jsxs("div", {
+                                                children: [
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        disabled: bulkModelBusy || !bulkModelCounts.enabled,
+                                                        onClick: ()=>askBulkModelState(true),
+                                                        children: `启用当前筛选 (${bulkModelCounts.enabled})`
+                                                    }),
+                                                    /*#__PURE__*/ _jsx("button", {
+                                                        type: "button",
+                                                        className: "danger",
+                                                        disabled: bulkModelBusy || !bulkModelCounts.disabled,
+                                                        onClick: ()=>askBulkModelState(false),
+                                                        children: `停用当前筛选 (${bulkModelCounts.disabled})`
+                                                    })
                                                 ]
                                             })
                                         ]
@@ -12616,8 +12700,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         '视频模型'
                                                     ],
                                                     [
-                                                        'audio',
-                                                        '配音模型'
+                                                        'speech',
+                                                        '配音'
+                                                    ],
+                                                    [
+                                                        'music',
+                                                        '音乐'
+                                                    ],
+                                                    [
+                                                        'transcription',
+                                                        '语音转写'
                                                     ],
                                                     [
                                                         '3d',
@@ -12665,7 +12757,9 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         group.some((model)=>model.kind === 'chat') ? '对话' : '',
                                                         group.some((model)=>model.kind === 'image') ? '图片' : '',
                                                         group.some((model)=>model.kind === 'video') ? '视频' : '',
-                                                        group.some((model)=>model.kind === 'audio') ? '配音' : '',
+                                                        group.some((model)=>modelMatchesLibraryCategory(model, 'speech')) ? '配音' : '',
+                                                        group.some((model)=>modelMatchesLibraryCategory(model, 'music')) ? '音乐' : '',
+                                                        group.some((model)=>modelMatchesLibraryCategory(model, 'transcription')) ? '转写' : '',
                                                         group.some((model)=>model.kind === '3d') ? '三维' : '',
                                                         group.some((model)=>model.kind === 'unknown') ? '待归类' : ''
                                                     ].filter(Boolean).join(' · ');

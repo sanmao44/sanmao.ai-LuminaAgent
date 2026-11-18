@@ -1764,7 +1764,7 @@ export default function LocalEditEditor({ imageUrl, initialMaskDataUrl, initialA
        <section className="local-edit-segmentation-card" aria-label="本地智能点选模型">
               <div className="local-edit-segmentation-head"><span>本地智能点选（SAM）</span><b>{segmentationStatus === 'ready' ? '已安装' : segmentationCached ? '已缓存' : '免费可用'}</b></div>
               <p>模型文件随应用提供，首次使用会缓存{LOCAL_SEGMENTATION_BROWSER_INFO.estimatedLabel}到此浏览器；图片不会上传，未安装时仍可用框选和画笔。</p>
-              {segmentationStatus === 'loading' && <div className="local-edit-segmentation-progress" aria-live="polite"><progress max="100" value={segmentationProgress} /><span>正在安装 {segmentationProgress}%</span></div>}
+              {segmentationStatus === 'loading' && <div className="local-edit-segmentation-progress" aria-live="polite"><span className="local-edit-segmentation-progress-bar" role="progressbar" aria-label="智能点选模型安装进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={segmentationProgress}><i style={{ width: `${segmentationProgress}%` }} /></span><span>正在安装 {segmentationProgress}%</span></div>}
               {segmentationProviderError && segmentationStatus === 'error' && <div className="local-edit-segmentation-error" role="alert">{segmentationProviderError}</div>}
               <div className="local-edit-segmentation-actions">
                  <button type="button" disabled={segmentationStatus === 'loading' || saving || smartBusy} onClick={() => void installLocalSegmentationModel()}>{segmentationStatus === 'ready' ? '已就绪，可直接点选' : segmentationStatus === 'error' ? '重试安装' : segmentationCached ? '启用本地模型' : '安装免费智能点选模型'}</button>

@@ -22,6 +22,7 @@ export const CONNECTION_NODE_OPTIONS: readonly CanvasConnectionNodeOption[] = [
   { kind: "image", icon: "✦", label: "图片节点", description: "连接到图片生成节点" },
   { kind: "video", icon: "▶", label: "视频节点", description: "连接到视频生成节点" },
   { kind: "audio", icon: "♫", label: "音频节点", description: "作为视频生成的参考音频" },
+  { kind: "threeD", icon: "◇", label: "三维模型节点", description: "连接后配置三维生成任务" },
   { kind: "text", icon: "T", label: "Agent 节点", description: "连接对话上下文并调用对话模型" },
   { kind: "upscale", icon: "↗", label: "超分节点", description: "连接一张已完成图片并打开超分设置" },
   { kind: "workflowImage", icon: "✧", label: "图片变体生成器", description: "按多条要求批量生成图片变体" },

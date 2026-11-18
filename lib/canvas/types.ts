@@ -10,15 +10,18 @@ import type {
 } from '../angle-control';
 import type { ProvenanceEdge } from '../provenance/types';
 import type { AudioTranscriptionResult } from '../../packages/contracts/audio-transcription';
-import type { CangyuanMediaOutput, CangyuanMediaTaskStatus, CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
+import type { SpeechAdvancedOptions } from '../../packages/contracts/audio-synthesis';
+import type { Cangyuan3DOptions, CangyuanMediaOutput, CangyuanMediaTaskStatus, CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
-export type CanvasMediaKind = 'image' | 'video' | 'audio';
+export type CanvasMediaKind = 'image' | 'video' | 'audio' | '3d';
+export type CanvasReferenceMediaKind = Exclude<CanvasMediaKind, '3d'>;
 /** Node kinds accepted by the canvas creation command. */
 export type CanvasNodeCreationKind =
   | 'image'
   | 'video'
   | 'audio'
+  | 'threeD'
   | 'text'
   | 'workflowImage'
   | 'workflowVideo'
@@ -319,6 +322,11 @@ export type CanvasGenerationMeta = {
 export type CanvasAudioGenerationMeta = {
   text: string;
   engine: 'provider' | 'offline';
+  advancedOptions?: SpeechAdvancedOptions;
+  /** Archived project asset URL for replaying a prior generation. */
+  url?: string;
+  name?: string;
+  assetId?: string;
   modelName?: string;
   /** Requested model preference (`auto` or a stable registry model ID). */
   requestedModelId?: string;
@@ -336,6 +344,18 @@ export type CanvasAudioDraft = {
   modelId?: string;
   format?: string;
   speed?: number;
+  applyTextNormalization?: 'auto' | 'on' | 'off';
+  engine?: string;
+  languageCode?: string;
+  language?: string;
+  seed?: number;
+  similarityBoost?: number;
+  stability?: number;
+  voiceId?: string;
+  emotion?: string;
+  instruct?: string;
+  dialogue?: Array<{ text: string; voice: string }>;
+  dialogueText?: string;
   updatedAt?: number;
 };
 
@@ -363,6 +383,25 @@ export type CanvasAudioMusicDraft = {
 
 /** Canvas projection of the authoritative asynchronous music task. */
 export type CanvasAudioMusicTask = {
+  id: string;
+  modelId: string;
+  modelName: string;
+  prompt?: string;
+  status: CangyuanMediaTaskStatus;
+  outputs: CangyuanMediaOutput[];
+  error?: string;
+  providerStatus?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type CanvasThreeDDraft = {
+  modelId?: string;
+  prompt: string;
+  options: Cangyuan3DOptions;
+};
+
+export type CanvasThreeDTaskSnapshot = {
   id: string;
   modelId: string;
   modelName: string;
@@ -470,11 +509,18 @@ export type CanvasNodeData = {
   referenceOrder?: string[];
   generation?: CanvasGenerationMeta;
   speechGeneration?: CanvasAudioGenerationMeta;
+  speechGenerations?: CanvasAudioGenerationMeta[];
   speechDraft?: CanvasAudioDraft;
   transcriptionDraft?: CanvasAudioTranscriptionDraft;
+  /** @deprecated Read-only compatibility for canvases saved before transcription history was introduced. */
   transcription?: CanvasAudioTranscriptionMeta;
+  transcriptions?: CanvasAudioTranscriptionMeta[];
   musicDraft?: CanvasAudioMusicDraft;
+  /** @deprecated Read-only compatibility for canvases saved before music task history was introduced. */
   musicTask?: CanvasAudioMusicTask;
+  musicTasks?: CanvasAudioMusicTask[];
+  threeDDraft?: CanvasThreeDDraft;
+  threeDTask?: CanvasThreeDTaskSnapshot;
   /** One line per requested batch variation on a generator node. */
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */

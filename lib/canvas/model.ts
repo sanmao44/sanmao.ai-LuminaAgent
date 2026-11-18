@@ -28,6 +28,14 @@ import {
 
 export const CANVAS_VERSION = "sanmao-canvas-3";
 
+export type CanvasReferenceableNode = CanvasNode & {
+  type: "media" | "upscale";
+  data: CanvasNodeData & {
+    kind: Exclude<CanvasMediaKind, "3d">;
+    url: string;
+  };
+};
+
 export function normalizeVariantRequirements(value: unknown): string[] {
   const source = Array.isArray(value)
     ? value
@@ -132,15 +140,16 @@ function nodeType(value: unknown): CanvasNode["type"] {
 }
 
 function mediaKind(value: unknown): CanvasMediaKind {
-  return value === "video" ? "video" : value === "audio" ? "audio" : "image";
+  return value === "video" ? "video" : value === "audio" ? "audio" : value === "3d" ? "3d" : "image";
 }
 
 /** Nodes that currently expose a usable image/video URL to other nodes. */
-export function isCanvasReferenceableNode(node: CanvasNode | undefined) {
+export function isCanvasReferenceableNode(node: CanvasNode | undefined): node is CanvasReferenceableNode {
   return Boolean(
     node &&
       (node.type === "media" || node.type === "upscale") &&
       node.data.kind &&
+      node.data.kind !== "3d" &&
       node.data.url,
   );
 }
@@ -174,6 +183,7 @@ export function isCanvasEmptyContentNode(node: CanvasNode | undefined) {
   const draftPrompt = data.editor?.draftPrompt;
 
   if (node.type === "media") {
+    if (data.kind === "3d") return !data.threeDTask && !data.threeDDraft?.prompt?.trim();
     return !hasCanvasText(data.url, data.prompt, data.agentPrompt, generationPrompt, draftPrompt);
   }
   if (node.type === "prompt") {
@@ -2651,6 +2661,24 @@ export function createEmptyMedia(
   position: { x: number; y: number },
   params?: CanvasGenerationParams,
 ): CanvasNode {
+  if (kind === "3d") {
+    return {
+      id: uid("node"),
+      type: "media",
+      x: position.x,
+      y: position.y,
+      w: 360,
+      h: 300,
+      data: {
+        kind: "3d",
+        name: "三维生成节点",
+        role: "待生成",
+        status: "draft",
+        statusLabel: "等待生成三维模型",
+        threeDDraft: { prompt: "", options: {} },
+      },
+    };
+  }
   if (kind === "audio") {
     return createMedia(
       "audio",

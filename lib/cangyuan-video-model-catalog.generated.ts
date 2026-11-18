@@ -12153,6 +12153,129 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     }
   },
   {
+    "id": "model-sd23-seedance-2.5-2",
+    "publicModel": "sd23-seedance-2.5-2",
+    "title": "sd23-seedance-2.5-2",
+    "summary": "sd23-seedance-2.5-2 的接口、请求参数与调用示例。",
+    "source": "models/sd23-seedance-2.5-2.json",
+    "lastReviewed": "2026-11-18",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "sd23-seedance-2.5-2",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "Seedance 2.5 按条线路，适合要带参考图、参考视频和参考音频的成片。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 sd23-seedance-2.5-2。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "画面比例，必填。推荐值：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；推荐值不代表完整允许集合。",
+          "required": true,
+          "type": "string",
+          "suggestions": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ]
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "4–30 秒。",
+          "required": true,
+          "type": "number",
+          "minimum": 4,
+          "maximum": 30,
+          "suggestedDefault": 5
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "不传按 480p。推荐值：480p / 720p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "480p",
+            "720p"
+          ],
+          "suggestedDefault": "480p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 30 个。",
+          "type": "array",
+          "maxItems": 30
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "aspect_ratio": "16:9",
+            "duration": 5,
+            "model": "sd23-seedance-2.5-2",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-18"
+    }
+  },
+  {
     "id": "model-sd23-seedance-2.5-pro",
     "publicModel": "sd23-seedance-2.5-pro",
     "title": "sd23-seedance-2.5-pro",

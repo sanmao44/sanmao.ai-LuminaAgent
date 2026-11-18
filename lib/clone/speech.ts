@@ -10,7 +10,7 @@
  */
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
 import { getRuntimeModelCandidates } from '../store';
-import { getSpeechModelProfile, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, type AudioSynthesisRequest, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModelCandidates>>[number]>;
 
@@ -27,6 +27,7 @@ export function speechEndpoint(provider: RuntimeProvider) {
 /** 判断音频容器：优先响应头，响应头不靠谱时按文件头兜底。 */
 const SPEECH_FORMAT_CONTENT_TYPES: Readonly<Record<SpeechOutputFormat, string>> = Object.freeze({
   mp3: 'audio/mpeg',
+  mp3_hq: 'audio/mpeg',
   wav: 'audio/wav',
   opus: 'audio/opus',
   aac: 'audio/aac',
@@ -67,14 +68,7 @@ const RETRY_STATUS = new Set([400, 404, 422]);
 /** 留空音色时，若服务端要求必填 voice，用它兜底（OpenAI 兼容平台的默认音色）。 */
 export const DEFAULT_SPEECH_VOICE = 'alloy';
 
-export type SpeechRequest = {
-  text: string;
-  /** 留空表示用服务商默认音色（Gitee 这类没有 voice 参数的服务商必须留空）。 */
-  voice?: string;
-  format?: SpeechOutputFormat;
-  speed?: number;
-  signal?: AbortSignal;
-};
+export type SpeechRequest = Pick<AudioSynthesisRequest, 'text' | 'voice' | 'format' | 'speed' | 'applyTextNormalization' | 'engine' | 'languageCode' | 'language' | 'seed' | 'similarityBoost' | 'stability' | 'voiceId' | 'emotion' | 'instruct' | 'dialogue'> & { signal?: AbortSignal };
 
 export type SpeechAudio = {
   buffer: Buffer;
@@ -98,20 +92,38 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   }
   const profile = getSpeechModelProfile(runtime.model.rawId);
   if (profile) {
-    if (input.format && !profile.responseFormats.includes(input.format)) {
+    if (profile.textMaxLength !== undefined && text.length > profile.textMaxLength) {
+      throw new Error(`语音模型 ${profile.publicModel} 的正文最多 ${profile.textMaxLength} 个字符。`);
+    }
+    if (input.format && !getSpeechModelResponseFormats(profile.publicModel, input.engine).includes(input.format)) {
       throw new Error(`语音模型 ${profile.publicModel} 不支持 ${input.format} 格式。`);
     }
-    if (input.speed !== undefined && !profile.speedRange) {
+    const speedRange = getSpeechModelSpeedRange(profile.publicModel, input.engine);
+    if (input.speed !== undefined && !speedRange) {
       throw new Error(`语音模型 ${profile.publicModel} 不支持速度参数。`);
     }
-    if (input.speed !== undefined && profile.speedRange && (input.speed < profile.speedRange.min || input.speed > profile.speedRange.max)) {
-      throw new Error(`语音模型 ${profile.publicModel} 的速度必须在 ${profile.speedRange.min}–${profile.speedRange.max} 之间。`);
+    if (input.speed !== undefined && speedRange && (input.speed < speedRange.min || input.speed > speedRange.max)) {
+      throw new Error(`语音模型 ${profile.publicModel} 的速度必须在 ${speedRange.min}–${speedRange.max} 之间。`);
     }
+    if (profile.requiresVoiceId && !input.voiceId?.trim()) throw new Error('声音克隆模型必须填写已登记的音色编号。');
+    if (profile.supportsDialogue && (!input.dialogue?.length || input.dialogue.length > 50)) throw new Error('多人对白需要 1 到 50 句。');
+    const advancedOptions = getSpeechModelAdvancedOptions(profile.publicModel, input);
     const body: Record<string, unknown> = { model: runtime.model.rawId, input: text };
     const voice = String(input.voice || '').trim();
-    if (voice) body.voice = voice;
+    if (voice && !profile.supportsDialogue && !profile.requiresVoiceId) body.voice = voice;
     if (input.format) body.response_format = input.format;
     if (input.speed !== undefined) body.speed = input.speed;
+    if (advancedOptions.applyTextNormalization) body.apply_text_normalization = advancedOptions.applyTextNormalization;
+    if (advancedOptions.engine) body.engine = advancedOptions.engine;
+    if (advancedOptions.languageCode) body.language_code = advancedOptions.languageCode;
+    if (advancedOptions.language) body.language = advancedOptions.language;
+    if (advancedOptions.seed !== undefined) body.seed = advancedOptions.seed;
+    if (advancedOptions.similarityBoost !== undefined) body.similarity_boost = advancedOptions.similarityBoost;
+    if (advancedOptions.stability !== undefined) body.stability = advancedOptions.stability;
+    if (advancedOptions.voiceId) body.voice_id = advancedOptions.voiceId;
+    if (advancedOptions.emotion) body.emotion = advancedOptions.emotion;
+    if (advancedOptions.instruct) body.instruct = advancedOptions.instruct;
+    if (advancedOptions.dialogue?.length) body.dialogue = advancedOptions.dialogue;
     const response = await fetch(speechEndpoint(runtime.provider), {
       method: 'POST',
       headers: { ...authHeaders(runtime.provider), 'Content-Type': 'application/json' },
