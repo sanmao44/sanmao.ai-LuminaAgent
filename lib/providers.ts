@@ -200,6 +200,12 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
   if (/audio[-_ ]?transcri|\/audio\/transcriptions|speech[-_ ]?to[-_ ]?text|\basr\b|\bstt\b/i.test(text)) {
     capabilities.push('transcription');
   }
+  if (/text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synthesis|generation)|\btts\b|\/audio\/speech(?:[/?"'\s]|$)/i.test(text)) {
+    capabilities.push('speech');
+  }
+  if (/text[-_ ]?to[-_ ]?music|music[-_ ]?(?:generation|generate|creation)|\/music\/(?:generations|generate)(?:[/?"'\s]|$)/i.test(text)) {
+    capabilities.push('music-generate');
+  }
   // Some OpenAI-compatible model registries return only an id and omit
   // endpoint metadata. Keep discovery consistent with the shared model-kind
   // classifier so common third-party video families still enter the video

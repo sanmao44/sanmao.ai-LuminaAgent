@@ -151,6 +151,23 @@ test('detects video capability from endpoint and pricing metadata without using 
   assert.equal(models[0].capabilities.includes('video-generate'), true);
 });
 
+test('detects distinct audio task capabilities from explicit provider metadata', () => {
+  const models = providers.normalizeDiscoveredModels({ data: [
+    { id: 'custom-voice', capabilities: ['text-to-speech'] },
+    { id: 'custom-recognition', endpoints: ['/v1/audio/transcriptions'] },
+    { id: 'custom-music', operations: ['music_generation'] },
+    { id: 'generic-audio', modalities: ['audio'] },
+  ] });
+
+  assert.equal(models[0].capabilities.includes('speech'), true);
+  assert.equal(models[0].capabilities.includes('transcription'), false);
+  assert.equal(models[1].capabilities.includes('transcription'), true);
+  assert.equal(models[1].capabilities.includes('speech'), false);
+  assert.equal(models[2].capabilities.includes('music-generate'), true);
+  assert.equal(models[2].capabilities.includes('speech'), false);
+  assert.deepEqual(models[3].capabilities, []);
+});
+
 test('detects native task transport from endpoint metadata', () => {
   const provider = { platform: 'custom', baseUrl: 'https://video.example', videoTransport: 'auto' };
   assert.equal(providers.inferVideoTransportFromMetadata({ endpoints: ['/v1/tasks', '/v1/tasks/{id}'] }, provider), 'native-task');

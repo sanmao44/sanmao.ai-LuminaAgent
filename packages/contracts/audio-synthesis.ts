@@ -57,6 +57,12 @@ const SPEECH_VOICE_LABELS: Readonly<Record<string, Readonly<Record<string, strin
     echo: '埃科（沉稳男声）', helio: '赫利奥（沉稳男声）', onyx: '奥尼克斯（沉稳男声）',
     fable: '费布尔（叙事男声）',
   }),
+  'elevenlabs-v4-tts': Object.freeze({
+    Rachel: '瑞秋', Aria: '阿莉娅', Roger: '罗杰', Sarah: '莎拉', Laura: '劳拉', Charlie: '查理',
+    George: '乔治', Callum: '卡勒姆', River: '里弗', Liam: '利亚姆', Charlotte: '夏洛特',
+    Alice: '爱丽丝', Matilda: '玛蒂尔达', Will: '威尔', Jessica: '杰西卡', Eric: '埃里克',
+    Chris: '克里斯', Brian: '布莱恩', Daniel: '丹尼尔', Lily: '莉莉', Bill: '比尔',
+  }),
 });
 
 export function speechVoiceLabel(voice: string, publicModel: string): string {
