@@ -1,4 +1,4 @@
-import { CANGYUAN_SPEECH_OUTPUT_FORMATS, type AudioSynthesisPort, type AudioSynthesisRequest, type AudioSynthesisResult, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { SPEECH_OUTPUT_FORMATS, type AudioArtifactPersistencePort, type AudioSynthesisPort, type AudioSynthesisRequest, type AudioSynthesisResult, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 const MAX_AUDIO_SYNTHESIS_TEXT_LENGTH = 5000;
 export const MAX_AUDIO_SYNTHESIS_BYTES = 50 * 1024 * 1024;
@@ -52,7 +52,7 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   }
   const voice = typeof source.voice === 'string' ? source.voice.trim() : '';
   if (voice.length > 100) throw new AudioSynthesisInputError('音色名称最多 100 个字符。');
-  if (source.format !== undefined && (typeof source.format !== 'string' || !CANGYUAN_SPEECH_OUTPUT_FORMATS.includes(source.format as SpeechOutputFormat))) {
+  if (source.format !== undefined && (typeof source.format !== 'string' || !SPEECH_OUTPUT_FORMATS.includes(source.format as SpeechOutputFormat))) {
     throw new AudioSynthesisInputError('配音格式无效。');
   }
   if (source.speed !== undefined && (typeof source.speed !== 'number' || !Number.isFinite(source.speed))) {
@@ -116,4 +116,19 @@ export async function synthesizeAudioRequest(
 ) {
   const request = parseRequest(input);
   return validateResult(await port.synthesize(request, signal));
+}
+
+export async function synthesizeAndPersistAudio(
+  input: unknown,
+  synthesis: AudioSynthesisPort,
+  persistence: AudioArtifactPersistencePort,
+  signal?: AbortSignal,
+) {
+  const result = await synthesizeAudioRequest(input, synthesis, signal);
+  try {
+    const stored = await persistence.persist(result.data, result.contentType);
+    return { ...result, storageUrl: stored.url };
+  } catch {
+    return { ...result, storageError: '音频生成成功，但保存到媒体库失败。请先下载本次结果。' };
+  }
 }

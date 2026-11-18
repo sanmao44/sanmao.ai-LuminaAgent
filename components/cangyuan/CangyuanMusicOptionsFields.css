@@ -1,0 +1,8 @@
+.cangyuan-music-advanced{grid-column:1/-1;min-width:0;border-top:1px solid var(--line);padding-top:8px}
+.cangyuan-music-advanced>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:10px;font-weight:700;cursor:pointer;list-style:none}
+.cangyuan-music-advanced>summary::-webkit-details-marker{display:none}
+.cangyuan-music-advanced>summary::after{content:"＋";color:var(--accent-text);font-size:12px;line-height:1}
+.cangyuan-music-advanced[open]>summary::after{content:"−"}
+.cangyuan-music-advanced[open]>.cangyuan-music-fields-grid{margin-top:9px}
+.cangyuan-music-advanced>.cangyuan-music-ranges{margin-top:9px}
+.cangyuan-music-advanced .cangyuan-music-text-field small{color:var(--muted);font-size:9px;font-weight:400;line-height:1.35}

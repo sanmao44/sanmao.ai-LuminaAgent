@@ -7,7 +7,7 @@ import { renderAngleOutput } from '@/lib/angle-image';
 import type { GeneratedImage } from '@/lib/types';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { referenceRecordsForLog } from '@/lib/reference-images';
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
+import { MAX_IMAGE_REFERENCES, parseImageModelParameters, type CanvasImageIntentPreview, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from '@/packages/contracts/creative';
 import { resolveCanvasImageRequestIntent } from '@/apps/api/image-intent-composition';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { enforceLocalEditMask } from '@/lib/local-edit-composite';
@@ -134,6 +134,9 @@ export async function POST(request: Request) {
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('image-generate');
     const body = await request.json();
+    const parsedImageParameters = parseImageModelParameters(body);
+    if (!parsedImageParameters.ok) return Response.json({ error: parsedImageParameters.error }, { status: 400 });
+    const rawMarkupImage = parsedImageParameters.value.markupImage || '';
     sourceForLog = normalizeGenerationSource(body.source, 'workspace');
     const prompt = String(body.prompt || '').trim();
     const presetId = typeof body.presetId === 'string' ? body.presetId.trim().slice(0, 100) : undefined;
@@ -186,9 +189,9 @@ export async function POST(request: Request) {
       return Response.json({ error: '图片操作必须是 generate、edit、reference-generate 或 auto。' }, { status: 400 });
     }
     const requestedMode: ImageRequestMode = requestedImageOperation
-      || (camera || rawMask || rawMoveGuide ? 'edit' : 'auto');
-    if (requestedMode === 'generate' && (rawMask || rawMoveGuide)) {
-      return Response.json({ error: '蒙版和移动引导只能用于改图操作。' }, { status: 400 });
+      || (camera || rawMask || rawMoveGuide || rawMarkupImage ? 'edit' : 'auto');
+    if (requestedMode === 'generate' && (rawMask || rawMoveGuide || rawMarkupImage)) {
+      return Response.json({ error: '蒙版、移动引导和透明标记图只能用于改图操作。' }, { status: 400 });
     }
     const mask = rawMask.startsWith('data:image/png') ? rawMask : undefined;
     const moveGuide = rawMoveGuide.startsWith('data:image/') ? rawMoveGuide : undefined;
@@ -199,8 +202,8 @@ export async function POST(request: Request) {
     if (rawMoveSourceMask && !moveSourceMask) return Response.json({ error: '移动原位置范围必须是 PNG 图片。' }, { status: 400 });
     if (moveGuide && (!mask || !references.length)) return Response.json({ error: '移动引导图需要同时提交原图和局部编辑范围。' }, { status: 400 });
     if (moveSourceMask && !mask) return Response.json({ error: '移动原位置范围需要同时提交局部编辑范围。' }, { status: 400 });
-    if (requestedMode === 'reference-generate' && (mask || moveGuide || camera)) {
-      return Response.json({ error: '参考图生成不能同时提供局部编辑或角度控制。' }, { status: 400 });
+    if (requestedMode === 'reference-generate' && (mask || moveGuide || camera || rawMarkupImage)) {
+      return Response.json({ error: '参考图生成不能同时提供局部编辑、透明标记图或角度控制。' }, { status: 400 });
     }
     const submittedIntentPreview = isCanvasImageIntentPreview(body.imageIntentPreview)
       && body.imageIntentPreview.operation === requestedMode
@@ -212,7 +215,7 @@ export async function POST(request: Request) {
           isCanvasRequest: sourceForLog === 'canvas',
           prompt: baseGenerationPrompt,
           imageReferenceCount: references.length,
-          hasMask: Boolean(mask || moveGuide || camera),
+          hasMask: Boolean(mask || moveGuide || camera || rawMarkupImage),
           signal: requestController.signal,
         })
       : {
@@ -230,6 +233,9 @@ export async function POST(request: Request) {
     }
     if (imageOperation === 'edit' && !references.length) {
       return Response.json({ error: '改图操作至少需要一张图片参考。' }, { status: 400 });
+    }
+    if (rawMarkupImage && mask) {
+      return Response.json({ error: '透明标记图不能与蒙版同时使用。' }, { status: 400 });
     }
     const hasEditInput = imageOperation === 'edit';
     const requiredModelCapabilities = imageOperation === 'reference-generate'
@@ -254,6 +260,9 @@ export async function POST(request: Request) {
             ? '当前选中的图片模型不可用或不支持生图。'
             : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。';
       return Response.json({ error }, { status: 400 });
+    }
+    if (rawMarkupImage && runtime.provider.platform !== 'cangyuan') {
+      return Response.json({ error: '透明标记图仅支持已确认兼容的沧元图片型号。' }, { status: 400 });
     }
     runtimeProviderId = runtime.provider.id;
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
@@ -303,8 +312,11 @@ export async function POST(request: Request) {
       width: Number(body.width || 0),
       height: Number(body.height || 0),
       sizeMode,
+      ...(runtime.provider.platform === 'cangyuan' ? parsedImageParameters.value : {}),
       quality: String(body.quality || '自动'),
-      resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
+      ...(runtime.provider.platform !== 'cangyuan' && ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase())
+        ? { resolution: String(body.resolution).toUpperCase() }
+        : {}),
       outputFormat,
       responseFormat,
       background,
@@ -331,6 +343,9 @@ export async function POST(request: Request) {
       aspectRatio: aspectRatioForLog,
       resolution: resolutionForLog,
       outputSize: outputSizeForLog,
+      outputFormat,
+      ...(input.tier ? { tier: input.tier } : {}),
+      ...(input.series ? { series: input.series } : {}),
       count: input.count,
       angle: cameraPayload,
       references: referenceRecords.length ? referenceRecords : undefined,

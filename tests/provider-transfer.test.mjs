@@ -7,6 +7,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-provider-transfer-'));
 const previousDataDir = process.env.SANMAO_DATA_DIR;
+const transferCrypto = createTsRequire(process.cwd())('./lib/backup-crypto');
 
 function createContext(dataDir) {
   process.env.SANMAO_DATA_DIR = dataDir;
@@ -46,6 +47,7 @@ test('encrypted provider transfer moves provider keys and models while preservin
     name: 'Source Gateway',
     type: 'openai-compatible',
     platform: 'custom',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
     baseUrl: 'https://source.example/v1',
     apiKey: 'source-api-secret',
     videoApiKey: 'source-video-secret',
@@ -96,6 +98,7 @@ test('encrypted provider transfer moves provider keys and models while preservin
   const importedProvider = await target.store.getProviderWithKey(sourceProviderId);
   assert.equal(importedProvider.apiKey, 'source-api-secret');
   assert.equal(importedProvider.videoApiKey, 'source-video-secret');
+  assert.equal(importedProvider.creativeTaskProtocol, 'cangyuan-creative-v1');
   assert.equal(importedProvider.authHeader, 'X-API-Key');
   assert.equal(importedProvider.authPrefix, '');
   assert.notEqual(target.repository.snapshot().providers.find((provider) => provider.id === sourceProviderId).encryptedApiKey, sourceEncryptedKey);
@@ -143,10 +146,14 @@ test('transfers Cangyuan video settings and music/3D model taxonomy', async () =
   ]);
 
   const file = await cangyuanSource.app.exportProviderTransfer('cangyuan-transfer-password');
-  const result = await cangyuanTarget.app.importProviderTransfer(file, 'cangyuan-transfer-password');
+  const legacyBundle = JSON.parse(transferCrypto.decryptBackupPayload(file, 'cangyuan-transfer-password').toString('utf8'));
+  delete legacyBundle.providers[0].creativeTaskProtocol;
+  const legacyFile = transferCrypto.encryptBackupPayload(Buffer.from(JSON.stringify(legacyBundle)), 'cangyuan-transfer-password');
+  const result = await cangyuanTarget.app.importProviderTransfer(legacyFile, 'cangyuan-transfer-password');
   assert.deepEqual(result, { addedProviders: 1, updatedProviders: 0, importedModels: 2 });
   const imported = await cangyuanTarget.store.getProviderWithKey(providerId);
   assert.equal(imported.apiKey, 'cangyuan-secret');
+  assert.equal(imported.creativeTaskProtocol, 'cangyuan-creative-v1');
   assert.equal(imported.videoTransport, 'cangyuan-videos');
   assert.equal(imported.videoBaseUrl, 'https://direct-api.cangyuansuanli.cn');
   assert.equal(imported.videoGenerationPath, '/v1/videos');

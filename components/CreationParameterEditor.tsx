@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ModelPicker from "./ModelPicker";
 import SelectMenu from "./SelectMenu";
+import CangyuanImageModelOptions from "@/components/cangyuan/CangyuanImageModelOptions";
 import {
   IMAGE_QUALITY_OPTIONS,
   IMAGE_RATIOS,
@@ -16,7 +17,7 @@ import {
   type VideoCreationSettings,
   type VideoInputMode,
 } from "@/lib/creation/settings";
-import { resolveAvailableCreationModel } from "@/lib/creation/settings";
+import { normalizeImageCreationSettings, resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getCangyuanImageModelProfile } from "@/lib/cangyuan-image-capabilities";
 import { isCangyuanProvider } from "@/lib/cangyuan-provider";
 import { getCangyuanVideoModelProfile } from "@/lib/cangyuan-video-capabilities";
@@ -115,6 +116,9 @@ function ImageEditor({
   const cangyuanProfile = usesCangyuan && selectedModel
     ? getCangyuanImageModelProfile(selectedModel.rawId)
     : null;
+  const cangyuanResolutionOptions = cangyuanProfile?.resolutionEnum || [];
+  const cangyuanTierOptions = cangyuanProfile?.tierEnum || [];
+  const cangyuanSeriesOptions = cangyuanProfile?.seriesEnum || [];
   const cangyuanSizeSuggestions = (cangyuanProfile?.sizeRecommendations || []).filter((value) =>
     (value.toLowerCase() === "auto" || /^(?:\d+:\d+(?:-max)?|\d+(?:\.\d+)?k|\d+x\d+)$/i.test(value))
       && (!cangyuanProfile?.supportsAspectRatio || !/^\d+:\d+$/.test(value)),
@@ -161,7 +165,7 @@ function ImageEditor({
   const imageBackgroundOptions = usesCangyuan
     ? [
         { value: "auto" as const, label: "模型默认" },
-        ...(cangyuanProfile?.backgroundEnum.includes("transparent") ? [{ value: "api-transparent" as const, label: "API 透明" }] : []),
+        ...(cangyuanProfile?.backgroundEnum.includes("transparent") && !settings.layerDecomposition ? [{ value: "api-transparent" as const, label: "API 透明" }] : []),
         { value: "local-transparent" as const, label: "本地透明", description: "自动去白底并输出 PNG" },
         ...(cangyuanProfile?.backgroundEnum.includes("opaque") ? [{ value: "opaque" as const, label: "不透明" }] : []),
       ]
@@ -172,19 +176,26 @@ function ImageEditor({
         { value: "opaque" as const, label: "不透明" },
       ];
   const imageCountLimit = usesCangyuan
-    ? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
+    ? cangyuanProfile?.fixedOutputCount ?? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
     : 8;
-  const imageCountOptions = Array.from({ length: imageCountLimit }, (_, index) => index + 1);
+  const imageCountOptions = cangyuanProfile?.fixedOutputCount
+    ? [cangyuanProfile.fixedOutputCount]
+    : Array.from({ length: imageCountLimit }, (_, index) => index + 1);
   const selectedImageCount = imageCountOptions.includes(settings.count) ? settings.count : imageCountOptions[0] || 1;
   const referenceLimitExceeded = Boolean(cangyuanProfile?.imagesMaxItems && referenceCount > cangyuanProfile.imagesMaxItems);
-  const withCangyuanSize = (base: ImageCreationSettings, value: string): ImageCreationSettings => {
-    if (value.toLowerCase() === "auto") return { ...base, sizeMode: "system", aspect: "自动", resolution: "1K" };
-    if (/^\d+:\d+$/.test(value)) return { ...base, sizeMode: "system", aspect: value, resolution: "1K" };
+  const withCangyuanSize = (
+    base: ImageCreationSettings,
+    value: string,
+    profile = cangyuanProfile,
+  ): ImageCreationSettings => {
+    const defaultResolution = profile?.resolutionEnum?.length ? base.resolution : "1K";
+    if (value.toLowerCase() === "auto") return { ...base, sizeMode: "system", aspect: "自动", resolution: defaultResolution };
+    if (/^\d+:\d+$/.test(value)) return { ...base, sizeMode: "system", aspect: value, resolution: defaultResolution };
     const dimensions = /^(\d+)x(\d+)$/i.exec(value);
     if (dimensions) return { ...base, sizeMode: "custom", width: Number(dimensions[1]), height: Number(dimensions[2]) };
     const sizeTier = IMAGE_SIZE_TIERS.find((item) => item.value.toLowerCase() === value.toLowerCase());
     if (sizeTier) return { ...base, sizeMode: "system", aspect: "1:1", resolution: sizeTier.value };
-    return { ...base, sizeMode: "system", aspect: value, resolution: "1K" };
+    return { ...base, sizeMode: "system", aspect: value, resolution: defaultResolution };
   };
   const applyCangyuanSize = (value: string) => {
     onChange(withCangyuanSize(settings, value));
@@ -196,6 +207,17 @@ function ImageEditor({
       ...settings,
       backgroundMode,
       ...(needsPng && supportsPng ? { outputFormat: "png" as const } : {}),
+    });
+  };
+  const updateImageOutputFormat = (value: string) => {
+    const outputFormat = value as ImageCreationSettings["outputFormat"];
+    onChange({
+      ...settings,
+      outputFormat,
+      ...(outputFormat === "svg" ? { count: 1 } : {}),
+      ...(outputFormat === "svg" || outputFormat === "gif" || outputFormat === "png"
+        ? { outputCompression: undefined }
+        : {}),
     });
   };
   const updateImageModel = (modelId: string) => {
@@ -215,10 +237,29 @@ function ImageEditor({
             ? settings.resolution
             : settings.aspect;
       const selectedSize = options.find((value) => value.toLowerCase() === currentSize.toLowerCase()) || options[0];
-      const countLimit = Math.min(10, Math.max(1, profile?.nMax ?? 1));
+      const countLimit = profile?.fixedOutputCount ?? Math.min(10, Math.max(1, profile?.nMax ?? 1));
       const nextModelSettings = {
         ...nextSettings,
         count: Math.min(settings.count, countLimit),
+        resolution: profile?.resolutionEnum?.find((value) => value.toLowerCase() === settings.resolution.toLowerCase())
+          || profile?.resolutionDefault
+          || settings.resolution,
+        tier: profile?.tierEnum?.find((value) => value.toLowerCase() === settings.tier?.toLowerCase()),
+        series: profile?.seriesEnum?.find((value) => value.toLowerCase() === settings.series?.toLowerCase())
+          || profile?.seriesDefault,
+        seed: profile?.supportsSeed ? settings.seed : undefined,
+        enablePromptExpansion: profile?.supportsPromptExpansion
+          ? settings.enablePromptExpansion ?? profile.promptExpansionDefault ?? true
+          : undefined,
+        style: profile?.supportsStyle ? settings.style : undefined,
+        negativePrompt: profile?.supportsNegativePrompt || profile?.supportsNoParameter ? settings.negativePrompt : undefined,
+        layerDecomposition: profile?.supportsLayerDecomposition ? settings.layerDecomposition : undefined,
+        layerMaxImages: profile?.supportsLayerDecomposition ? settings.layerMaxImages : undefined,
+        layerTextRecognition: profile?.supportsLayerDecomposition ? settings.layerTextRecognition : undefined,
+        optimizePrompt: profile?.supportsPromptOptimization ? settings.optimizePrompt : undefined,
+        watermark: profile?.supportsWatermarkSetting ? settings.watermark : undefined,
+        safetyIdentifier: profile?.supportsSafetyIdentifier ? settings.safetyIdentifier : undefined,
+        markupImage: profile?.supportsMarkupImage ? settings.markupImage : undefined,
         quality: profile?.qualityEnum.includes(settings.quality) ? settings.quality : "自动",
         outputFormat: profile?.outputFormatEnum.includes(settings.outputFormat) ? settings.outputFormat : "png",
         backgroundMode: settings.backgroundMode === "api-transparent" && !profile?.backgroundEnum.includes("transparent")
@@ -226,16 +267,32 @@ function ImageEditor({
           ? "auto"
           : settings.backgroundMode,
       };
-      onChange(selectedSize ? withCangyuanSize(nextModelSettings, selectedSize) : nextModelSettings);
+      onChange(normalizeImageCreationSettings(
+        selectedSize ? withCangyuanSize(nextModelSettings, selectedSize, profile) : nextModelSettings,
+        runtime,
+      ));
       return;
     }
-    onChange({
+    onChange(normalizeImageCreationSettings({
       ...nextSettings,
       count: Math.min(settings.count, 8),
       quality: IMAGE_QUALITY_OPTIONS.some((option) => option.value === settings.quality) ? settings.quality : "自动",
       outputFormat: ["png", "jpeg", "webp"].includes(settings.outputFormat) ? settings.outputFormat : "png",
       backgroundMode: settings.backgroundMode === "api-transparent" ? "auto" : settings.backgroundMode,
-    });
+      tier: undefined,
+      series: undefined,
+      seed: undefined,
+      enablePromptExpansion: undefined,
+      style: undefined,
+      negativePrompt: undefined,
+      layerDecomposition: undefined,
+      layerMaxImages: undefined,
+      layerTextRecognition: undefined,
+      optimizePrompt: undefined,
+      watermark: undefined,
+      safetyIdentifier: undefined,
+      markupImage: undefined,
+    }, runtime));
   };
   const cangyuanSizeSelect = cangyuanSizeSuggestions.length > 0 ? (
     <SelectMenu
@@ -250,10 +307,85 @@ function ImageEditor({
       ariaLabel="沧元模型建议尺寸"
     />
   ) : null;
+  const cangyuanResolutionSelect = cangyuanResolutionOptions.length ? (
+    <SelectMenu
+      portalZIndex={portalZIndex}
+      value={cangyuanResolutionOptions.includes(settings.resolution) ? settings.resolution : cangyuanProfile?.resolutionDefault || cangyuanResolutionOptions[0]}
+      onChange={(value) => update("resolution", value)}
+      options={cangyuanResolutionOptions.map((value) => ({
+        value,
+        label: value.toLowerCase() === "768sq" ? "方形 768" : value.toUpperCase(),
+        description: value.toLowerCase() === "768sq" ? "适用于小尺寸方图输出" : `模型支持的清晰度：${value}`,
+      }))}
+      ariaLabel="模型清晰度"
+    />
+  ) : null;
+  const cangyuanTierSelect = cangyuanTierOptions.length ? (
+    <SelectMenu
+      portalZIndex={portalZIndex}
+      value={cangyuanTierOptions.includes(settings.tier || "") ? settings.tier || "" : ""}
+      onChange={(value) => update("tier", value || undefined)}
+      options={[
+        { value: "", label: "模型默认" },
+        ...cangyuanTierOptions.map((value) => ({
+          value,
+          label: value === "web" ? "网页档位" : value.toUpperCase(),
+          description: "按所选生成档位计费",
+        })),
+      ]}
+      ariaLabel="输出档位"
+    />
+  ) : null;
+  const cangyuanSeriesSelect = cangyuanSeriesOptions.length ? (
+    <SelectMenu
+      portalZIndex={portalZIndex}
+      value={cangyuanSeriesOptions.includes(settings.series || "") ? settings.series || "" : cangyuanProfile?.seriesDefault || cangyuanSeriesOptions[0]}
+      onChange={(value) => update("series", value)}
+      options={cangyuanSeriesOptions.map((value) => ({
+        value,
+        label: value === "flare" ? "Flare 系列（光耀）" : value === "sunburst" ? "Sunburst 系列（日芒）" : value,
+        description: "模型官方系列选项",
+      }))}
+      ariaLabel="图片系列"
+    />
+  ) : null;
+  const cangyuanPromptExpansionControl = cangyuanProfile?.supportsPromptExpansion ? (
+    <label className="creation-field creation-toggle">
+      <small>提示词扩写</small>
+      <button
+        type="button"
+        className={settings.enablePromptExpansion ? "active" : ""}
+        aria-pressed={Boolean(settings.enablePromptExpansion)}
+        title="开启后由模型补充提示词细节；关闭则严格按原提示词生成"
+        onClick={() => update("enablePromptExpansion", !settings.enablePromptExpansion)}
+      >
+        <span>{settings.enablePromptExpansion ? "自动优化" : "按原文"}</span>
+        <i />
+      </button>
+    </label>
+  ) : null;
+  const cangyuanSeedField = cangyuanProfile?.supportsSeed ? (
+    <label className="creation-field">
+      <small>固定随机种子</small>
+      <input
+        className="creation-field-input"
+        type="text"
+        value={settings.seed || ""}
+        onChange={(event) => update("seed", event.target.value.trim() || undefined)}
+        placeholder={cangyuanProfile?.seedInteger ? "输入整数；留空随机" : "留空随机"}
+        inputMode={cangyuanProfile?.seedInteger ? "numeric" : undefined}
+        pattern={cangyuanProfile?.seedInteger ? "-?[0-9]+" : undefined}
+        autoComplete="off"
+        title={cangyuanProfile?.seedInteger ? "请输入整数；留空时使用随机结果" : "留空时使用随机结果；填写后便于复现"}
+      />
+    </label>
+  ) : null;
   const qualityLabel = IMAGE_QUALITY_OPTIONS.find(
     (option) => option.value === settings.quality,
   )?.label.replace("质量", "") || settings.quality;
-  const sizeLabel = settings.sizeMode === "system"
+  const sizeLabel = usesCangyuan
+    ? requestedCangyuanSize
+    : settings.sizeMode === "system"
     ? settings.resolution
     : `${settings.width}×${settings.height}`;
   const parameterSummary = `${settings.aspect} · ${qualityLabel} · ${sizeLabel} · ${settings.count} 张`;
@@ -261,7 +393,8 @@ function ImageEditor({
   if (usesCangyuan) {
     if (!cangyuanProfile) cangyuanWarnings.push("该模型未登记在官方能力清单中，当前仅能确认基础提示词请求；请改用已登记模型，或先恢复默认参数。");
     else {
-      if (settings.count > (cangyuanProfile.nMax || 1)) cangyuanWarnings.push(`该模型最多生成 ${cangyuanProfile.nMax || 1} 张，请调整生成数量。`);
+      if (!cangyuanProfile.fixedOutputCount && settings.count > (cangyuanProfile.nMax || 1)) cangyuanWarnings.push(`该模型最多生成 ${cangyuanProfile.nMax || 1} 张，请调整生成数量。`);
+      if (cangyuanProfile.fixedOutputCount && settings.count !== cangyuanProfile.fixedOutputCount) cangyuanWarnings.push(`该模型每次任务固定生成 ${cangyuanProfile.fixedOutputCount} 张。`);
       if (settings.mask && !cangyuanProfile.supportsMask) cangyuanWarnings.push("该模型不支持蒙版编辑，请移除蒙版或切换支持编辑的模型。");
       if (referenceLimitExceeded) cangyuanWarnings.push(`该模型最多接收 ${cangyuanProfile.imagesMaxItems} 张参考图。`);
       if ((settings.quality !== "自动" && settings.quality !== "auto" && !cangyuanProfile.qualityEnum.includes(settings.quality))
@@ -273,6 +406,11 @@ function ImageEditor({
         cangyuanWarnings.push("当前输出格式不受所选模型支持，请选择文档列出的格式。");
       }
       if (settings.backgroundMode === "api-transparent" && !cangyuanProfile.backgroundEnum.includes("transparent")) cangyuanWarnings.push("该模型不支持 API 透明背景；可改用本地透明处理。");
+      if (settings.layerDecomposition && referenceCount !== 1) cangyuanWarnings.push("分层输出需要恰好一张参考图片，请只保留一张需要拆层的图片。");
+      if (settings.layerDecomposition && settings.backgroundMode === "api-transparent") cangyuanWarnings.push("分层输出不能与 API 透明背景同时使用。");
+      if (settings.outputFormat === "svg" && settings.mask) cangyuanWarnings.push("SVG 仅支持文生图，不支持蒙版或改图；请移除蒙版或改用 PNG。");
+      if (settings.markupImage && referenceCount < 1) cangyuanWarnings.push("透明标记图需要至少 1 张参考图。");
+      if (settings.markupImage && settings.mask) cangyuanWarnings.push("透明标记图不能与蒙版同时使用。");
       if (settings.backgroundMode === "opaque" && !cangyuanProfile.backgroundEnum.includes("opaque")) cangyuanWarnings.push("该模型不支持指定不透明背景，请改用自动背景。");
       if (cangyuanSizeSuggestions.length && !cangyuanSizeSuggestions.some((value) => value.toLowerCase() === requestedCangyuanSize.toLowerCase())
         && !(settings.sizeMode === "system" && settings.aspect === "1:1" && settings.resolution === "1K")) {
@@ -296,7 +434,7 @@ function ImageEditor({
           <b>{cangyuanWarnings.length ? "沧元模型参数提示" : "沧元模型参数"}</b>
           <span>
             {cangyuanProfile
-              ? `单次最多 ${cangyuanProfile.nMax || 1} 张 · 参考图最多 ${cangyuanProfile.imagesMaxItems ?? "未注明"} 张 · ${cangyuanProfile.supportsMask ? "支持蒙版" : "不支持蒙版"}`
+              ? `${cangyuanProfile.fixedOutputCount ? `每次固定 ${cangyuanProfile.fixedOutputCount} 张` : `单次最多 ${cangyuanProfile.nMax || 1} 张`} · 参考图最多 ${cangyuanProfile.imagesMaxItems ?? "未注明"} 张 · ${cangyuanProfile.supportsMask ? "支持蒙版" : "不支持蒙版"}`
               : "仅发送文档可确认的基础字段；此模型的专属参数能力尚未登记。"}
             {cangyuanWarnings.length > 0 && ` ${cangyuanWarnings.join(" ")}`}
           </span>
@@ -345,6 +483,10 @@ function ImageEditor({
               </div>
             </div>
           )}
+          {cangyuanResolutionSelect && <div className="canvas-parameter-group">
+            <span className="canvas-parameter-group-label">输出清晰度</span>
+            {cangyuanResolutionSelect}
+          </div>}
           {(!usesCangyuan || cangyuanProfile?.supportsAspectRatio) && <div className="canvas-parameter-group">
             <span className="canvas-parameter-group-label">比例</span>
             <div className="canvas-parameter-options aspect" role="group" aria-label="图片比例">
@@ -372,6 +514,10 @@ function ImageEditor({
               ))}
             </div>
           </div>
+          {cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <div className="canvas-parameter-group">
+            <span className="canvas-parameter-group-label">生成系列</span>
+            {cangyuanSeriesSelect}
+          </div>}
           <button
             type="button"
             className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -385,6 +531,16 @@ function ImageEditor({
           </button>
           {advanced && (
             <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
+              {cangyuanTierSelect && <label className="creation-field">
+                <small>生成档位</small>
+                {cangyuanTierSelect}
+              </label>}
+              {!cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <label className="creation-field">
+                <small>生成系列</small>
+                {cangyuanSeriesSelect}
+              </label>}
+              {cangyuanPromptExpansionControl}
+              {cangyuanSeedField}
               {!usesCangyuan && <div className="canvas-parameter-group">
                 <span className="canvas-parameter-group-label">尺寸方式</span>
                 <div className="canvas-parameter-options size-mode" role="group" aria-label="图片尺寸方式">
@@ -397,7 +553,7 @@ function ImageEditor({
                 <SelectMenu
                   portalZIndex={portalZIndex}
                   value={settings.outputFormat}
-                  onChange={(value) => update("outputFormat", value)}
+                  onChange={updateImageOutputFormat}
                 options={imageFormatOptions}
                   ariaLabel="输出格式"
                 />
@@ -485,6 +641,10 @@ function ImageEditor({
                     <button type="button" className={settings.sizeMode === "custom" ? "active" : ""} aria-pressed={settings.sizeMode === "custom"} onClick={() => update("sizeMode", "custom")}>自定义</button>
                   </div>
                 </div>}
+                {cangyuanResolutionSelect && <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">输出清晰度</span>
+                  {cangyuanResolutionSelect}
+                </div>}
                 {!usesCangyuan && settings.sizeMode === "system" ? (
                   <div className="canvas-parameter-group">
                     <span className="canvas-parameter-group-label">清晰度</span>
@@ -531,6 +691,10 @@ function ImageEditor({
                     ))}
                   </div>
                 </div>
+                {cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <div className="canvas-parameter-group">
+                  <span className="canvas-parameter-group-label">生成系列</span>
+                  {cangyuanSeriesSelect}
+                </div>}
                 <button
                   type="button"
                   className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -544,12 +708,29 @@ function ImageEditor({
                 </button>
                 {advanced && (
                   <div className="creation-parameter-grid advanced canvas-parameter-extra-grid">
+                    {cangyuanTierSelect && <label className="creation-field">
+                      <small>生成档位</small>
+                      {cangyuanTierSelect}
+                    </label>}
+                    {!cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <label className="creation-field">
+                      <small>生成系列</small>
+                      {cangyuanSeriesSelect}
+                    </label>}
+                    {cangyuanPromptExpansionControl}
+                    {cangyuanSeedField}
+                    {cangyuanProfile && <CangyuanImageModelOptions
+                      profile={cangyuanProfile}
+                      settings={settings}
+                      referenceCount={referenceCount}
+                      portalZIndex={portalZIndex}
+                      onChange={onChange}
+                    />}
                     {imageFormatOptions.length > 0 && <label className="creation-field">
                       <small>输出格式</small>
                       <SelectMenu
                         portalZIndex={portalZIndex}
                         value={settings.outputFormat}
-                        onChange={(value) => update("outputFormat", value)}
+                        onChange={updateImageOutputFormat}
                         options={imageFormatOptions}
                         ariaLabel="输出格式"
                       />
@@ -627,6 +808,10 @@ function ImageEditor({
             ariaLabel="图片尺寸方式"
           />
         </label>}
+        {cangyuanResolutionSelect && <label className="creation-field">
+          <small>输出清晰度</small>
+          {cangyuanResolutionSelect}
+        </label>}
         {!usesCangyuan && settings.sizeMode === "system" ? (
           <label className="creation-field">
             <small>分辨率</small>
@@ -684,6 +869,10 @@ function ImageEditor({
             ariaLabel="生成数量"
           />
         </label>
+        {cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <label className="creation-field">
+          <small>生成系列</small>
+          {cangyuanSeriesSelect}
+        </label>}
         {flat && imageQualityOptions.length > 0 && (
           <label className="creation-field compact">
             <small>质量</small>
@@ -738,6 +927,23 @@ function ImageEditor({
       </button>
       {advanced && (
         <div className="creation-parameter-grid advanced">
+          {cangyuanTierSelect && <label className="creation-field">
+            <small>生成档位</small>
+            {cangyuanTierSelect}
+          </label>}
+          {!cangyuanProfile?.seriesRequired && cangyuanSeriesSelect && <label className="creation-field">
+            <small>生成系列</small>
+            {cangyuanSeriesSelect}
+          </label>}
+          {cangyuanPromptExpansionControl}
+          {cangyuanSeedField}
+          {cangyuanProfile && <CangyuanImageModelOptions
+            profile={cangyuanProfile}
+            settings={settings}
+            referenceCount={referenceCount}
+            portalZIndex={portalZIndex}
+            onChange={onChange}
+          />}
           {!flat && imageQualityOptions.length > 0 && (
             <label className="creation-field">
               <small>质量</small>
@@ -755,7 +961,7 @@ function ImageEditor({
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.outputFormat}
-              onChange={(value) => update("outputFormat", value)}
+              onChange={updateImageOutputFormat}
               options={imageFormatOptions}
               ariaLabel="输出格式"
             />
@@ -1264,7 +1470,7 @@ function VideoEditor({
           <span>
             {usesCangyuan
               ? cangyuanProfile
-                ? `仅对已核实型号开放扩展参数。时长 ${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒；比例和分辨率为建议值。首尾帧必须成对，并且不能与参考素材同时提交。`
+                ? `仅对已核实型号开放扩展参数。${limits.notes.join("；")}。上传大小与未公开数量上限属于本站中转服务限制。`
                 : "该沧元型号尚未核实专属参数，仅支持模型和提示词。"
               : limits.notes.join(" · ") || "当前操作不会提交自定义比例和分辨率。"}
           </span>

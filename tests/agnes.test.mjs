@@ -6,6 +6,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import test, { after, afterEach } from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const relayTestPngBytes = await sharp({
   create: { width: 1, height: 1, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
@@ -26,13 +27,17 @@ const signedMediaImport = `import('./signed-media')`;
 const detectionSource = await readFile(new URL('../lib/native-search-detection.ts', import.meta.url), 'utf8');
 const modelKindSource = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const agnesSource = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
+globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
 const providers = await importTypeScript(providersUrl, [
   detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch'),
   modelKindSource,
   agnesSource.replace(/^import .+;\r?\n/gm, ''),
   providersSource
+    .replace("import { isSvgImageBytes } from './svg-image';", 'const isSvgImageBytes = () => false;')
+    .replace("await import('./image-storage')", "Promise.resolve({ resolveStoredImageReference: async (value) => value })")
     .replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", 'const getCangyuanImageModelProfile = () => null;')
     .replace("import { isCangyuanProvider } from './cangyuan-provider';", 'const isCangyuanProvider = () => false;')
+    .replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;')
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", '')
@@ -42,6 +47,7 @@ const providers = await importTypeScript(providersUrl, [
   const signed = await globalThis.__providerTestSignedMedia.preparePublicMediaUrl(value, kind);
   return signed;
 } })`));
+delete globalThis.__providerImageReferenceReaderModule;
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
@@ -427,6 +433,95 @@ test('uses the stable default relay raw stream instead of a running quick tunnel
     if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
     if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('publishes uploaded audio through the default relay and returns its expiry', async () => {
+  const previous = {
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    uploadToken: process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN,
+  };
+  process.env.SANMAO_RELAY_MODE = '0';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = 'https://shared-relay.example';
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      ok: true,
+      url: 'https://shared-relay.example/api/relay/media/audio-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  try {
+    const bytes = Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00]);
+    const result = await signed.preparePublicMediaBytes(bytes, 'audio/mpeg', 'audio');
+    assert.deepEqual(result, {
+      url: 'https://shared-relay.example/api/relay/media/audio-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://shared-relay.example/api/relay/media');
+    assert.equal(calls[0].init.headers['content-type'], 'audio/mpeg');
+    assert.ok(calls[0].init.body instanceof Blob);
+    assert.deepEqual(new Uint8Array(await calls[0].init.body.arrayBuffer()), new Uint8Array(bytes));
+  } finally {
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.uploadToken === undefined) delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN; else process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN = previous.uploadToken;
+  }
+});
+
+test('publishes Cangyuan video references as raw media to the default relay', async () => {
+  const previous = {
+    mode: process.env.SANMAO_RELAY_MODE,
+    relay: process.env.SANMAO_MEDIA_RELAY_URL,
+    defaultRelay: process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL,
+    publicBase: process.env.SANMAO_PUBLIC_BASE_URL,
+    uploadToken: process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN,
+  };
+  process.env.SANMAO_RELAY_MODE = '0';
+  delete process.env.SANMAO_MEDIA_RELAY_URL;
+  process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = 'https://shared-relay.example';
+  delete process.env.SANMAO_PUBLIC_BASE_URL;
+  delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      ok: true,
+      url: 'https://shared-relay.example/api/relay/media/video-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  try {
+    const bytes = Buffer.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+    const result = await signed.preparePublicMediaBytes(bytes, 'video/mp4', 'video');
+    assert.deepEqual(result, {
+      url: 'https://shared-relay.example/api/relay/media/video-token',
+      expiresAt: '2099-01-01T00:30:00.000Z',
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://shared-relay.example/api/relay/media');
+    assert.equal(calls[0].init.headers['content-type'], 'video/mp4');
+    assert.ok(calls[0].init.body instanceof Blob);
+    assert.deepEqual(new Uint8Array(await calls[0].init.body.arrayBuffer()), new Uint8Array(bytes));
+    await assert.rejects(() => signed.preparePublicMediaBytes(Buffer.from([1, 2, 3, 4]), 'video/mp4', 'video'), /视频仅支持有效/);
+  } finally {
+    if (previous.mode === undefined) delete process.env.SANMAO_RELAY_MODE; else process.env.SANMAO_RELAY_MODE = previous.mode;
+    if (previous.relay === undefined) delete process.env.SANMAO_MEDIA_RELAY_URL; else process.env.SANMAO_MEDIA_RELAY_URL = previous.relay;
+    if (previous.defaultRelay === undefined) delete process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL; else process.env.SANMAO_DEFAULT_MEDIA_RELAY_URL = previous.defaultRelay;
+    if (previous.publicBase === undefined) delete process.env.SANMAO_PUBLIC_BASE_URL; else process.env.SANMAO_PUBLIC_BASE_URL = previous.publicBase;
+    if (previous.uploadToken === undefined) delete process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN; else process.env.SANMAO_MEDIA_RELAY_UPLOAD_TOKEN = previous.uploadToken;
   }
 });
 

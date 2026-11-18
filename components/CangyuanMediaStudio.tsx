@@ -1,28 +1,44 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import ThreeDModelPreview from '@/components/ThreeDModelPreview';
 import ModelPicker from '@/components/ModelPicker';
+import SelectMenu from '@/components/SelectMenu';
+import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
+import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
 import CangyuanMusicOptionsFields from '@/components/cangyuan/CangyuanMusicOptionsFields';
+import AudioTranscription from '@/components/AudioTranscription';
+import CangyuanThreeDScenarioPicker from '@/components/cangyuan/CangyuanThreeDScenarioPicker';
+import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from '@/components/cangyuan/CangyuanTripoQualityOptions';
+import CangyuanReferenceImagePreview from '@/components/cangyuan/CangyuanReferenceImagePreview';
+import { speechVoiceOptions } from '@/components/audio/voice-options';
+import { supportedSpeechModels } from '@/components/audio/model-options';
+import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
+import MediaTaskAudioOutput, { type MediaTaskAudioOutputValue } from '@/components/MediaTaskAudioOutput';
+import { mediaTaskModeLabel, mediaTaskProviderStatusLabel } from '@/components/media-task-presentation';
+import type { CangyuanThreeDScenario } from '@/components/cangyuan/three-d-presets';
 import type {
   CangyuanMediaCreateInput,
+  Cangyuan3DMode,
+  Cangyuan3DOptions,
+  Cangyuan3DView,
   CangyuanMediaKind,
   CangyuanMediaOutput,
   CangyuanMediaTask,
   CangyuanMusicOptions,
 } from '@/packages/contracts/cangyuan-media';
-import { getCangyuan3DModelProfile, getCangyuanMusicModelProfile } from '@/packages/contracts/cangyuan-media';
+import { CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL, getCangyuan3DModelProfile, getCangyuanMusicModelProfile, reconcileCangyuan3DMode } from '@/packages/contracts/cangyuan-media';
 import type { SpeechOutputFormat } from '@/packages/contracts/audio-synthesis';
-import { getCangyuanSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
+import { getSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
 import type { PublicState, RegistryModel } from '@/lib/types';
+import { listGenerationLogs } from '@/lib/generation-log-client';
+import type { GenerationLog } from '@/lib/generation-log';
 import { isCangyuanProvider } from '@/lib/cangyuan-provider';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
-type StudioMode = 'speech' | 'music' | '3d';
+type StudioMode = 'speech' | 'transcription' | 'music' | '3d';
 type StudioNotice = { kind: 'error' | 'info' | 'success'; text: string } | null;
 type SpeechResult = { url: string; name: string; modelName: string; contentType: string; extension: string };
 
@@ -45,27 +61,27 @@ function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
 }
 
-function providerModels(state: PublicState | null, capabilities: string[]) {
+function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | '3d-generate') {
   if (!state) return [];
-  return filterModelsByActiveProviders(state.models, state.providers.filter(isCangyuanProvider)).filter((model) =>
-    model.enabled && model.published
-    && capabilities.every((capability) => model.capabilities.includes(capability as RegistryModel['capabilities'][number])));
-}
-
-function threeDModels(state: PublicState | null) {
-  return providerModels(state, ['3d-generate']).filter((model) => getCangyuan3DModelProfile(model.rawId) !== null);
+  const providers = state.providers.filter(isCangyuanProvider);
+  return filterModelsByActiveProviders(state.models, providers, { capability });
 }
 
 function supportedMusicModels(state: PublicState | null) {
-  return providerModels(state, ['music-generate']).filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
+  return cangyuanTaskModels(state, 'music-generate').filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
 }
 
-function supportedSpeechModels(state: PublicState | null) {
-  return providerModels(state, ['speech']).filter((model) => getCangyuanSpeechModelProfile(model.rawId) !== null);
+function threeDModels(state: PublicState | null) {
+  return cangyuanTaskModels(state, '3d-generate').filter((model) => getCangyuan3DModelProfile(model.rawId) !== null);
+}
+
+function isLegacyTripoModel(model: RegistryModel | undefined) {
+  return model?.rawId.trim().toLowerCase() === 'tripo3d';
 }
 
 function isTripoModel(model: RegistryModel | undefined) {
-  return model?.rawId.trim().toLowerCase() === 'tripo3d';
+  const profile = model ? getCangyuan3DModelProfile(model.rawId.trim()) : null;
+  return profile?.modelId === 'tripo3d' || profile?.family === 'tripo';
 }
 
 function isTrellisModel(model: RegistryModel | undefined) {
@@ -98,140 +114,6 @@ function isPublicHttpsUrl(value: string) {
   }
 }
 
-function disposeModel(root: THREE.Object3D) {
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    mesh.geometry?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const material of materials) {
-      for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) value.dispose();
-      }
-      material.dispose();
-    }
-  });
-}
-
-function GlbPreview({ url, label }: { url: string; label: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    setError('');
-    setLoading(true);
-    let disposed = false;
-    let modelRoot: THREE.Object3D | null = null;
-    let frame = 0;
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#171b20');
-    const camera = new THREE.PerspectiveCamera(36, 1, 0.01, 1000);
-    let renderer: THREE.WebGLRenderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
-    } catch {
-      setLoading(false);
-      setError('浏览器当前无法创建三维预览，可直接下载 GLB 文件。');
-      return;
-    }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    host.replaceChildren(renderer.domElement);
-
-    scene.add(new THREE.HemisphereLight(0xf0f5ff, 0x343c46, 2.1));
-    const keyLight = new THREE.DirectionalLight(0xfff0dc, 2.5);
-    keyLight.position.set(3, 5, 4);
-    scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xc7e4ff, 1.15);
-    fillLight.position.set(-4, 2, -3);
-    scene.add(fillLight);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-
-    const requestRender = () => {
-      if (disposed || frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        const moving = controls.update();
-        renderer.render(scene, camera);
-        if (moving) requestRender();
-      });
-    };
-    controls.addEventListener('change', requestRender);
-
-    const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      requestRender();
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host);
-    resize();
-
-    const loader = new GLTFLoader();
-    loader.load(url, (gltf) => {
-      if (disposed) {
-        disposeModel(gltf.scene);
-        return;
-      }
-      modelRoot = gltf.scene;
-      const bounds = new THREE.Box3().setFromObject(modelRoot);
-      const center = bounds.getCenter(new THREE.Vector3());
-      const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-      modelRoot.position.sub(center);
-      scene.add(modelRoot);
-      const radius = Math.max(0.05, sphere.radius);
-      const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.55;
-      camera.position.set(distance * 0.9, distance * 0.62, distance);
-      camera.near = Math.max(0.001, radius / 1000);
-      camera.far = Math.max(100, distance * 12);
-      camera.updateProjectionMatrix();
-      controls.target.set(0, 0, 0);
-      controls.minDistance = radius * 1.2;
-      controls.maxDistance = distance * 4;
-      controls.update();
-      setLoading(false);
-      requestRender();
-    }, undefined, () => {
-      if (!disposed) {
-        setLoading(false);
-        setError('模型无法在线预览，可直接下载 GLB 文件。');
-      }
-    });
-    requestRender();
-
-    return () => {
-      disposed = true;
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-      controls.removeEventListener('change', requestRender);
-      controls.dispose();
-      if (modelRoot) disposeModel(modelRoot);
-      renderer.dispose();
-      renderer.domElement.remove();
-    };
-  }, [url]);
-
-  return (
-    <div className="cangyuan-glb-preview" aria-label={`${label} 三维模型预览`}>
-      <div className="cangyuan-glb-stage" ref={hostRef} />
-      {loading && <p className="cangyuan-glb-loading" role="status">正在加载模型预览…</p>}
-      {error && <p className="cangyuan-glb-error" role="status">{error}</p>}
-      <span className="cangyuan-glb-hint">拖动旋转 · 滚轮缩放</span>
-    </div>
-  );
-}
-
 export type CangyuanMediaStudioProps = {
   onOpenModels?: () => void;
   onNotify?: (message: string) => void;
@@ -254,9 +136,12 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const [musicOptions, setMusicOptions] = useState<CangyuanMusicOptions>({});
   const [prompt3d, setPrompt3d] = useState('');
   const [imageUrl, setImageUrl] = useState('');
-  const [generationMode, setGenerationMode] = useState<'text-to-3d' | 'image-to-3d'>('image-to-3d');
+  const [multiviewImages, setMultiviewImages] = useState<Partial<Record<Cangyuan3DView, string>>>({});
+  const [trellisAdvancedOpen, setTrellisAdvancedOpen] = useState(false);
+  const [generationMode, setGenerationMode] = useState<Cangyuan3DMode>('image-to-3d');
   const [texture, setTexture] = useState<'no' | 'standard' | 'HD'>('standard');
   const [pbr, setPbr] = useState(false);
+  const [tripoOptions, setTripoOptions] = useState<Cangyuan3DOptions>({});
   const [trellisTextureSize, setTrellisTextureSize] = useState('');
   const [trellisSeed, setTrellisSeed] = useState('');
   const [trellisMeshSimplify, setTrellisMeshSimplify] = useState('');
@@ -267,25 +152,40 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const [musicTasks, setMusicTasks] = useState<CangyuanMediaTask[]>([]);
   const [threeTasks, setThreeTasks] = useState<CangyuanMediaTask[]>([]);
   const [busy, setBusy] = useState(false);
+  const [uploadingMediaFields, setUploadingMediaFields] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<StudioNotice>(null);
   const [speechResult, setSpeechResult] = useState<SpeechResult | null>(null);
-  const [continuation, setContinuation] = useState<{ sourceTaskId?: string; sourceAudioId?: string; title: string } | null>(null);
-  const [previewOutput, setPreviewOutput] = useState<{ taskId: string; output: CangyuanMediaOutput; modelName: string } | null>(null);
+  const [speechLogs, setSpeechLogs] = useState<GenerationLog[]>([]);
+  const [speechHistoryLoading, setSpeechHistoryLoading] = useState(true);
+  const [speechHistoryError, setSpeechHistoryError] = useState('');
+  const [continuation, setContinuation] = useState<{ uploadUrl: string; continueAt?: string; title: string } | null>(null);
+  const [previewOutput, setPreviewOutput] = useState<{ taskId: string; output: CangyuanMediaOutput; outputIndex: number; modelName: string } | null>(null);
   const speechUrlRef = useRef('');
   const musicPollRef = useRef(false);
   const threePollRef = useRef(false);
   const musicPollCursorRef = useRef<string | null>(null);
   const threePollCursorRef = useRef<string | null>(null);
 
-  const cangyuanProviders = useMemo(() => publicState?.providers.filter(isCangyuanProvider) || [], [publicState]);
+  const handleMediaUploadState = useCallback((fieldId: string, uploading: boolean) => {
+    setUploadingMediaFields((current) => {
+      const next = new Set(current);
+      if (uploading) next.add(fieldId);
+      else next.delete(fieldId);
+      return next;
+    });
+  }, []);
+
   const speechModels = useMemo(() => supportedSpeechModels(publicState), [publicState]);
   const musicModels = useMemo(() => supportedMusicModels(publicState), [publicState]);
   const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
-  const speechProfile = useMemo(() => getCangyuanSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
+  const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
   const musicModel = useMemo(() => musicModels.find((model) => model.id === musicModelId) || musicModels[0], [musicModelId, musicModels]);
   const musicProfile = useMemo(() => getCangyuanMusicModelProfile(musicModel?.rawId || ''), [musicModel]);
   const model3d = useMemo(() => models3d.find((model) => model.id === model3dId) || models3d[0], [model3dId, models3d]);
+  const previewUrl = previewOutput
+    ? `/api/media/model-preview/${encodeURIComponent(previewOutput.taskId)}/${previewOutput.outputIndex}`
+    : '';
   const selectedTasks = mode === 'music' ? musicTasks : mode === '3d' ? threeTasks : [];
   const sortedMusicTasks = useMemo(() => [...musicTasks].sort(taskSort), [musicTasks]);
   const sortedThreeTasks = useMemo(() => [...threeTasks].sort(taskSort), [threeTasks]);
@@ -318,11 +218,25 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     }
   }, []);
 
+  const loadSpeechHistory = useCallback(async () => {
+    setSpeechHistoryLoading(true);
+    setSpeechHistoryError('');
+    try {
+      const logs = await listGenerationLogs(200);
+      setSpeechLogs(logs.filter((log) => log.mode === 'audio' && log.status === 'success' && Boolean(log.audioUrl)));
+    } catch (error) {
+      setSpeechHistoryError(error instanceof Error ? error.message : '读取配音记录失败');
+    } finally {
+      setSpeechHistoryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadPublicState();
     void loadTasks('music');
     void loadTasks('3d');
-  }, [loadPublicState, loadTasks]);
+    void loadSpeechHistory();
+  }, [loadPublicState, loadTasks, loadSpeechHistory]);
 
   useEffect(() => {
     if (!speechUrlRef.current) return;
@@ -339,8 +253,30 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   }, [speechModel?.id]);
 
   useEffect(() => {
+    if (continuation && musicModel?.rawId === 'suno-extend-audio') {
+      setMusicOptions({ uploadUrl: continuation.uploadUrl, ...(continuation.continueAt ? { continueAt: continuation.continueAt } : {}) });
+      return;
+    }
     setMusicOptions({});
   }, [musicModel?.id]);
+
+  useEffect(() => {
+    const profile = model3d ? getCangyuan3DModelProfile(model3d.rawId) : null;
+    setGenerationMode(profile?.defaultMode || 'image-to-3d');
+    setImageUrl('');
+    setMultiviewImages({});
+    setTexture('standard');
+    setPbr(false);
+    setTripoOptions({});
+    setTrellisTextureSize('');
+    setTrellisSeed('');
+    setTrellisMeshSimplify('');
+    setTrellisSsGuidance('');
+    setTrellisSsSteps('');
+    setTrellisSlatGuidance('');
+    setTrellisSlatSteps('');
+    setTrellisAdvancedOpen(false);
+  }, [model3d?.rawId]);
 
   useEffect(() => () => {
     if (speechUrlRef.current) URL.revokeObjectURL(speechUrlRef.current);
@@ -396,10 +332,10 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           text,
           modelId: speechModel.id,
           source: 'workspace',
-          ...(speechVoiceChoice === 'custom'
+          ...(speechProfile && speechVoiceChoice === 'custom'
             ? (speechCustomVoice.trim() ? { voice: speechCustomVoice.trim() } : {})
-            : (speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
-          format: speechFormat,
+            : (speechProfile && speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
+          ...(speechProfile ? { format: speechFormat } : {}),
           ...(speechProfile?.speedRange ? { speed: speechSpeed } : {}),
         }),
         cache: 'no-store',
@@ -409,18 +345,26 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         throw new Error(readError(payload, `配音生成失败（${response.status}）`));
       }
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const persistedUrl = response.headers.get('X-Audio-Url');
+      const url = persistedUrl || URL.createObjectURL(blob);
       if (speechUrlRef.current) URL.revokeObjectURL(speechUrlRef.current);
-      speechUrlRef.current = url;
+      speechUrlRef.current = persistedUrl ? '' : url;
       const extension = response.headers.get('X-Audio-Extension') || 'mp3';
       setSpeechResult({
         url,
-        name: `Cangyuan-speech-${Date.now()}.${extension}`,
+        name: `speech-${Date.now()}.${extension}`,
         modelName: response.headers.get('X-Audio-Model') || speechModel.displayName,
         contentType: blob.type || 'audio/mpeg',
         extension,
       });
+      await loadSpeechHistory();
       setNotice({ kind: 'success', text: '配音已生成。' });
+      const storageError = response.headers.get('X-Audio-Storage-Error');
+      if (storageError) {
+        let message = storageError;
+        try { message = decodeURIComponent(storageError); } catch { /* Keep the encoded transport value as a fallback. */ }
+        setNotice({ kind: 'info', text: message });
+      }
       onNotify?.('配音已生成');
     } catch (error) {
       setNotice({ kind: 'error', text: error instanceof Error ? error.message : '配音生成失败' });
@@ -432,15 +376,24 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   async function submitMedia(kind: CangyuanMediaKind) {
     const selectedModel = kind === 'music' ? musicModel : model3d;
     const prompt = (kind === 'music' ? musicPrompt : prompt3d).trim();
-    const promptRequired = kind === 'music' || !isTrellisModel(selectedModel);
+    const profile3d = kind === '3d' && selectedModel ? getCangyuan3DModelProfile(selectedModel.rawId) : null;
+    const promptRequired = kind === 'music' ? musicProfile?.promptRequired !== false : profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
+    const requiresSingleImage = kind === '3d' && (profile3d?.family === 'trellis' || generationMode === 'image-to-3d');
     if (!selectedModel || promptRequired && !prompt || busy) return;
-    if (kind === 'music' && continuation && selectedModel.rawId !== 'suno-v6') {
-      setNotice({ kind: 'error', text: '当前选择的音乐型号不支持续作，请选择 Suno v6 或清除续作来源。' });
+    if (kind === 'music' && continuation && (selectedModel.rawId !== 'suno-extend-audio' || musicOptions.uploadUrl !== continuation.uploadUrl)) {
+      setNotice({ kind: 'error', text: '请使用续写工作流和所选音频来源，或清除续写来源后继续。' });
       return;
     }
-    if (kind === '3d' && (isTrellisModel(selectedModel) || isTripoModel(selectedModel) && generationMode === 'image-to-3d') && !isPublicHttpsUrl(imageUrl)) {
+    if (requiresSingleImage && !isPublicHttpsUrl(imageUrl)) {
       setNotice({ kind: 'error', text: '图生 3D 需要可公开访问的图片 URL。' });
       return;
+    }
+    if (kind === '3d' && generationMode === 'multiview-to-3d') {
+      const presentViews = Object.entries(multiviewImages).filter(([, url]) => Boolean(url?.trim()));
+      if (presentViews.length < 2 || !multiviewImages.front?.trim()) {
+        setNotice({ kind: 'error', text: '多视图生成至少上传 2 张图片，并且必须包含正面图。' });
+        return;
+      }
     }
     setBusy(true);
     setNotice(null);
@@ -448,8 +401,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       let input: CangyuanMediaCreateInput;
       if (kind === 'music') {
         const supportedOptions = musicProfile?.allowedOptions.reduce<CangyuanMusicOptions>((result, key) => {
-          if (key !== 'sourceTaskId' && key !== 'sourceAudioId' && musicOptions[key] !== undefined) {
-            Object.assign(result, { [key]: musicOptions[key] });
+          const value = (musicOptions as Record<string, unknown>)[key];
+          if (value !== undefined) {
+            Object.assign(result, { [key]: value });
           }
           return result;
         }, {}) || {};
@@ -459,11 +413,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           prompt,
           options: {
             ...supportedOptions,
-            ...(continuation?.sourceTaskId ? { sourceTaskId: continuation.sourceTaskId } : {}),
-            ...(continuation?.sourceAudioId ? { sourceAudioId: continuation.sourceAudioId } : {}),
           },
         };
-      } else if (isTripoModel(selectedModel)) {
+      } else if (isLegacyTripoModel(selectedModel)) {
         input = {
           kind: '3d',
           modelId: selectedModel.id,
@@ -475,7 +427,21 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
             pbr,
           },
         };
+      } else if (profile3d?.family === 'tripo') {
+        const views = Object.fromEntries(Object.entries(multiviewImages).filter(([, url]) => Boolean(url?.trim()))) as Partial<Record<Cangyuan3DView, string>>;
+        input = {
+          kind: '3d',
+          modelId: selectedModel.id,
+          prompt,
+          options: {
+            mode: generationMode,
+            ...(generationMode === 'image-to-3d' ? { imageUrl: imageUrl.trim() } : {}),
+            ...(generationMode === 'multiview-to-3d' ? { multiviewImages: views } : {}),
+            ...tripoOptions,
+          },
+        };
       } else if (isTrellisModel(selectedModel)) {
+        const seed = trellisSeed.trim();
         input = {
           kind: '3d',
           modelId: selectedModel.id,
@@ -483,7 +449,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           options: {
             imageUrl: imageUrl.trim(),
             ...(trellisTextureSize.trim() ? { textureSize: trellisTextureSize.trim() } : {}),
-            ...(trellisSeed.trim() ? { seed: trellisSeed.trim() } : {}),
+            ...(seed ? { seed } : {}),
             ...(trellisMeshSimplify !== '' ? { meshSimplify: Number(trellisMeshSimplify) } : {}),
             ...(trellisSsGuidance !== '' ? { ssGuidanceStrength: Number(trellisSsGuidance) } : {}),
             ...(trellisSsSteps !== '' ? { ssSamplingSteps: Number(trellisSsSteps) } : {}),
@@ -492,7 +458,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           },
         };
       } else {
-        setNotice({ kind: 'error', text: '当前沧元三维型号尚未接入。' });
+        setNotice({ kind: 'error', text: '当前三维型号尚未接入。' });
         return;
       }
       const response = await fetch(`/api/cangyuan/${kind === 'music' ? 'music' : '3d'}`, {
@@ -525,70 +491,105 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     }
   }
 
-  function chooseContinuation(task: CangyuanMediaTask, output: CangyuanMediaOutput, includeTrack: boolean) {
-    if (task.providerModel !== 'suno-v6') {
-      setNotice({ kind: 'error', text: '当前音乐型号不支持续作参数。' });
-      return;
+  function applyThreeDScenario(scenario: CangyuanThreeDScenario) {
+    if (scenario.tripo) {
+      setTexture(scenario.tripo.texture);
+      setPbr(scenario.tripo.pbr);
     }
-    if (includeTrack && output.audioId && output.jobId) {
-      const continuationModel = musicModels.find((model) => model.rawId === 'suno-v6');
-      if (!continuationModel) {
-        setNotice({ kind: 'error', text: '请先在模型库启用 Suno v6，才能使用单曲续作。' });
-        return;
+    if (scenario.trellis) {
+      setTrellisTextureSize('');
+      setTrellisSeed('');
+      setTrellisMeshSimplify('');
+      setTrellisSsGuidance('');
+      setTrellisSsSteps('');
+      setTrellisSlatGuidance('');
+      setTrellisSlatSteps('');
+      const options = scenario.trellis;
+      if (options.meshSimplify !== undefined || options.slatGuidanceStrength !== undefined) setTrellisAdvancedOpen(true);
+      if (options.textureSize !== undefined) setTrellisTextureSize(options.textureSize);
+      if (options.meshSimplify !== undefined) setTrellisMeshSimplify(String(options.meshSimplify));
+      if (options.slatGuidanceStrength !== undefined) setTrellisSlatGuidance(String(options.slatGuidanceStrength));
+      if (scenario.id === 'concept' && !trellisSeed.trim()) {
+        setNotice({ kind: 'info', text: '概念建模建议固定随机种子；输入同一个种子可复现接近的网格。' });
       }
-      setMusicModelId(continuationModel.id);
-      setContinuation({ sourceTaskId: output.jobId, sourceAudioId: output.audioId, title: task.modelName });
-      setMode('music');
-      setNotice({ kind: 'info', text: '已选择单首曲目作为续作来源。' });
+    }
+  }
+
+  function chooseContinuation(task: CangyuanMediaTask, output: MediaTaskAudioOutputValue) {
+    if (!output.url || !isPublicHttpsUrl(output.url) || output.artifactType === 'midi' || output.artifactType === 'wav' || output.artifactType === 'text') {
+      setNotice({ kind: 'error', text: '该结果没有可供续写的公开音频地址。' });
       return;
     }
-    if (!output.jobId) {
-      setNotice({ kind: 'error', text: '该曲目没有返回续作任务号，无法继续生成。' });
-      return;
-    }
-    const continuationModel = musicModels.find((model) => model.rawId === 'suno-v6');
+    const continuationModel = musicModels.find((model) => model.rawId === 'suno-extend-audio');
     if (!continuationModel) {
-      setNotice({ kind: 'error', text: '请先在模型库启用 Suno v6，才能使用任务续作。' });
+      setNotice({ kind: 'error', text: '请先在模型库启用音乐续写模型。' });
       return;
     }
     setMusicModelId(continuationModel.id);
-    setContinuation({ sourceTaskId: output.jobId, title: task.modelName });
+    const continueAt = output.duration && output.duration > 0 ? String(output.duration) : undefined;
+    setContinuation({ uploadUrl: output.url, ...(continueAt ? { continueAt } : {}), title: output.title || task.modelName });
+    setMusicOptions({ uploadUrl: output.url, ...(continueAt ? { continueAt } : {}) });
+    setMusicPrompt((current) => current.trim() ? current : '延续原曲风格，自然展开后续段落');
     setMode('music');
-    setNotice({ kind: 'info', text: '已选择该任务作为续作来源。' });
+    setNotice({ kind: 'info', text: continueAt ? `已选中音频，续写位置预填为 ${continueAt} 秒，可在提交前调整。` : '已选中音频，请确认续写位置后生成。' });
+  }
+
+  async function copyTaskId(task: CangyuanMediaTask) {
+    if (!task.providerTaskId) return;
+    try {
+      await navigator.clipboard.writeText(task.providerTaskId);
+      setNotice({ kind: 'success', text: '任务编号已复制，可粘贴到其他创作工作流。' });
+    } catch {
+      setNotice({ kind: 'error', text: `复制失败，请手动复制任务编号：${task.providerTaskId}` });
+    }
+  }
+
+  function clearContinuation() {
+    setContinuation(null);
+    setMusicOptions((current) => {
+      const { uploadUrl: _uploadUrl, continueAt: _continueAt, ...remaining } = current;
+      return remaining;
+    });
   }
 
   const availableCount = mode === 'speech' ? speechModels.length : mode === 'music' ? musicModels.length : models3d.length;
   const selectedModel = mode === 'speech' ? speechModel : mode === 'music' ? musicModel : model3d;
   const currentTasks = mode === 'music' ? sortedMusicTasks : sortedThreeTasks;
   const isTripo = mode === '3d' && isTripoModel(model3d);
+  const isLegacyTripo = mode === '3d' && isLegacyTripoModel(model3d);
+  const isTrellis = mode === '3d' && isTrellisModel(model3d);
+  const profile3d = mode === '3d' && model3d ? getCangyuan3DModelProfile(model3d.rawId) : null;
+  const threeDPromptRequired = profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
+  const threeDSingleImageRequired = isTrellis || generationMode === 'image-to-3d';
+  const activeMultiviewCount = Object.values(multiviewImages).filter((url) => Boolean(url?.trim())).length;
 
   return (
-    <main className="cangyuan-studio" aria-label="沧元音频与三维生成">
+    <main className="cangyuan-studio" aria-label="媒体生成">
       <header className="cangyuan-studio-header">
         <div>
-          <p className="cangyuan-studio-eyebrow">沧元算力 · MEDIA</p>
+          <p className="cangyuan-studio-eyebrow">创作工作台</p>
           <h1>媒体生成</h1>
-          <p>配音、音乐与三维模型在一个工作区中生成和管理。</p>
+          <p>配音、转写、音乐与三维模型在一个工作区中使用和管理。</p>
         </div>
+        <nav className="cangyuan-studio-tabs" aria-label="生成类型">
+          <button type="button" className={mode === 'speech' ? 'active' : ''} aria-pressed={mode === 'speech'} onClick={() => { setMode('speech'); setNotice(null); }}>配音</button>
+          <button type="button" className={mode === 'transcription' ? 'active' : ''} aria-pressed={mode === 'transcription'} onClick={() => { setMode('transcription'); setNotice(null); }}>转写</button>
+          <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐</button>
+          <button type="button" className={mode === '3d' ? 'active' : ''} aria-pressed={mode === '3d'} onClick={() => { setMode('3d'); setNotice(null); }}>三维</button>
+        </nav>
         <div className="cangyuan-studio-header-meta">
-          <span className={`cangyuan-connection-dot ${cangyuanProviders.length ? 'connected' : ''}`} />
-          <span>{cangyuanProviders.length ? `${cangyuanProviders.length} 个沧元接口` : '未连接沧元接口'}</span>
           {onOpenModels && <button type="button" className="cangyuan-link-button" onClick={onOpenModels}>模型库</button>}
         </div>
       </header>
 
-      <nav className="cangyuan-studio-tabs" aria-label="生成类型">
-        <button type="button" className={mode === 'speech' ? 'active' : ''} aria-pressed={mode === 'speech'} onClick={() => { setMode('speech'); setNotice(null); }}>配音</button>
-        <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐</button>
-        <button type="button" className={mode === '3d' ? 'active' : ''} aria-pressed={mode === '3d'} onClick={() => { setMode('3d'); setNotice(null); }}>三维</button>
-      </nav>
-
       {notice && <p className={`cangyuan-studio-notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
       {stateError && <div className="cangyuan-studio-error" role="alert"><span>{stateError}</span><button type="button" onClick={() => void loadPublicState()}>重试</button></div>}
-      {loadingState && <div className="cangyuan-studio-loading" role="status">正在读取沧元模型…</div>}
+      {loadingState && <div className="cangyuan-studio-loading" role="status">正在读取可用模型…</div>}
 
       {!loadingState && !stateError && (
-        <div className="cangyuan-studio-layout">
+        mode === 'transcription' && publicState
+          ? <AudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
+          : <div className="cangyuan-studio-layout">
           <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}生成设置`}>
             <div className="cangyuan-form-heading">
               <div>
@@ -607,40 +608,54 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                 else if (mode === 'music') {
                   const nextModel = musicModels.find((model) => model.id === value) || musicModels[0];
                   setMusicModelId(nextModel?.id || '');
-                  if (continuation && nextModel?.rawId !== 'suno-v6') setContinuation(null);
+                  if (continuation && nextModel?.rawId !== 'suno-extend-audio') clearContinuation();
                 }
-                else setModel3dId(value === 'auto' ? models3d[0]?.id || '' : value);
+                else {
+                  const nextModelId = value === 'auto' ? models3d[0]?.id || '' : value;
+                  const nextModel = models3d.find((model) => model.id === nextModelId);
+                  const nextProfile = getCangyuan3DModelProfile(nextModel?.rawId || '');
+                  setModel3dId(nextModelId);
+                  if (nextProfile) setGenerationMode((current) => reconcileCangyuan3DMode(nextProfile.modelId, current));
+                  if (nextProfile?.modelId !== CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL) {
+                    setTripoOptions((current) => current.geometryQuality === undefined
+                      ? current
+                      : { ...current, geometryQuality: undefined });
+                  }
+                }
               }}
               capability={mode === 'speech' ? 'speech' : mode === 'music' ? 'music-generate' : '3d-generate'}
               defaultProviderId={publicState?.settings.defaultProviderId}
               defaultModelId={mode === 'speech' ? speechModels[0]?.id : mode === 'music' ? musicModels[0]?.id : models3d[0]?.id}
-              placeholder="选择沧元模型"
+              placeholder="选择模型"
               disabled={busy || availableCount === 0}
               className="cangyuan-model-picker"
             />
 
             {availableCount === 0 ? (
               <div className="cangyuan-empty-models">
-                <p>没有可用的沧元{mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}模型。</p>
-                <span>请先在模型库同步或启用对应能力。</span>
+                <p>没有可用的{mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}模型。</p>
+                <span>请在模型库同步并启用具备对应能力的模型。</span>
                 {onOpenModels && <button type="button" onClick={onOpenModels}>打开模型库</button>}
               </div>
             ) : mode === 'speech' ? (
               <>
                 {speechProfile && (
                   <div className="cangyuan-speech-options" aria-label="配音参数">
-                    <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-voice">
+                    <div className="cangyuan-speech-field">
                       <span>音色</span>
-                      <select
-                        id="cangyuan-speech-voice"
+                      <SelectMenu
                         value={speechVoiceChoice}
-                        onChange={(event) => setSpeechVoiceChoice(event.target.value)}
-                      >
-                        <option value="">使用模型默认音色</option>
-                        {speechProfile.suggestedVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}
-                        <option value="custom">自定义音色名称</option>
-                      </select>
-                    </label>
+                        ariaLabel="配音音色"
+                        className="cangyuan-field-select"
+                        menuClassName="cangyuan-field-select-menu"
+                        options={[
+                          { value: '', label: '使用模型默认音色' },
+                          ...speechVoiceOptions(speechProfile),
+                          { value: 'custom', label: '自定义音色名称' },
+                        ]}
+                        onChange={setSpeechVoiceChoice}
+                      />
+                    </div>
                     {speechVoiceChoice === 'custom' && (
                       <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-custom-voice">
                         <span>自定义音色</span>
@@ -654,16 +669,17 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         />
                       </label>
                     )}
-                    <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-format">
+                    <div className="cangyuan-speech-field">
                       <span>输出格式</span>
-                      <select
-                        id="cangyuan-speech-format"
+                      <SelectMenu
                         value={speechFormat}
-                        onChange={(event) => setSpeechFormat(event.target.value as SpeechOutputFormat)}
-                      >
-                        {speechProfile.responseFormats.map((format) => <option key={format} value={format}>{format.toUpperCase()}</option>)}
-                      </select>
-                    </label>
+                        ariaLabel="配音输出格式"
+                        className="cangyuan-field-select"
+                        menuClassName="cangyuan-field-select-menu"
+                        options={speechProfile.responseFormats.map((format) => ({ value: format, label: format.toUpperCase() }))}
+                        onChange={(format) => setSpeechFormat(format as SpeechOutputFormat)}
+                      />
+                    </div>
                     {speechProfile.speedRange && (
                       <div className="cangyuan-speech-speed">
                         <label htmlFor="cangyuan-speech-speed-range">语速</label>
@@ -697,68 +713,91 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   <span>{speechModel?.displayName || '请选择模型'}</span>
                   <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || speechVoiceChoice === 'custom' && !speechCustomVoice.trim()} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : '生成配音'}</button>
                 </div>
-                {speechResult && (
-                  <div className="cangyuan-speech-result">
-                    <div className="cangyuan-result-heading"><b>最新配音</b><span>{speechResult.modelName} · {speechResult.contentType}</span></div>
-                    {speechResult.extension.toLowerCase() !== 'pcm' && <audio controls preload="metadata" src={speechResult.url} />}
-                    {speechResult.extension.toLowerCase() === 'pcm' && <p className="cangyuan-pcm-note">PCM 已生成。此格式通常需要导入音频编辑软件播放。</p>}
-                    <a className="cangyuan-download-link" href={speechResult.url} download={speechResult.name}>下载音频</a>
-                  </div>
-                )}
               </>
             ) : mode === 'music' ? (
               <>
-                {continuation && <div className="cangyuan-continuation-banner"><span>续作来源：{continuation.title}{continuation.sourceAudioId ? ' · 指定曲目' : ' · 同任务'}</span><button type="button" aria-label="清除续作来源" onClick={() => setContinuation(null)}>清除</button></div>}
-                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">音乐提示词</label>
-                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={musicProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={musicProfile?.family === 'su2' ? '直接描述希望生成的音乐' : musicProfile?.family === 'suno-sfx' ? '描述单个声音，例如关门声、雨打窗户' : '描述曲风、情绪、乐器与场景'} rows={8} />
+                {continuation && <div className="cangyuan-continuation-banner"><span>续写来源：{continuation.title}</span><button type="button" aria-label="清除续写来源" onClick={clearContinuation}>清除</button></div>}
+                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">音乐提示词{musicProfile?.promptRequired ? '（必填）' : '（可选）'}</label>
+                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={musicProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={musicProfile?.family === 'su2' ? '直接描述希望生成的音乐' : musicProfile?.family === 'suno-sfx' ? '描述单个声音，例如关门声、雨打窗户' : musicProfile?.family === 'suno-workflow' && !musicProfile.promptRequired ? '此工作流可根据来源素材处理，无需额外提示词' : '描述曲风、情绪、乐器与场景'} rows={8} />
                 <div className="cangyuan-field-foot"><span>{musicProfile?.family === 'su2' ? '仅使用提示词；请求固定 n=1' : musicProfile?.family === 'lyria' ? '一次生成 1 首；时长与 BPM 为目标值，成片以实际结果为准' : musicProfile?.family === 'suno-sfx' ? '用于短音效，不是完整歌曲；结果可能包含多段音频' : '歌词、风格与续作字段按所选型号发送'}</span><span>{musicProfile?.promptMaxLength ? `${musicPrompt.length}/${musicProfile.promptMaxLength}` : `${musicPrompt.length} 字`}</span></div>
-                {musicProfile && <CangyuanMusicOptionsFields profile={musicProfile} options={musicOptions} onChange={setMusicOptions} />}
+                {musicProfile && <CangyuanMusicOptionsFields profile={musicProfile} options={musicOptions} onChange={setMusicOptions} onUploadStateChange={handleMediaUploadState} />}
                 <div className="cangyuan-submit-row">
                   <span>{musicModel?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || !musicPrompt.trim() || !musicModel} onClick={() => void submitMedia('music')}>{busy ? '正在提交…' : musicProfile?.family === 'suno-sfx' ? '生成音效' : '生成音乐'}</button>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || Boolean(musicProfile?.promptRequired && !musicPrompt.trim()) || !musicModel} onClick={() => void submitMedia('music')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : musicProfile?.family === 'suno-workflow' ? '运行音乐工具' : musicProfile?.family === 'suno-sfx' ? '生成音效' : '生成音乐'}</button>
                 </div>
               </>
             ) : (
               <>
-                {isTripo && (
+                {isTripo && profile3d && (
                   <div className="cangyuan-mode-control" role="group" aria-label="三维生成方式">
-                    <button type="button" aria-pressed={generationMode === 'text-to-3d'} className={generationMode === 'text-to-3d' ? 'active' : ''} onClick={() => setGenerationMode('text-to-3d')}>文生 3D</button>
-                    <button type="button" aria-pressed={generationMode === 'image-to-3d'} className={generationMode === 'image-to-3d' ? 'active' : ''} onClick={() => setGenerationMode('image-to-3d')}>图生 3D</button>
+                    {profile3d.supportedModes.map((supportedMode) => (
+                      <button key={supportedMode} type="button" aria-pressed={generationMode === supportedMode} className={generationMode === supportedMode ? 'active' : ''} onClick={() => setGenerationMode(supportedMode)}>
+                        {supportedMode === 'text-to-3d' ? '文生 3D' : supportedMode === 'image-to-3d' ? '图生 3D' : '多视图 3D'}
+                      </button>
+                    ))}
                   </div>
                 )}
-                <label className="cangyuan-field-label" htmlFor="cangyuan-3d-prompt">物体描述</label>
+                {(isLegacyTripo || isTrellis) && <CangyuanThreeDScenarioPicker key={model3d?.rawId || ''} modelId={model3d?.rawId || ''} onApply={applyThreeDScenario} />}
+                <label className="cangyuan-field-label" htmlFor="cangyuan-3d-prompt">物体描述{threeDPromptRequired ? '（必填）' : '（可选）'}</label>
                 <textarea id="cangyuan-3d-prompt" className="cangyuan-prompt" value={prompt3d} onChange={(event) => setPrompt3d(event.target.value)} placeholder="描述模型的形状、材质与风格" rows={6} />
-                {(isTripo && generationMode === 'image-to-3d' || isTrellisModel(model3d)) && (
+                {threeDSingleImageRequired && (
                   <div className="cangyuan-image-url-field">
-                    <label className="cangyuan-field-label" htmlFor="cangyuan-3d-image-url">参考图片公网 URL</label>
-                    <input id="cangyuan-3d-image-url" type="url" inputMode="url" autoComplete="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} placeholder="https://…/object.png" />
-                    <small>图片需可从公网访问；不接受本地文件编号或 Base64。Trellis 必须提供图片。</small>
+                    <CangyuanMediaUploadField fieldId="cangyuan-3d-reference-image" kind="image" label="参考图片" value={imageUrl} onChange={setImageUrl} onUploadingChange={handleMediaUploadState} note="Trellis 必须提供图片；图生任务需要可公开访问的图片链接。" />
+                    <CangyuanReferenceImagePreview url={imageUrl} />
                   </div>
                 )}
-                {isTripo && (
+                {isTripo && generationMode === 'multiview-to-3d' && (
+                  <div className="cangyuan-image-url-field">
+                    <div className="cangyuan-trellis-grid">
+                      {(['front', 'back', 'left', 'right'] as const).map((view) => (
+                        <div className="cangyuan-image-url-field" key={view}>
+                          <CangyuanMediaUploadField
+                            fieldId={`cangyuan-3d-view-${view}`}
+                            kind="image"
+                            label={view === 'front' ? '正面（必需）' : view === 'back' ? '背面' : view === 'left' ? '左侧' : '右侧'}
+                            value={multiviewImages[view] || ''}
+                            onChange={(url) => setMultiviewImages((current) => ({ ...current, [view]: url || undefined }))}
+                            onUploadingChange={handleMediaUploadState}
+                          />
+                          <CangyuanReferenceImagePreview url={multiviewImages[view] || ''} />
+                        </div>
+                      ))}
+                    </div>
+                    <small>至少提交 2 张不同方向的公网图片，并且必须包含正面。参考图越清晰、背景越干净，网格通常越稳定。</small>
+                  </div>
+                )}
+                {isLegacyTripo && (
                   <div className="cangyuan-3d-options">
-                    <label className="cangyuan-select-field"><span>贴图</span><select value={texture} onChange={(event) => setTexture(event.target.value as typeof texture)}><option value="no">无贴图</option><option value="standard">标准</option><option value="HD">HD</option></select></label>
+                    <div className="cangyuan-select-field"><span>贴图质量</span><SelectMenu value={texture} ariaLabel="三维贴图质量" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: 'no', label: '无贴图' }, { value: 'standard', label: '标准' }, { value: 'HD', label: '高清（HD）' }]} onChange={(value) => setTexture(value as typeof texture)} /></div>
                     <label className="cangyuan-checkbox-field"><input type="checkbox" checked={pbr} onChange={(event) => setPbr(event.target.checked)} /><span>PBR 材质</span></label>
                   </div>
+                )}
+                {profile3d?.family === 'tripo' && (
+                  <CangyuanTripoQualityOptions profile={profile3d} options={tripoOptions} onChange={setTripoOptions} />
                 )}
                 {isTrellisModel(model3d) && (
                   <div className="cangyuan-3d-trellis-options">
                     <div className="cangyuan-trellis-grid">
-                      <label className="cangyuan-music-text-field"><span>贴图边长</span><input list="cangyuan-trellis-texture-sizes" value={trellisTextureSize} onChange={(event) => setTrellisTextureSize(event.target.value)} placeholder="默认 1024" /><datalist id="cangyuan-trellis-texture-sizes"><option value="512" /><option value="1024" /><option value="2048" /></datalist></label>
-                      <label className="cangyuan-music-text-field"><span>随机种子</span><input type="text" inputMode="numeric" value={trellisSeed} onChange={(event) => setTrellisSeed(event.target.value)} placeholder="可选" /></label>
-                      <label className="cangyuan-music-text-field"><span>网格简化 0.9–0.98</span><input type="number" min="0.9" max="0.98" step="0.01" value={trellisMeshSimplify} onChange={(event) => setTrellisMeshSimplify(event.target.value)} placeholder="可选" /></label>
-                      <label className="cangyuan-music-text-field"><span>结构引导 0–10</span><input type="number" min="0" max="10" step="0.1" value={trellisSsGuidance} onChange={(event) => setTrellisSsGuidance(event.target.value)} placeholder="可选" /></label>
-                      <label className="cangyuan-music-text-field"><span>结构步数 1–50</span><input type="number" min="1" max="50" step="1" value={trellisSsSteps} onChange={(event) => setTrellisSsSteps(event.target.value)} placeholder="可选" /></label>
-                      <label className="cangyuan-music-text-field"><span>细节引导 0–10</span><input type="number" min="0" max="10" step="0.1" value={trellisSlatGuidance} onChange={(event) => setTrellisSlatGuidance(event.target.value)} placeholder="可选" /></label>
-                      <label className="cangyuan-music-text-field"><span>细节步数 1–50</span><input type="number" min="1" max="50" step="1" value={trellisSlatSteps} onChange={(event) => setTrellisSlatSteps(event.target.value)} placeholder="可选" /></label>
+                      <label className="cangyuan-music-text-field"><span>贴图边长</span><CangyuanSuggestionInput ariaLabel="贴图边长" inputMode="numeric" value={trellisTextureSize} onChange={setTrellisTextureSize} options={['512', '1024', '2048']} placeholder="默认 1024" /><small>2048 更清晰，模型文件也更大。</small></label>
                     </div>
+                    <details className="cangyuan-3d-advanced" open={trellisAdvancedOpen} onToggle={(event) => setTrellisAdvancedOpen(event.currentTarget.open)}>
+                      <summary>质量与网格</summary>
+                      <div className="cangyuan-trellis-grid">
+                        <label className="cangyuan-music-text-field"><span>随机种子</span><input type="text" inputMode="numeric" value={trellisSeed} onChange={(event) => setTrellisSeed(event.target.value)} placeholder="可选" /><small>相同参考图搭配同一种子，通常会生成相近的模型。</small></label>
+                        <label className="cangyuan-music-text-field"><span>网格简化 0.9–0.98</span><input type="number" min="0.9" max="0.98" step="0.01" value={trellisMeshSimplify} onChange={(event) => setTrellisMeshSimplify(event.target.value)} placeholder="模型默认" /><small>数值越大模型越轻，细节会减少。</small></label>
+                        <label className="cangyuan-music-text-field"><span>结构引导 0–10</span><input type="number" min="0" max="10" step="0.1" value={trellisSsGuidance} onChange={(event) => setTrellisSsGuidance(event.target.value)} placeholder="模型默认" /><small>控制轮廓与体积贴合参考图的程度。</small></label>
+                        <label className="cangyuan-music-text-field"><span>结构步数 1–50</span><input type="number" min="1" max="50" step="1" value={trellisSsSteps} onChange={(event) => setTrellisSsSteps(event.target.value)} placeholder="模型默认" /><small>步数增加会改善轮廓细节，也会变慢。</small></label>
+                        <label className="cangyuan-music-text-field"><span>细节引导 0–10</span><input type="number" min="0" max="10" step="0.1" value={trellisSlatGuidance} onChange={(event) => setTrellisSlatGuidance(event.target.value)} placeholder="模型默认" /><small>控制表面与颜色贴近参考图的程度。</small></label>
+                        <label className="cangyuan-music-text-field"><span>细节步数 1–50</span><input type="number" min="1" max="50" step="1" value={trellisSlatSteps} onChange={(event) => setTrellisSlatSteps(event.target.value)} placeholder="模型默认" /><small>步数增加会细化表面，也会变慢。</small></label>
+                      </div>
+                    </details>
                     <p className="cangyuan-model-note">Trellis 仅支持图生。增加采样步数会变慢；简化值越大，网格越轻、细节越少。参数不填时交由模型默认处理。</p>
                   </div>
                 )}
-                {!isTripo && !isTrellisModel(model3d) && <p className="cangyuan-model-note">当前模型未提供已核对的专属参数。</p>}
+                {!isTripo && !isTrellis && <p className="cangyuan-model-note">当前模型未提供已核对的专属参数。</p>}
                 <div className="cangyuan-submit-row">
                   <span>{model3d?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || (!prompt3d.trim() && !isTrellisModel(model3d)) || !model3d || (isTrellisModel(model3d) || generationMode === 'image-to-3d') && !imageUrl.trim()} onClick={() => void submitMedia('3d')}>{busy ? '正在提交…' : '生成 3D 模型'}</button>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || (!prompt3d.trim() && threeDPromptRequired) || !model3d || threeDSingleImageRequired && !imageUrl.trim() || generationMode === 'multiview-to-3d' && (activeMultiviewCount < 2 || !multiviewImages.front?.trim())} onClick={() => void submitMedia('3d')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : '生成 3D 模型'}</button>
                 </div>
               </>
             )}
@@ -780,26 +819,27 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         <div><strong>{task.modelName}</strong><small>{formatCreatedAt(task.createdAt)}</small></div>
                         <span className={`cangyuan-task-status ${isActiveTask(task) ? 'active' : task.status}`}>{taskStatusLabel(task)}</span>
                       </div>
-                      <p className="cangyuan-task-prompt">{task.input.prompt}</p>
-                      {isActiveTask(task) && <p className="cangyuan-task-progress">{task.providerStatus || (task.status === 'queued' || task.status === 'pending' ? '等待服务商开始处理…' : '服务商正在生成…')}</p>}
+                      <p className="cangyuan-task-prompt">{task.input.prompt || (task.kind === '3d' ? mediaTaskModeLabel(task.input.mode) : '音乐生成任务')}</p>
+                      {task.providerTaskId && task.status === 'succeeded' && <div className="cangyuan-output-actions"><button type="button" onClick={() => void copyTaskId(task)}>复制任务编号</button></div>}
+                      {isActiveTask(task) && <p className="cangyuan-task-progress">{mediaTaskProviderStatusLabel(task.providerStatus, task.status)}</p>}
                       {task.error && <p className="cangyuan-task-error" role="alert">{task.error}</p>}
                       {task.status === 'succeeded' && task.outputs.length === 0 && <p className="cangyuan-task-error">任务完成，但服务商没有返回结果地址。</p>}
                       {task.outputs.map((output, index) => mode === 'music' ? (
-                        <div className="cangyuan-music-output" key={`${task.id}-${output.audioId || index}`}>
-                          <div className="cangyuan-output-meta"><b>{output.title || (output.audioId ? `曲目 ${index + 1}` : `音乐 ${index + 1}`)}</b><span>{[output.duration ? `${output.duration} 秒` : '', output.audioId ? `曲目编号 ${output.audioId}` : '完成'].filter(Boolean).join(' · ')}</span></div>
-                          <audio controls preload="none" src={output.url} />
-                          <div className="cangyuan-output-actions">
-                            <a href={output.url} download target="_blank" rel="noreferrer">下载</a>
-                            {task.providerModel === 'suno-v6' && <button type="button" disabled={!output.audioId || !output.jobId} onClick={() => chooseContinuation(task, output, true)}>续作此曲</button>}
-                            {task.providerModel === 'suno-v6' && <button type="button" disabled={!output.jobId} onClick={() => chooseContinuation(task, output, false)}>基于任务续作</button>}
-                          </div>
-                        </div>
+                        <MediaTaskAudioOutput
+                          key={`${task.id}-${output.audioId || index}`}
+                          output={output}
+                          index={index}
+                          canContinue={Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
+                          onContinue={(selectedOutput) => chooseContinuation(task, selectedOutput)}
+                        />
                       ) : (
                         <div className="cangyuan-3d-output" key={`${task.id}-${index}`}>
-                          <div className="cangyuan-output-meta"><b>GLB 模型 {index + 1}</b><span>GLTF Binary</span></div>
+                          <div className="cangyuan-output-meta"><b>{output.artifactType === 'fbx' ? `FBX 模型 ${index + 1}` : `GLB 模型 ${index + 1}`}</b><span>{output.artifactType === 'fbx' ? 'FBX 网格文件' : 'GLTF Binary'}</span></div>
                           <div className="cangyuan-output-actions">
-                            <button type="button" onClick={() => setPreviewOutput({ taskId: task.id, output, modelName: task.modelName })}>预览</button>
-                            <a href={output.url} download target="_blank" rel="noreferrer">下载 GLB</a>
+                            {output.url ? <>
+                              {output.artifactType !== 'fbx' && <button type="button" onClick={() => setPreviewOutput({ taskId: task.id, output, outputIndex: index, modelName: task.modelName })}>预览</button>}
+                              <a href={output.url} download target="_blank" rel="noreferrer">下载 {output.artifactType === 'fbx' ? 'FBX' : 'GLB'}</a>
+                            </> : <span className="cangyuan-model-note">服务商未返回可下载的模型地址。</span>}
                           </div>
                         </div>
                       ))}
@@ -809,21 +849,28 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
               )}
             </section>
           ) : (
-            <aside className="cangyuan-studio-aside" aria-label="配音使用说明">
-              <h2>配音结果</h2>
-              {speechResult ? <p>{speechResult.extension.toLowerCase() === 'pcm' ? `已生成 ${speechResult.name}，可下载后导入音频编辑软件。` : `已生成 ${speechResult.name}，可以试听或下载到本地。`}</p> : <p>音色、格式与可选语速按所选型号文档发送；PCM 仅提供下载。</p>}
-              <hr />
-              <span>模型：{speechModel?.displayName || '未选择'}</span>
-              <span>服务商：沧元算力</span>
-            </aside>
+            <section className="cangyuan-studio-results" aria-label="配音结果">
+              {speechHistoryLoading ? <div className="cangyuan-task-empty" role="status">正在读取配音记录…</div>
+                : speechHistoryError ? <div className="cangyuan-studio-error" role="alert"><span>{speechHistoryError}</span><button type="button" onClick={() => void loadSpeechHistory()}>重试</button></div>
+                  : speechLogs.length ? <GenerationLogAudioWorks logs={speechLogs} />
+                    : <div className="cangyuan-task-empty"><strong>还没有配音记录</strong><span>成功生成并保存的配音会显示在这里。</span></div>}
+              {speechResult && !speechLogs.some((log) => log.audioUrl === speechResult.url) && (
+                <div className="cangyuan-speech-result">
+                  <div className="cangyuan-result-heading"><b>本次生成</b><span>{speechResult.modelName} · {speechResult.contentType}</span></div>
+                  {speechResult.extension.toLowerCase() === 'pcm'
+                    ? <><p className="cangyuan-pcm-note">PCM 已生成。此格式通常需要导入音频编辑软件。</p><a className="cangyuan-download-link" href={speechResult.url} download={speechResult.name}>下载音频</a></>
+                    : <GenerationLogAudioPlayer src={speechResult.url} fileName={speechResult.name} />}
+                </div>
+              )}
+            </section>
           )}
         </div>
       )}
 
-      {previewOutput && <div className="cangyuan-preview-modal" role="dialog" aria-modal="true" aria-label="三维模型预览" onClick={() => setPreviewOutput(null)}>
+      {previewOutput && previewUrl && <div className="cangyuan-preview-modal" role="dialog" aria-modal="true" aria-label="三维模型预览" onClick={() => setPreviewOutput(null)}>
         <div className="cangyuan-preview-dialog" onClick={(event) => event.stopPropagation()}>
           <div className="cangyuan-preview-header"><div><strong>{previewOutput.modelName}</strong><span>GLB 三维预览</span></div><button type="button" aria-label="关闭预览" onClick={() => setPreviewOutput(null)}>关闭</button></div>
-          <GlbPreview url={previewOutput.output.url} label={previewOutput.modelName} />
+          <ThreeDModelPreview url={previewUrl} label={previewOutput.modelName} variant="dialog" />
           <div className="cangyuan-preview-footer"><span>任务 {previewOutput.taskId.slice(0, 8)}</span><a href={previewOutput.output.url} download target="_blank" rel="noreferrer">下载 GLB</a></div>
         </div>
       </div>}

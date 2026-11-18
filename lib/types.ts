@@ -1,5 +1,9 @@
 import type { McpApprovalPolicy } from '@/lib/agent/approval';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
+import type { VideoModelParameterValues } from '@/packages/contracts/video-generation';
+import type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
+
+export type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
 
 export type ProviderType = 'openai-compatible' | 'google-gemini';
 export type ProviderPlatform = 'custom' | '65535' | '65535-claude-code' | 'apikl' | 'a6api' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee' | 'cangyuan';
@@ -61,6 +65,7 @@ export type ProviderConnection = {
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
   textProtocol?: ProviderTextProtocol;
+  creativeTaskProtocol?: ProviderCreativeTaskProtocol;
   videoTransport?: VideoTransport;
   videoBaseUrl?: string;
   videoTaskPath?: string;
@@ -94,6 +99,7 @@ export type ModelCapability =
   | 'upscale'
   | 'fast'
   | 'speech'
+  | 'transcription'
   | 'music-generate'
   | '3d-generate'
   | 'web-search'
@@ -236,6 +242,8 @@ export type VideoGenerationInput = {
   referenceVideoStartSeconds?: number;
   referenceVideoEndSeconds?: number;
   requireAudio?: boolean;
+  generateAudio?: boolean;
+  modelParameters?: VideoModelParameterValues;
 };
 
 /** A persisted creative reference used by a generation request or history log. */

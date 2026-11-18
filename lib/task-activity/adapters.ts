@@ -13,6 +13,7 @@ function numberOrUndefined(value: unknown) {
 
 function generationKind(log: GenerationLog): ActivityTaskKind {
   if (log.mode === "video") return "video";
+  if (log.mode === "audio" || log.mediaKind === "audio") return "audio";
   if (log.mode === "upscale") return "upscale";
   if (log.mode === "agent" || log.mode === "llm") return "agent";
   if (log.mode === "generate" || log.mode === "edit") return "image";
@@ -27,7 +28,10 @@ function generationStatus(status: GenerationLog["status"]): ActivityTaskStatus {
 
 export function activityTaskFromGenerationLog(log: GenerationLog): ActivityTask {
   const kind = generationKind(log);
-  const projectedStatus = projectResultStatus(log.status, [...(log.imageUrls || []), ...(log.videoUrls || [])]);
+  const outputIds = kind === "audio"
+    ? (log.audioUrl ? [log.audioUrl] : [])
+    : [...(log.imageUrls || []), ...(log.videoUrls || [])];
+  const projectedStatus = projectResultStatus(log.status, outputIds);
   const status = generationStatus(projectedStatus);
   return {
     id: log.id,
@@ -43,7 +47,7 @@ export function activityTaskFromGenerationLog(log: GenerationLog): ActivityTask 
     ...(log.durationMs && log.createdAt ? { finishedAt: (Date.parse(log.createdAt) || 0) + log.durationMs } : {}),
     canRetry: status === "failed",
     canCancel: status === "running",
-    ...(log.imageUrls?.length || log.videoUrls?.length ? { outputIds: [...(log.imageUrls || []), ...(log.videoUrls || [])] } : {}),
+    ...(outputIds.length ? { outputIds } : {}),
     ...(log.error ? { error: { ...(log.errorCode ? { code: log.errorCode } : {}), message: log.error } } : {}),
     sourceId: log.taskId || log.id,
   };

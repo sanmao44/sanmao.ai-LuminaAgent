@@ -1,18 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasNode } from "@/lib/canvas/types";
+import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasAudioTranscriptionMeta, CanvasNode } from "@/lib/canvas/types";
 import type { ProviderConnection, RegistryModel } from "@/lib/types";
 import { selectAutomaticModel } from "@/lib/model-selection";
 import { formatCanvasAudioDuration } from "@/lib/canvas/media";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
+import { canvasAudioMusicModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import ModelPicker from "@/components/ModelPicker";
+import SelectMenu from "@/components/SelectMenu";
+import { SPEECH_VOICE_PREVIEW_TEXT, getSpeechModelProfile, type SpeechOutputFormat } from "@/packages/contracts/audio-synthesis";
+import type { AudioTranscriptionResponseFormat } from "@/packages/contracts/audio-transcription";
+import { getCangyuanMusicModelProfile, type CangyuanMediaTask, type CangyuanMusicOptions } from "@/packages/contracts/cangyuan-media";
+import { speechVoiceOptions } from "@/components/audio/voice-options";
+import { speechOutputFormatLabel } from "@/components/audio/speech-format-options";
+import { buildCanvasSpeechRequest } from "@/components/canvas/audio-speech-request";
+import CangyuanMusicOptionsFields from "@/components/cangyuan/CangyuanMusicOptionsFields";
 
 const SPEECH_TEXT_LIMIT = 5000;
+const TRANSCRIPTION_MAX_BYTES = 50 * 1024 * 1024;
+const TRANSCRIPTION_ACCEPT = ".mp3,.wav,.ogg,.m4a,.flac,.webm,.pcm,audio/mpeg,audio/wav,audio/ogg,audio/mp4,audio/flac,audio/webm";
+const TRANSCRIPTION_LANGUAGES = [
+  { value: "", label: "自动识别" }, { value: "zh", label: "中文" }, { value: "en", label: "英语" },
+  { value: "ja", label: "日语" }, { value: "ko", label: "韩语" }, { value: "fr", label: "法语" },
+  { value: "de", label: "德语" }, { value: "es", label: "西班牙语" }, { value: "__custom", label: "其他语言" },
+];
+const TRANSCRIPTION_FORMATS = [
+  { value: "verbose_json", label: "文字与分段时间" }, { value: "json", label: "标准文字" }, { value: "text", label: "纯文本" },
+];
 
 export type CanvasAudioNodePanelProps = {
   node: CanvasNode;
   onReplaceAudio: (nodeId: string, file: File, generation?: CanvasAudioGenerationMeta) => Promise<boolean>;
   onSpeechDraftChange: (nodeId: string, draft: CanvasAudioDraft) => void;
+  onTranscriptionDraftChange: (nodeId: string, draft: CanvasAudioTranscriptionDraft) => void;
+  onTranscriptionChange: (nodeId: string, result: CanvasAudioTranscriptionMeta) => void;
+  onMusicDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
+  onMusicTaskChange: (nodeId: string, task: CanvasAudioMusicTask) => void;
   onDurationChange: (nodeId: string, durationSeconds: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
   models: RegistryModel[];
@@ -28,6 +51,10 @@ export default function CanvasAudioNodePanel({
   node,
   onReplaceAudio,
   onSpeechDraftChange,
+  onTranscriptionDraftChange,
+  onTranscriptionChange,
+  onMusicDraftChange,
+  onMusicTaskChange,
   onDurationChange,
   onNotify,
   models,
@@ -39,37 +66,268 @@ export default function CanvasAudioNodePanel({
   canvasId,
 }: CanvasAudioNodePanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const transcriptionInputRef = useRef<HTMLInputElement | null>(null);
+  const [activeMode, setActiveMode] = useState<"speech" | "transcription" | "music">("speech");
   const [speechText, setSpeechText] = useState(() => node.data.speechDraft?.text ?? node.data.speechGeneration?.text ?? "");
   const [voice, setVoice] = useState(() => node.data.speechDraft?.voice ?? node.data.speechGeneration?.voice ?? "");
+  const [customVoiceSelected, setCustomVoiceSelected] = useState(false);
   const [speechModelId, setSpeechModelId] = useState(() => node.data.speechDraft?.modelId ?? node.data.speechGeneration?.requestedModelId ?? "auto");
+  const [speechFormat, setSpeechFormat] = useState<SpeechOutputFormat>(() => (node.data.speechDraft?.format || node.data.speechGeneration?.format || "mp3") as SpeechOutputFormat);
+  const [speechSpeed, setSpeechSpeed] = useState(() => node.data.speechDraft?.speed ?? node.data.speechGeneration?.speed ?? 1);
   const [generatingSpeech, setGeneratingSpeech] = useState(false);
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const [voicePreviewUrl, setVoicePreviewUrl] = useState("");
   const [speechError, setSpeechError] = useState("");
+  const [transcriptionDraft, setTranscriptionDraft] = useState<CanvasAudioTranscriptionDraft>(() => node.data.transcriptionDraft || {});
+  const [transcriptionFile, setTranscriptionFile] = useState<File | null>(null);
+  const [transcriptionBusy, setTranscriptionBusy] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState("");
+  const [musicDraft, setMusicDraft] = useState<CanvasAudioMusicDraft>(() => node.data.musicDraft || { prompt: "", options: {} });
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [musicError, setMusicError] = useState("");
+  const [uploadingMusicFields, setUploadingMusicFields] = useState<Set<string>>(() => new Set());
   const data = node.data;
   const hasAudio = Boolean(data.url);
+  const musicModels = canvasAudioMusicModels(models, providers);
+  const transcriptionModels = canvasAudioTranscriptionModels(models, providers);
   const speechModels = models.filter((model) => model.kind === "audio" && model.enabled && model.published && model.capabilities.includes("speech"));
   const selectedModel = speechModelId !== "auto"
     ? speechModels.find((model) => model.id === speechModelId)
     : selectAutomaticModel(speechModels, defaultProviderId, defaultModelId);
-  const selectedProvider = selectedModel ? providers.find((provider) => provider.id === selectedModel.providerId) : undefined;
-  const supportsVoiceOption = selectedProvider?.platform !== "cangyuan";
+  const speechProfile = getSpeechModelProfile(selectedModel?.rawId || "");
+  const knownVoice = Boolean(speechProfile?.suggestedVoices.includes(voice));
+  const voiceChoice = knownVoice ? voice : customVoiceSelected || voice ? "custom" : "";
+  const supportedFormat = speechProfile?.responseFormats.includes(speechFormat)
+    ? speechFormat
+    : speechProfile?.responseFormats[0];
+  const speechSpeedValue = speechProfile?.speedRange
+    ? Math.min(speechProfile.speedRange.max, Math.max(speechProfile.speedRange.min, speechSpeed))
+    : speechSpeed;
   const speechServiceLabel = data.speechGeneration?.engine === "offline"
     ? "本机离线语音"
     : data.speechGeneration?.modelName || "尚未生成";
+  const selectedMusicModel = musicModels.find((model) => model.id === musicDraft.modelId) || musicModels[0];
+  const selectedTranscriptionModel = transcriptionModels.find((model) => model.id === transcriptionDraft.modelId) || transcriptionModels[0];
+  const musicProfile = selectedMusicModel ? getCangyuanMusicModelProfile(selectedMusicModel.rawId) : null;
 
   useEffect(() => {
     setSpeechText(node.data.speechDraft?.text ?? node.data.speechGeneration?.text ?? "");
     setVoice(node.data.speechDraft?.voice ?? node.data.speechGeneration?.voice ?? "");
     setSpeechModelId(node.data.speechDraft?.modelId ?? node.data.speechGeneration?.requestedModelId ?? "auto");
+    setSpeechFormat((node.data.speechDraft?.format || node.data.speechGeneration?.format || "mp3") as SpeechOutputFormat);
+    setSpeechSpeed(node.data.speechDraft?.speed ?? node.data.speechGeneration?.speed ?? 1);
     setSpeechError("");
-  }, [node.id, node.data.speechDraft?.text, node.data.speechDraft?.voice, node.data.speechDraft?.modelId, node.data.speechGeneration?.text, node.data.speechGeneration?.voice, node.data.speechGeneration?.requestedModelId]);
+  }, [node.id, node.data.speechDraft?.text, node.data.speechDraft?.voice, node.data.speechDraft?.modelId, node.data.speechDraft?.format, node.data.speechDraft?.speed, node.data.speechGeneration?.text, node.data.speechGeneration?.voice, node.data.speechGeneration?.requestedModelId, node.data.speechGeneration?.format, node.data.speechGeneration?.speed]);
+
+  useEffect(() => {
+    setTranscriptionDraft(node.data.transcriptionDraft || {});
+    setTranscriptionFile(null);
+    setTranscriptionError("");
+    setMusicDraft(node.data.musicDraft || { prompt: "", options: {} });
+    setMusicError("");
+  }, [node.id, node.data.transcriptionDraft, node.data.musicDraft]);
+
+  useEffect(() => setCustomVoiceSelected(false), [node.id]);
+
+  useEffect(() => () => {
+    if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
+  }, [voicePreviewUrl]);
+
+  useEffect(() => {
+    const task = node.data.musicTask;
+    if (!task || !["pending", "queued", "running", "waiting"].includes(task.status)) return;
+    let disposed = false;
+    let timer = 0;
+    let controller: AbortController | null = null;
+    const poll = async () => {
+      controller = new AbortController();
+      try {
+        const response = await fetch(`/api/cangyuan/music/tasks/${encodeURIComponent(task.id)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
+        if (!response.ok || !payload?.task) throw new Error(payload?.error || "音乐任务状态暂时无法读取。");
+        const snapshot = canvasMusicTaskSnapshot(payload.task);
+        if (disposed) return;
+        onMusicTaskChange(node.id, snapshot);
+        if (["pending", "queued", "running", "waiting"].includes(snapshot.status)) {
+          timer = window.setTimeout(() => void poll(), 5000);
+        }
+      } catch (error) {
+        if (disposed || controller?.signal.aborted) return;
+        setMusicError(error instanceof Error ? error.message : "音乐任务状态读取失败。");
+        timer = window.setTimeout(() => void poll(), 5000);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 5000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [node.id, node.data.musicTask?.id, node.data.musicTask?.status, onMusicTaskChange]);
+
+  useEffect(() => {
+    if (!voicePreviewUrl) return;
+    setVoicePreviewUrl("");
+  }, [speechModelId, voice, speechFormat, speechSpeed]);
 
   function saveSpeechDraft(next: Partial<CanvasAudioDraft> = {}) {
     onSpeechDraftChange(node.id, {
       text: next.text ?? speechText,
       voice: next.voice ?? voice,
       modelId: next.modelId ?? speechModelId,
+      format: next.format ?? speechFormat,
+      speed: next.speed ?? speechSpeed,
       updatedAt: Date.now(),
     });
+  }
+
+  function saveTranscriptionDraft(next: Partial<CanvasAudioTranscriptionDraft> = {}) {
+    const draft: CanvasAudioTranscriptionDraft = {
+      ...transcriptionDraft,
+      ...next,
+      updatedAt: Date.now(),
+    };
+    setTranscriptionDraft(draft);
+    onTranscriptionDraftChange(node.id, draft);
+  }
+
+  function saveMusicDraft(next: Partial<CanvasAudioMusicDraft> = {}) {
+    const draft: CanvasAudioMusicDraft = {
+      ...musicDraft,
+      ...next,
+      prompt: next.prompt ?? musicDraft.prompt,
+      options: next.options ?? musicDraft.options,
+      updatedAt: Date.now(),
+    };
+    setMusicDraft(draft);
+    onMusicDraftChange(node.id, draft);
+  }
+
+  function chooseTranscriptionFile(file: File | undefined) {
+    if (!file) return;
+    setTranscriptionError("");
+    const allowed = /\.(mp3|wav|ogg|m4a|flac|webm|pcm)$/i.test(file.name);
+    if (!allowed || file.size <= 0 || file.size > TRANSCRIPTION_MAX_BYTES) {
+      setTranscriptionError("请选择有效音频文件，大小需大于 0 且不超过 50 MiB。");
+      return;
+    }
+    setTranscriptionFile(file);
+  }
+
+  async function fileForTranscription() {
+    if (transcriptionFile) return transcriptionFile;
+    if (!data.url) throw new Error("请先导入音频素材，或选择一个音频文件。");
+    let source: URL;
+    try {
+      source = new URL(String(data.url), window.location.origin);
+    } catch {
+      throw new Error("当前音频地址无效，请重新导入音频文件。");
+    }
+    if (source.origin !== window.location.origin) throw new Error("当前音频来自外部地址，请重新选择本地音频文件进行转写。");
+    const response = await fetch(source.href, { cache: "no-store" });
+    if (!response.ok) throw new Error("无法读取当前音频，请重新选择本地音频文件。");
+    const blob = await response.blob();
+    if (!blob.size || blob.size > TRANSCRIPTION_MAX_BYTES) throw new Error("音频文件需大于 0 且不超过 50 MiB。");
+    return new File([blob], String(data.name || "画布音频.wav"), { type: blob.type || String(data.mimeType || "audio/wav") });
+  }
+
+  async function transcribeAudio() {
+    if (!selectedTranscriptionModel || transcriptionBusy) return;
+    setTranscriptionError("");
+    setTranscriptionBusy(true);
+    try {
+      const file = await fileForTranscription();
+      const form = new FormData();
+      form.set("file", file);
+      form.set("modelId", selectedTranscriptionModel.id);
+      const language = transcriptionDraft.language === "__custom"
+        ? transcriptionDraft.customLanguage?.trim() || ""
+        : transcriptionDraft.language?.trim() || "";
+      if (language) form.set("language", language);
+      if (transcriptionDraft.prompt?.trim()) form.set("prompt", transcriptionDraft.prompt.trim());
+      form.set("responseFormat", transcriptionDraft.responseFormat || "verbose_json");
+      form.set("temperature", String(transcriptionDraft.temperature ?? 0));
+      const response = await fetch("/api/audio/transcriptions", { method: "POST", body: form, cache: "no-store" });
+      const payload = await response.json().catch(() => null) as { result?: Record<string, unknown>; error?: string } | null;
+      if (!response.ok || !payload?.result) throw new Error(payload?.error || `转写失败（${response.status}）`);
+      const result = canvasTranscriptionResult(payload.result, file.name);
+      onTranscriptionChange(node.id, result);
+      onNotify("音频转写完成");
+    } catch (error) {
+      setTranscriptionError(error instanceof Error ? error.message : "音频转写失败，请重试。");
+    } finally {
+      setTranscriptionBusy(false);
+    }
+  }
+
+  async function generateMusic() {
+    if (!selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0) return;
+    setMusicError("");
+    setMusicBusy(true);
+    try {
+      const input = buildCanvasMusicRequest(selectedMusicModel.id, selectedMusicModel.rawId, musicDraft.prompt, musicDraft.options);
+      const response = await fetch("/api/cangyuan/music", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
+      if (!response.ok || !payload?.task) throw new Error(payload?.error || `音乐任务提交失败（${response.status}）`);
+      const task = canvasMusicTaskSnapshot(payload.task);
+      onMusicTaskChange(node.id, task);
+      if (payload.task.status === "failed") throw new Error(payload.task.error || "音乐任务提交失败。");
+      onNotify("音乐任务已提交");
+    } catch (error) {
+      setMusicError(error instanceof Error ? error.message : "音乐任务提交失败，请重试。");
+    } finally {
+      setMusicBusy(false);
+    }
+  }
+
+  function replaceVoicePreviewUrl(url: string) {
+    setVoicePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return url;
+    });
+  }
+
+  async function previewVoice() {
+    if (!selectedModel || previewingVoice || generatingSpeech) return;
+    setSpeechError("");
+    setPreviewingVoice(true);
+    try {
+      const response = await fetch("/api/audio/speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildCanvasSpeechRequest({
+          text: SPEECH_VOICE_PREVIEW_TEXT,
+          voice,
+          modelId: speechModelId === "auto" ? selectedModel.id : speechModelId,
+          ...(supportedFormat ? { format: supportedFormat } : {}),
+          ...(speechProfile?.speedRange ? { speed: speechSpeedValue } : {}),
+          preview: true,
+          nodeId: node.id,
+        })),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        throw new Error(String(body?.error || `音色试听失败（${response.status}）`));
+      }
+      const blob = await response.blob();
+      if (blob.type.includes("pcm") || (response.headers.get("X-Audio-Extension") || "").toLowerCase() === "pcm") {
+        throw new Error("PCM 是未压缩音频，当前浏览器无法直接试听；请选择 MP3、WAV 或 Opus。");
+      }
+      replaceVoicePreviewUrl(URL.createObjectURL(blob));
+    } catch (error) {
+      setSpeechError(error instanceof Error ? error.message : "音色试听失败，请稍后重试。");
+    } finally {
+      setPreviewingVoice(false);
+    }
   }
 
   async function generateSpeech() {
@@ -81,15 +339,16 @@ export default function CanvasAudioNodePanel({
       const response = await fetch("/api/audio/speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(buildCanvasSpeechRequest({
           text,
-          ...(supportsVoiceOption && voice.trim() ? { voice: voice.trim() } : {}),
-          ...(speechModelId !== "auto" ? { modelId: speechModelId } : {}),
-          source: "canvas",
-          ...(projectId ? { projectId } : {}),
-          ...(canvasId ? { canvasId } : {}),
+          voice,
+          modelId: speechModelId,
+          ...(supportedFormat ? { format: supportedFormat } : {}),
+          ...(speechProfile?.speedRange ? { speed: speechSpeedValue } : {}),
+          projectId,
+          canvasId,
           nodeId: node.id,
-        }),
+        })),
         cache: "no-store",
       });
       if (!response.ok) {
@@ -111,7 +370,9 @@ export default function CanvasAudioNodePanel({
         requestedModelId: speechModelId,
         ...(modelName ? { modelName } : {}),
         ...(modelId ? { modelId } : {}),
-        ...(supportsVoiceOption && voice.trim() ? { voice: voice.trim() } : {}),
+        ...(voice.trim() ? { voice: voice.trim() } : {}),
+        ...(supportedFormat ? { format: supportedFormat } : {}),
+        ...(speechProfile?.speedRange ? { speed: speechSpeedValue } : {}),
         createdAt: Date.now(),
       };
       const replaced = await onReplaceAudio(node.id, file, generation);
@@ -143,7 +404,13 @@ export default function CanvasAudioNodePanel({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="canvas-audio-panel-main">
-        <section className="canvas-audio-speech" aria-label="文本转配音">
+        <div className="canvas-audio-panel-workbench">
+          <nav className="canvas-audio-mode-tabs" aria-label="音频工具">
+            <button type="button" className={activeMode === "speech" ? "active" : ""} aria-pressed={activeMode === "speech"} onClick={() => setActiveMode("speech")}>配音</button>
+            <button type="button" className={activeMode === "music" ? "active" : ""} aria-pressed={activeMode === "music"} onClick={() => setActiveMode("music")}>音乐</button>
+            <button type="button" className={activeMode === "transcription" ? "active" : ""} aria-pressed={activeMode === "transcription"} onClick={() => setActiveMode("transcription")}>转写</button>
+          </nav>
+        {activeMode === "speech" && <section className="canvas-audio-speech" aria-label="文本转配音">
           <div className="canvas-audio-speech-heading">
             <div>
               <label htmlFor={`canvas-audio-speech-${node.id}`}>文本配音</label>
@@ -176,24 +443,193 @@ export default function CanvasAudioNodePanel({
           }}
           disabled={generatingSpeech}
         />
-        {supportsVoiceOption && <details className="canvas-audio-advanced">
+        <details className="canvas-audio-advanced">
           <summary>音色设置（可选）</summary>
-          <label htmlFor={`canvas-audio-voice-${node.id}`}>音色名称</label>
-          <input
-            id={`canvas-audio-voice-${node.id}`}
-            value={voice}
-            maxLength={100}
-            placeholder="留空使用默认音色"
-            onChange={(event) => {
-              const voice = event.target.value;
-              setVoice(voice);
-              setSpeechError("");
-              saveSpeechDraft({ voice });
-            }}
-            disabled={generatingSpeech}
+          {speechProfile ? <>
+            <span className="canvas-audio-option-label">音色</span>
+            <SelectMenu
+              value={voiceChoice}
+              ariaLabel="配音音色"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={[
+                { value: "", label: "使用模型默认音色" },
+                ...speechVoiceOptions(speechProfile),
+                { value: "custom", label: "自定义音色名称" },
+              ]}
+              onChange={(value) => {
+                const nextVoice = value === "custom" ? "" : value;
+                setCustomVoiceSelected(value === "custom");
+                setVoice(nextVoice);
+                setSpeechError("");
+                saveSpeechDraft({ voice: nextVoice });
+              }}
+              disabled={generatingSpeech || previewingVoice}
+            />
+            {voiceChoice === "custom" && <input
+              id={`canvas-audio-voice-${node.id}`}
+              value={voice}
+              maxLength={100}
+              placeholder="输入服务商支持的音色名称"
+              onChange={(event) => {
+                const nextVoice = event.target.value;
+                setVoice(nextVoice);
+                setSpeechError("");
+                saveSpeechDraft({ voice: nextVoice });
+              }}
+              disabled={generatingSpeech || previewingVoice}
+            />}
+            <span className="canvas-audio-option-label">输出格式</span>
+            <SelectMenu
+              value={supportedFormat || speechProfile.responseFormats[0]}
+              ariaLabel="配音输出格式"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={speechProfile.responseFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
+              onChange={(value) => {
+                setSpeechFormat(value as SpeechOutputFormat);
+                saveSpeechDraft({ format: value as SpeechOutputFormat });
+              }}
+              disabled={generatingSpeech || previewingVoice}
+            />
+            {speechProfile.speedRange && <div className="canvas-audio-option-speed">
+              <label htmlFor={`canvas-audio-speed-${node.id}`}>语速</label>
+              <input
+                id={`canvas-audio-speed-${node.id}`}
+                type="range"
+                min={speechProfile.speedRange.min}
+                max={speechProfile.speedRange.max}
+                step="0.05"
+                value={speechSpeedValue}
+                onChange={(event) => {
+                  const speed = Number(event.target.value);
+                  setSpeechSpeed(speed);
+                  saveSpeechDraft({ speed });
+                }}
+                disabled={generatingSpeech || previewingVoice}
+              />
+              <input
+                type="number"
+                aria-label="语速数值"
+                min={speechProfile.speedRange.min}
+                max={speechProfile.speedRange.max}
+                step="0.05"
+                value={speechSpeedValue}
+                onChange={(event) => {
+                  const speed = Number(event.target.value);
+                  if (!Number.isFinite(speed)) return;
+                  const bounded = Math.max(speechProfile.speedRange!.min, Math.min(speechProfile.speedRange!.max, speed));
+                  setSpeechSpeed(bounded);
+                  saveSpeechDraft({ speed: bounded });
+                }}
+                disabled={generatingSpeech || previewingVoice}
+              />
+            </div>}
+          </> : <>
+            <label htmlFor={`canvas-audio-voice-${node.id}`}>音色名称</label>
+            <input
+              id={`canvas-audio-voice-${node.id}`}
+              value={voice}
+              maxLength={100}
+              placeholder="留空使用默认音色"
+              onChange={(event) => {
+                const nextVoice = event.target.value;
+                setVoice(nextVoice);
+                setSpeechError("");
+                saveSpeechDraft({ voice: nextVoice });
+              }}
+              disabled={generatingSpeech || previewingVoice}
+            />
+          </>}
+          <button type="button" className="canvas-audio-voice-preview" onClick={() => void previewVoice()} disabled={!selectedModel || generatingSpeech || previewingVoice || supportedFormat === "pcm"} title={supportedFormat === "pcm" ? "PCM 格式不支持浏览器试听" : "使用当前模型与音色生成试听片段"}>
+            {previewingVoice ? "正在生成试听…" : "试听音色"}
+          </button>
+          <small>试听使用固定短句，会按当前模型正常计费，不保存到记录。{supportedFormat === "pcm" ? "切换格式后可播放试听。" : ""}</small>
+          {voicePreviewUrl && supportedFormat !== "pcm" && <CanvasAudioPlayer src={voicePreviewUrl} name="音色试听" compact />}
+        </details>
+        </section>}
+        {activeMode === "transcription" && <section className="canvas-audio-speech canvas-audio-transcription" aria-label="音频转写">
+          <div className="canvas-audio-speech-heading">
+            <div><label>音频转文字</label><small>{transcriptionFile?.name || (hasAudio ? String(data.name || "使用当前节点音频") : "选择要识别的音频文件")}</small></div>
+            <button type="button" className="canvas-audio-speech-copy" onClick={() => transcriptionInputRef.current?.click()} disabled={transcriptionBusy}>选择文件</button>
+          </div>
+          <div className="canvas-audio-transcription-options">
+            <SelectMenu
+              value={transcriptionDraft.language || ""}
+              ariaLabel="录音语言"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={TRANSCRIPTION_LANGUAGES}
+              onChange={(value) => saveTranscriptionDraft({ language: value })}
+              disabled={transcriptionBusy}
+            />
+            {transcriptionDraft.language === "__custom" && <input value={transcriptionDraft.customLanguage || ""} maxLength={30} placeholder="填写语言代码，例如 it" onChange={(event) => saveTranscriptionDraft({ customLanguage: event.target.value })} disabled={transcriptionBusy} />}
+            <SelectMenu
+              value={transcriptionDraft.responseFormat || "verbose_json"}
+              ariaLabel="转写结果格式"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={TRANSCRIPTION_FORMATS}
+              onChange={(value) => saveTranscriptionDraft({ responseFormat: value as AudioTranscriptionResponseFormat })}
+              disabled={transcriptionBusy}
+            />
+          </div>
+          <textarea
+            value={transcriptionDraft.prompt || ""}
+            maxLength={12000}
+            rows={4}
+            placeholder="可选：填写人名、品牌或行业术语，帮助提高识别准确度"
+            onChange={(event) => saveTranscriptionDraft({ prompt: event.target.value })}
+            disabled={transcriptionBusy}
           />
-        </details>}
-        </section>
+          <details className="canvas-audio-advanced">
+            <summary>识别稳定性</summary>
+            <div className="canvas-audio-transcription-temperature">
+              <input type="range" min="0" max="1" step="0.05" value={transcriptionDraft.temperature ?? 0} onChange={(event) => saveTranscriptionDraft({ temperature: Number(event.target.value) })} disabled={transcriptionBusy} />
+              <output>{(transcriptionDraft.temperature ?? 0) === 0 ? "最稳定" : (transcriptionDraft.temperature ?? 0).toFixed(2)}</output>
+              <small>默认最稳定；提高后结果会更灵活。</small>
+            </div>
+          </details>
+          {transcriptionError && <p className="canvas-audio-error" role="alert">{transcriptionError}</p>}
+          <small className="canvas-audio-input-note">支持 MP3、WAV、OGG、M4A、FLAC、WebM、PCM，最大 50 MiB</small>
+        </section>}
+        {activeMode === "music" && <section className="canvas-audio-speech canvas-audio-music" aria-label="音乐生成">
+          <div className="canvas-audio-speech-heading">
+            <div><label htmlFor={`canvas-audio-music-${node.id}`}>音乐创作描述</label><small>{musicProfile?.promptRequired ? "描述曲风、情绪、乐器与场景" : "按所选模型填写创作描述或工作流素材"}</small></div>
+            {musicProfile && <span className="canvas-audio-speech-count">{musicDraft.prompt.length}{musicProfile.promptMaxLength ? ` / ${musicProfile.promptMaxLength}` : " 字"}</span>}
+          </div>
+          <textarea
+            id={`canvas-audio-music-${node.id}`}
+            value={musicDraft.prompt}
+            maxLength={musicProfile?.promptMaxLength}
+            rows={6}
+            placeholder="描述希望生成的音乐、声音或处理目标…"
+            onChange={(event) => {
+              const prompt = event.target.value;
+              setMusicError("");
+              saveMusicDraft({ prompt });
+            }}
+            disabled={musicBusy}
+          />
+          {musicProfile && <CangyuanMusicOptionsFields
+            profile={musicProfile}
+            options={musicDraft.options}
+            onChange={(options: CangyuanMusicOptions) => saveMusicDraft({ options })}
+            onUploadStateChange={(fieldId, uploading) => setUploadingMusicFields((current) => {
+              const next = new Set(current);
+              if (uploading) next.add(fieldId);
+              else next.delete(fieldId);
+              return next;
+            })}
+          />}
+          {!musicModels.length && <p className="canvas-audio-input-note">当前没有可用的音乐生成模型，请先在模型库启用支持音乐生成的模型。</p>}
+          {musicError && <p className="canvas-audio-error" role="alert">{musicError}</p>}
+        </section>}
+        </div>
         <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
           <div className="canvas-audio-panel-intro">
             <div className="canvas-audio-panel-intro-copy">
@@ -240,51 +676,77 @@ export default function CanvasAudioNodePanel({
               </small>
             </details>
           )}
+          {data.transcription && <details className="canvas-audio-generation" open>
+            <summary>转写结果 · {data.transcription.sourceAudioName}</summary>
+            <p className="canvas-audio-transcript-text">{data.transcription.text || "未识别到可用文字。"}</p>
+            <small>{data.transcription.modelName}{data.transcription.language ? ` · ${data.transcription.language}` : " · 自动识别语言"} · {new Date(data.transcription.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
+            {Boolean(data.transcription.segments?.length) && <details className="canvas-audio-transcript-segments">
+              <summary>查看分段时间</summary>
+              <ol>{data.transcription.segments?.map((segment, index) => <li key={`${segment.start}-${index}`}><time>{Math.floor(segment.start / 60).toString().padStart(2, "0")}:{Math.floor(segment.start % 60).toString().padStart(2, "0")}–{Math.floor(segment.end / 60).toString().padStart(2, "0")}:{Math.floor(segment.end % 60).toString().padStart(2, "0")}</time><span>{segment.text}</span></li>)}</ol>
+            </details>}
+            <button type="button" className="canvas-audio-speech-copy" onClick={() => void navigator.clipboard.writeText(data.transcription?.text || "").then(() => onNotify("转写文字已复制")).catch(() => onNotify("复制失败，请检查剪贴板权限", "error"))} disabled={!data.transcription.text}>复制转写文字</button>
+          </details>}
+          {data.musicTask && <details className="canvas-audio-generation" open>
+            <summary>音乐任务 · {data.musicTask.status === "succeeded" ? "已完成" : data.musicTask.status === "failed" || data.musicTask.status === "cancelled" ? "失败" : "生成中"}</summary>
+            <p>{data.musicTask.prompt || "音乐处理任务"}</p>
+            <small>{data.musicTask.modelName} · {data.musicTask.providerStatus || data.musicTask.status}</small>
+            {data.musicTask.error && <small className="canvas-audio-error">{data.musicTask.error}</small>}
+            {data.musicTask.outputs.map((output, index) => output.url ? <div className="canvas-audio-music-output" key={`${data.musicTask?.id}-${index}`}>
+              <b>{output.name || output.title || output.artifactType?.toUpperCase() || `结果 ${index + 1}`}</b>
+              {output.artifactType === "audio" || !output.artifactType
+                ? <CanvasAudioPlayer src={output.url} name={output.name || output.title || "音乐结果"} compact />
+                : <small>此结果为 {output.artifactType.toUpperCase()} 文件，可下载保存。</small>}
+              <a href={output.url} target="_blank" rel="noreferrer" download>{output.artifactType === "audio" || !output.artifactType ? "下载音频" : `下载 ${output.artifactType.toUpperCase()}`}</a>
+            </div> : output.text ? <p key={`${data.musicTask?.id}-${index}`}>{output.text}</p> : null)}
+          </details>}
         </aside>
       </div>
       <div className="canvas-audio-panel-actions">
-        {speechError && <p className="canvas-audio-error" role="alert">{speechError}</p>}
-        <div className="canvas-audio-panel-service" title={speechServiceLabel}>
+        {(activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError}</p>}
+        <div className="canvas-audio-panel-service" title={activeMode === "speech" ? speechServiceLabel : activeMode === "music" ? selectedMusicModel?.displayName || "暂无音乐模型" : selectedTranscriptionModel?.displayName || "暂无转写模型"}>
           <span className="canvas-audio-panel-service-dot" aria-hidden="true" />
           <div>
-            <b>配音模型</b>
+            <b>{activeMode === "speech" ? "配音模型" : activeMode === "music" ? "音乐模型" : "转写模型"}</b>
             <ModelPicker
-              models={models}
-              capability="speech"
-              value={speechModelId}
-              onChange={(modelId) => {
-                setSpeechModelId(modelId);
-                setSpeechError("");
-                saveSpeechDraft({ modelId });
-              }}
+              models={activeMode === "speech" ? models : activeMode === "music" ? musicModels : transcriptionModels}
+              capability={activeMode === "speech" ? "speech" : activeMode === "music" ? "music-generate" : "transcription"}
+              value={activeMode === "speech" ? speechModelId : activeMode === "music" ? selectedMusicModel?.id || "" : selectedTranscriptionModel?.id || ""}
+              onChange={(modelId) => activeMode === "speech"
+                ? (setSpeechModelId(modelId), setCustomVoiceSelected(false), setSpeechError(""), saveSpeechDraft({ modelId }))
+                : activeMode === "music"
+                  ? (setMusicError(""), saveMusicDraft({ modelId }))
+                  : (setTranscriptionError(""), saveTranscriptionDraft({ modelId }))}
               defaultProviderId={defaultProviderId}
               defaultProviderName={defaultProviderName}
-              placeholder={models.some((model) => model.enabled && model.published && model.capabilities.includes("speech")) ? undefined : "尚未启用配音模型"}
-              automaticHint="按默认服务商选择可用配音模型，无在线模型时使用本机语音"
+              placeholder={activeMode === "speech"
+                ? models.some((model) => model.enabled && model.published && model.capabilities.includes("speech")) ? undefined : "尚未启用配音模型"
+                : activeMode === "music" ? musicModels.length ? undefined : "尚未启用音乐模型" : transcriptionModels.length ? undefined : "尚未启用转写模型"}
+              automaticHint={activeMode === "speech" ? "按默认服务商选择可用配音模型，无在线模型时使用本机语音" : undefined}
               portalZIndex={CANVAS_Z_INDEX.modalPopover}
               dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-              disabled={generatingSpeech}
+              disabled={generatingSpeech || previewingVoice || transcriptionBusy || musicBusy}
               className="canvas-audio-model-picker"
             />
-            <small>上次生成：{speechServiceLabel}</small>
+            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" ? data.musicTask ? `任务状态：${data.musicTask.status === "succeeded" ? "已完成" : ["failed", "cancelled"].includes(data.musicTask.status) ? "失败" : "生成中"}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
           </div>
         </div>
-        <button
-          type="button"
-          className="canvas-audio-panel-upload"
-          onClick={() => inputRef.current?.click()}
-          disabled={generatingSpeech}
-        >
-          {hasAudio ? "替换音频" : "导入音频"}
-        </button>
+        {activeMode === "speech" && <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()} disabled={generatingSpeech}>{hasAudio ? "替换音频" : "导入音频"}</button>}
         <button
           type="button"
           className="canvas-node-editor-generate canvas-audio-generate"
-          onClick={() => void generateSpeech()}
-          disabled={!speechText.trim() || generatingSpeech}
-          aria-busy={generatingSpeech}
+          onClick={() => activeMode === "speech" ? void generateSpeech() : activeMode === "music" ? void generateMusic() : void transcribeAudio()}
+          disabled={activeMode === "speech"
+            ? !speechText.trim() || generatingSpeech
+            : activeMode === "music"
+              ? !selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0
+              : !selectedTranscriptionModel || transcriptionBusy || transcriptionDraft.language === "__custom" && !transcriptionDraft.customLanguage?.trim() || !transcriptionFile && !hasAudio}
+          aria-busy={activeMode === "speech" ? generatingSpeech : activeMode === "music" ? musicBusy : transcriptionBusy}
         >
-          {generatingSpeech ? "正在生成…" : speechError ? "重新生成配音" : hasAudio ? "生成并替换" : "生成配音"}
+          {activeMode === "speech"
+            ? generatingSpeech ? "正在生成…" : speechError ? "重新生成配音" : hasAudio ? "生成并替换" : "生成配音"
+            : activeMode === "music"
+              ? musicBusy ? "正在提交…" : data.musicTask && ["pending", "queued", "running", "waiting"].includes(data.musicTask.status) ? "提交新任务" : "生成音乐"
+              : transcriptionBusy ? "正在识别…" : data.transcription ? "重新转写" : "开始转写"}
         </button>
       </div>
       <input
@@ -295,6 +757,16 @@ export default function CanvasAudioNodePanel({
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void onReplaceAudio(node.id, file);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={transcriptionInputRef}
+        hidden
+        type="file"
+        accept={TRANSCRIPTION_ACCEPT}
+        onChange={(event) => {
+          chooseTranscriptionFile(event.target.files?.[0]);
           event.currentTarget.value = "";
         }}
       />

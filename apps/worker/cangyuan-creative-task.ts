@@ -3,7 +3,7 @@ import { createCangyuanCreativeTask as createServiceTask, getCangyuanCreativeTas
 import { runTaskLifecycle } from './task-lifecycle';
 
 type CreateOptions =
-  | { kind: 'music'; modelId: string; idempotencyKey?: string; input: { prompt: string } & CangyuanMusicOptions }
+  | { kind: 'music'; modelId: string; idempotencyKey?: string; input: { prompt?: string } & CangyuanMusicOptions }
   | { kind: '3d'; modelId: string; idempotencyKey?: string; input: { prompt: string } & Cangyuan3DOptions };
 
 export function createCangyuanCreativeGeneration(options: CreateOptions) {

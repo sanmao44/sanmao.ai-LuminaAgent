@@ -21,6 +21,11 @@ export async function GET(request: Request) {
     // 直接按“素材已丢失”返回，避免画布反复重试并误报成服务重启。
     const type = imageMimeFromBytes(data);
     if (!type) return new Response('Not a valid image', { status: 404 });
-    return new Response(data, { headers: { 'Content-Type': type, 'Cache-Control': 'public, max-age=31536000, immutable' } });
+    return new Response(data, { headers: {
+      'Content-Type': type,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      ...(type === 'image/svg+xml' ? { 'Content-Security-Policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'" } : {}),
+    } });
   } catch { return new Response('Not found', { status: 404 }); }
 }

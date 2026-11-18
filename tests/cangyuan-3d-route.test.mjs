@@ -65,6 +65,31 @@ test('3D route accepts an omitted optional prompt for Trellis image-only generat
   });
 });
 
+test('3D route forwards Tripo multi-view inputs and model-specific options', async () => {
+  const route = createRoute();
+  const response = await route.POST(request({
+    modelId: 'tripo3d-p1-model',
+    options: {
+      mode: 'multiview-to-3d',
+      multiviewImages: {
+        front: 'https://cdn.example.test/front.png',
+        right: 'https://cdn.example.test/right.png',
+      },
+      faceLimit: 12_000,
+    },
+  }));
+  assert.equal(response.status, 202);
+  assert.deepEqual(route.getSubmitted().input, {
+    prompt: '',
+    mode: 'multiview-to-3d',
+    multiviewImages: {
+      front: 'https://cdn.example.test/front.png',
+      right: 'https://cdn.example.test/right.png',
+    },
+    faceLimit: 12_000,
+  });
+});
+
 test('3D route rejects malformed options instead of silently dropping them', async () => {
   const route = createRoute();
   for (const body of [

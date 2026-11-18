@@ -6,6 +6,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const noop = () => null;
 const loader = createTsRequire(process.cwd(), {
+  '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: noop },
   './ModelPicker': { __esModule: true, default: noop },
   './SelectMenu': {
     __esModule: true,
@@ -81,4 +82,95 @@ test('Cangyuan image counts follow each documented model limit while other provi
   }, genericRuntime);
   assert.equal(generic.count, 8);
   assert.doesNotMatch(renderEditor(genericRuntime, generic), /10 张/);
+});
+
+test('Cangyuan image options preserve model-specific resolution and tier fields in the shared editor', () => {
+  const runtime = createRuntime({ rawId: 'gpt-image-2.5-x' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    resolution: '2k',
+    tier: '4k',
+  }, runtime);
+
+  assert.equal(settings.resolution, '2K');
+  assert.equal(settings.tier, '4k');
+  assert.equal(settings.series, 'flare');
+  const markup = renderEditor(runtime, settings);
+  assert.match(markup, /生成系列/);
+  assert.match(markup, /Flare 系列/);
+});
+
+test('Cangyuan resolution controls retain exact documented enum spellings', () => {
+  const runtime = createRuntime({ rawId: 'doubao-seedream-5-5' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    resolution: '2K',
+  }, runtime);
+
+  assert.equal(settings.resolution, '2k');
+  const markup = renderEditor(runtime, settings);
+  assert.match(markup, /模型清晰度/);
+  assert.match(markup, /2K/);
+});
+
+test('Flux 3 Klein image settings retain prompt expansion and a reproducible seed', () => {
+  const runtime = createRuntime({ rawId: 'flux-3-klein' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    seed: '  seed-42  ',
+    enablePromptExpansion: false,
+  }, runtime);
+
+  assert.equal(settings.seed, 'seed-42');
+  assert.equal(settings.enablePromptExpansion, false);
+});
+
+test('GIF and SVG output never retain JPEG/WebP compression settings', () => {
+  const runtime = createRuntime({ rawId: 'gpt-image-2.6-flare-o' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    outputFormat: 'gif',
+    outputCompression: 72,
+    frameCount: 8,
+    frameDurationMs: 120,
+  }, runtime);
+
+  assert.equal(settings.outputCompression, undefined);
+  assert.equal(settings.frameCount, 8);
+  assert.equal(settings.frameDurationMs, 120);
+});
+
+test('switching Cangyuan models clears controls that the new profile does not support', () => {
+  const sourceRuntime = createRuntime({ rawId: 'gpt-image-2.6-flare-o' });
+  const sourceModel = sourceRuntime.models[0];
+  const targetModel = { ...sourceModel, id: 'cangyuan-flux', rawId: 'flux-3-image', displayName: 'Flux 3 Image' };
+  const runtime = {
+    ...sourceRuntime,
+    models: [sourceModel, targetModel],
+    settings: { ...sourceRuntime.settings, defaultImageModelId: sourceModel.id },
+  };
+  const sourceSettings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: sourceModel.id,
+    outputFormat: 'gif',
+    outputCompression: 72,
+    frameCount: 8,
+    frameDurationMs: 120,
+    complexity: 'medium',
+    safetyIdentifier: 'user-42',
+    markupImage: 'data:image/png;base64,bWFya3Vw',
+  }, runtime);
+  const switched = normalizeImageCreationSettings({ ...sourceSettings, model: targetModel.id }, runtime);
+
+  assert.equal(switched.model, targetModel.id);
+  assert.equal(switched.outputCompression, undefined);
+  assert.equal(switched.frameCount, undefined);
+  assert.equal(switched.frameDurationMs, undefined);
+  assert.equal(switched.complexity, undefined);
+  assert.equal(switched.safetyIdentifier, undefined);
+  assert.equal(switched.markupImage, undefined);
 });

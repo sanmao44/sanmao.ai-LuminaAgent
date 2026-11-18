@@ -11,6 +11,7 @@ const [videoStudio, parameterEditor] = await Promise.all([
 ]);
 
 const loadEditor = createTsRequire(process.cwd(), {
+  '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: () => null },
   './ModelPicker': { __esModule: true, default: () => null },
   './SelectMenu': {
     __esModule: true,
@@ -102,8 +103,10 @@ test('unlisted Cangyuan models render prompt-only controls while Seedance expose
   assert.match(unlisted, /该沧元型号尚未核实专属参数，仅支持模型和提示词/);
   assert.doesNotMatch(unlisted, /图生视频|首尾帧|参考图生视频/);
 
-  const seedance = renderVideoEditor({ provider, rawId: 'doubao-seedance-2-0-fast-260128' });
-  assert.match(seedance, /首尾帧/);
+  const seedance = renderVideoEditor({ provider, rawId: 'sd20-seedance-2.0-fast' });
+  assert.match(seedance, /不支持首帧图片/);
+  assert.match(seedance, /不支持尾帧图片/);
+  assert.doesNotMatch(seedance, /首尾帧必须成对/);
   assert.match(seedance, /参考图生视频/);
   assert.doesNotMatch(seedance, /原生音频/);
 });

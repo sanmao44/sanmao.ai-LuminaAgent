@@ -23,6 +23,8 @@ function extensionFromContentType(contentType: string) {
   if (mime === 'audio/mp4' || mime === 'audio/x-m4a') return 'm4a';
   if (mime === 'audio/aac') return 'aac';
   if (mime === 'audio/flac') return 'flac';
+  if (mime === 'audio/opus') return 'opus';
+  if (mime === 'audio/pcm' || mime === 'audio/l16') return 'pcm';
   if (mime === 'audio/webm') return 'webm';
   return 'bin';
 }
@@ -35,6 +37,7 @@ export function audioContentType(file: string) {
   if (lower.endsWith('.aac')) return 'audio/aac';
   if (lower.endsWith('.flac')) return 'audio/flac';
   if (lower.endsWith('.opus')) return 'audio/opus';
+  if (lower.endsWith('.pcm')) return 'audio/pcm';
   if (lower.endsWith('.webm')) return 'audio/webm';
   return 'audio/mpeg';
 }

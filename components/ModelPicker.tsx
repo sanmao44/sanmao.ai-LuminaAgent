@@ -36,7 +36,7 @@ type ModelPickerProps = {
 
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
-  'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音',
+  'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音', transcription: '转写',
   'music-generate': '音乐', '3d-generate': '三维',
 };
 

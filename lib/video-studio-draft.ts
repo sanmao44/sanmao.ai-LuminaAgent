@@ -1,3 +1,5 @@
+import { parseVideoModelParameterValues, type VideoModelParameterValues } from '@/packages/contracts/video-generation';
+
 export type VideoStudioDraftInput = {
   prompt: string;
   modelId: string;
@@ -11,6 +13,8 @@ export type VideoStudioDraftInput = {
   agnesNumFrames: number;
   agnesFrameRate: number;
   seed?: string;
+  generateAudio?: boolean;
+  modelParameters?: VideoModelParameterValues;
   hasUnpersistedMedia: boolean;
 };
 
@@ -33,6 +37,8 @@ export function hasVideoStudioDraftContent(draft: VideoStudioDraftInput, default
     || draft.agnesNumFrames !== 81
     || draft.agnesFrameRate !== 24
     || Boolean(draft.seed)
+    || draft.generateAudio === false
+    || Boolean(draft.modelParameters && Object.keys(draft.modelParameters).length)
     || draft.hasUnpersistedMedia,
   );
 }
@@ -78,6 +84,12 @@ function normalizeDraft(value: unknown): VideoStudioDraft | null {
   const agnesWidth = boundedInteger(value.agnesWidth, 1152, 64, 3840);
   const agnesHeight = boundedInteger(value.agnesHeight, 768, 64, 3840);
   const agnesNumFrames = boundedInteger(value.agnesNumFrames, 81, 1, 441);
+  let modelParameters: VideoModelParameterValues;
+  try {
+    modelParameters = parseVideoModelParameterValues(value.modelParameters);
+  } catch {
+    return null;
+  }
 
   return {
     version: 1,
@@ -94,6 +106,8 @@ function normalizeDraft(value: unknown): VideoStudioDraft | null {
     agnesNumFrames: (agnesNumFrames - 1) % 8 === 0 ? agnesNumFrames : 81,
     agnesFrameRate: boundedInteger(value.agnesFrameRate, 24, 1, 60),
     ...(typeof value.seed === 'string' && /^-?\d+$/.test(value.seed) && Number.isSafeInteger(Number(value.seed)) ? { seed: value.seed } : {}),
+    ...(typeof value.generateAudio === 'boolean' ? { generateAudio: value.generateAudio } : {}),
+    ...(Object.keys(modelParameters).length ? { modelParameters } : {}),
     hasUnpersistedMedia: value.hasUnpersistedMedia === true || inputMode !== 'text',
   };
 }

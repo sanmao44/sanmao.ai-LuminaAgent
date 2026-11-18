@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { VideoGenerationInput } from './types';
 import type { GenerationSource } from './generation-source';
 import { createTaskRepository } from './repositories/task-repository';
+import type { ProviderTokenUsage } from '@/packages/contracts/task';
 
 export type VideoTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
 export type VideoTask = {
@@ -12,6 +13,7 @@ export type VideoTask = {
   providerModel?: string;
   providerStatus?: string;
   providerProgress?: number;
+  providerUsage?: ProviderTokenUsage;
   providerResponse?: unknown;
   modelId: string;
   modelName?: string;

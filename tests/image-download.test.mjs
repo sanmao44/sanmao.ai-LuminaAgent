@@ -55,3 +55,17 @@ test('falls back to a data URL download when fetching fails', async () => {
     restoreBrowserFakes(original);
   }
 });
+
+test('keeps SVG extensions for fetched files and data URL fallbacks', async () => {
+  const { original, anchors } = installBrowserFakes();
+  try {
+    globalThis.fetch = async () => ({ ok: true, blob: async () => new Blob(['<svg/>'], { type: 'image/svg+xml' }) });
+    await downloader.downloadImage('/api/storage/file?name=vector.svg', 'vector.png');
+    assert.equal(anchors[0].download, 'vector.svg');
+    globalThis.fetch = async () => { throw new Error('offline'); };
+    await downloader.downloadImage('data:image/svg+xml;base64,AAAA', 'vector.png');
+    assert.equal(anchors[1].download, 'vector.svg');
+  } finally {
+    restoreBrowserFakes(original);
+  }
+});

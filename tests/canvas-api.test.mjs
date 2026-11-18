@@ -190,6 +190,27 @@ test('canvas image generation preserves Cangyuan counts up to ten', async () => 
   assert.equal(JSON.parse(request.options.body).count, 10);
 });
 
+test('canvas image generation forwards model-specific image controls without renaming them', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return jsonResponse({ images: [] });
+  }, () => api.generateCanvasImage({
+    prompt: '可复现的图像',
+    model: 'flux-3-klein',
+    imageOperation: 'generate',
+    resolution: '4K',
+    seed: 'seed-42',
+    enablePromptExpansion: false,
+  }));
+
+  assert.equal(request.input, '/api/generate');
+  const payload = JSON.parse(request.options.body);
+  assert.equal(payload.resolution, '4K');
+  assert.equal(payload.seed, 'seed-42');
+  assert.equal(payload.enablePromptExpansion, false);
+});
+
 test('canvas image generation includes saved project style and constraints in its prompt', async () => {
   let request;
   await withFetch(async (input, options) => {

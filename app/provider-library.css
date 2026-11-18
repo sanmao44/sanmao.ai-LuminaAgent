@@ -122,6 +122,37 @@
   margin-bottom: 18px;
 }
 
+.provider-modal-form .provider-fields label.provider-creative-task-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: pointer;
+}
+
+.provider-creative-task-toggle > input {
+  width: 15px !important;
+  height: 15px !important;
+  margin: 0;
+  padding: 0 !important;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+.provider-creative-task-toggle > span {
+  display: grid;
+  gap: 3px;
+}
+
+.provider-creative-task-toggle > span small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
 .provider-modal-form .connection-result {
   margin-top: 0;
   margin-bottom: 14px;

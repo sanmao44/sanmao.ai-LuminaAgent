@@ -1,3 +1,5 @@
+import type { ProviderCreativeTaskProtocol } from './provider-creative-task';
+
 export type ProviderTransferProvider = {
   id: string;
   name: string;
@@ -13,6 +15,7 @@ export type ProviderTransferProvider = {
   imageUpscaleStatusPath: string;
   responsesPath: string;
   textProtocol: string;
+  creativeTaskProtocol?: ProviderCreativeTaskProtocol;
   videoTransport: string;
   videoBaseUrl: string;
   videoTaskPath: string;

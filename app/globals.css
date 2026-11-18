@@ -3635,10 +3635,16 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
   color:#8a45b5;
   border-color:color-mix(in srgb,#b26bd8 46%,var(--line));
 }
+.models-page .model-kind-status[class~="3d"],
+.models-page .model-kind-option[class~="3d"].active{
+  background:color-mix(in srgb,#d78738 16%,var(--panel-2));
+  color:#ad651b;
+  border-color:color-mix(in srgb,#d78738 48%,var(--line));
+}
 .models-page .model-kind-segmented{
   width:100%;
   min-width:0;
-  grid-template-columns:repeat(4,minmax(0,1fr));
+  grid-template-columns:repeat(5,minmax(0,1fr));
 }
 .models-page .model-kind-option{
   min-width:0;
@@ -3660,10 +3666,17 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
   background:color-mix(in srgb,#b26bd8 10%,var(--panel-2));
   color:#8a45b5;
 }
+.models-page .model-kind-option[class~="3d"]:hover:not(:disabled){
+  background:color-mix(in srgb,#d78738 12%,var(--panel-2));
+  color:#ad651b;
+}
 .models-page .model-kind-option:disabled{
   cursor:wait;
   opacity:.62;
 }
+.kind-badge.video{background:color-mix(in srgb,#2a9d8f 14%,var(--panel-2));color:#238579}
+.kind-badge.audio{background:color-mix(in srgb,#b26bd8 14%,var(--panel-2));color:#8a45b5}
+.kind-badge[class~="3d"]{background:color-mix(in srgb,#d78738 16%,var(--panel-2));color:#ad651b}
 
 /* Long model libraries stay easy to traverse without taking up page space. */
 .model-page-scroll-nav{

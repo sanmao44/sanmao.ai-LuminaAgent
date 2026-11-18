@@ -6,6 +6,7 @@ import sharp from 'sharp';
 import type { GeneratedImage } from './types';
 import { knownMediaRoots, mediaDirectory, rememberMediaRoots } from './media-paths';
 import { resolveLocalDataDir } from './data-paths';
+import { isSvgImageBytes } from './svg-image';
 
 const dataDir = resolveLocalDataDir();
 const legacyStoragePath = path.join(process.cwd(), '..', 'image_generation_records');
@@ -91,15 +92,16 @@ export function imageMimeFromBytes(bytes: Uint8Array) {
   if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.slice(8, 12)) === 'WEBP') return 'image/webp';
   if (bytes.length >= 6 && (String.fromCharCode(...bytes.slice(0, 6)) === 'GIF87a' || String.fromCharCode(...bytes.slice(0, 6)) === 'GIF89a')) return 'image/gif';
   if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) return 'image/bmp';
+  if (isSvgImageBytes(bytes)) return 'image/svg+xml';
   return '';
 }
 
 function imageExtension(mime: string) {
-  return mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : mime === 'image/bmp' ? 'bmp' : 'png';
+  return mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : mime === 'image/gif' ? 'gif' : mime === 'image/bmp' ? 'bmp' : mime === 'image/svg+xml' ? 'svg' : 'png';
 }
 
 function invalidImageError() {
-  return new Error('服务商返回的内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片，无法保存到本地。');
+  return new Error('服务商返回的内容不是有效的 PNG、JPEG、WebP、GIF、BMP 或 SVG 图片，无法保存到本地。');
 }
 
 async function validateImageBuffer(buffer: Buffer) {
@@ -362,6 +364,7 @@ export async function resolveStoredImageReference(reference: string, configuredP
   const file = resolveStoredFileWithFallback(configuredPath || '', name);
   if (!file) throw new Error('无法读取原图文件，请重新选择图片后再试');
   const data = await readFile(file);
-  const mime = file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg') ? 'image/jpeg' : file.toLowerCase().endsWith('.webp') ? 'image/webp' : file.toLowerCase().endsWith('.gif') ? 'image/gif' : file.toLowerCase().endsWith('.bmp') ? 'image/bmp' : 'image/png';
+  const mime = imageMimeFromBytes(data);
+  if (!mime) throw invalidImageError();
   return `data:${mime};base64,${data.toString('base64')}`;
 }

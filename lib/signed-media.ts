@@ -27,6 +27,17 @@ export const MEDIA_RELAY_REJECTED = AGNES_MEDIA_RELAY_REJECTED;
 export const PUBLIC_MEDIA_TTL_MS = AGNES_MEDIA_TTL_MS;
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 const MIME_PATTERN = /^(image|video|audio)\/[a-z0-9.+-]+$/i;
+const RELAY_AUDIO_MIME_TYPES = new Set(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/aac', 'audio/mp4']);
+const RELAY_VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm']);
+const SUPPORTED_RELAY_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  ...RELAY_AUDIO_MIME_TYPES,
+  'audio/x-wav', 'audio/x-m4a', 'audio/m4a', 'audio/x-flac', 'audio/oga', 'audio/x-aac',
+  ...RELAY_VIDEO_MIME_TYPES,
+  'video/x-m4v',
+]);
+const CANGYUAN_REFERENCE_IMAGE_MAX_BYTES = 30 * 1024 * 1024;
+const RELAY_VIDEO_MAX_BYTES = 25 * 1024 * 1024;
 let manifestMutationChain: Promise<unknown> = Promise.resolve();
 const RELAY_CACHE_SKEW_MS = 15_000;
 const RELAY_UPLOAD_CACHE_MAX = 128;
@@ -274,9 +285,13 @@ function kindForMime(mime: string): 'image' | 'video' | 'audio' | null {
   return MEDIA_KINDS.has(kind) ? kind as 'image' | 'video' | 'audio' : null;
 }
 
-async function validateRelayImage(data: Buffer) {
-  if (!data.length || data.byteLength > 4 * 1024 * 1024) {
-    throw new PublicMediaError('图片不能超过 4 MiB。', MEDIA_RELAY_REJECTED);
+export function isSupportedRelayMime(value: string) {
+  return SUPPORTED_RELAY_MIME_TYPES.has(cleanMime(value));
+}
+
+async function validateRelayImage(data: Buffer, maximumBytes = 4 * 1024 * 1024) {
+  if (!data.length || data.byteLength > maximumBytes) {
+    throw new PublicMediaError(`图片不能超过 ${Math.round(maximumBytes / 1024 / 1024)} MiB（本站中转限制）。`, MEDIA_RELAY_REJECTED);
   }
   const metadata = await sharp(data, { failOn: 'error' }).metadata().catch(() => null);
   const mime = metadata?.format === 'jpeg' ? 'image/jpeg'
@@ -286,6 +301,19 @@ async function validateRelayImage(data: Buffer) {
           : '';
   if (!mime) throw new PublicMediaError('只支持 JPG、PNG、WebP 或 GIF 图片。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
   return mime;
+}
+
+function validateRelayVideo(data: Buffer, mime: string) {
+  if (!data.length || data.byteLength > RELAY_VIDEO_MAX_BYTES) {
+    throw new PublicMediaError('视频不能超过 25 MiB（本站上传限制）。', MEDIA_RELAY_REJECTED);
+  }
+  const isIsoBmff = data.byteLength >= 12 && data.toString('ascii', 4, 8) === 'ftyp';
+  const isWebm = data.byteLength >= 4 && data[0] === 0x1a && data[1] === 0x45 && data[2] === 0xdf && data[3] === 0xa3;
+  if (!RELAY_VIDEO_MIME_TYPES.has(mime)
+    || ((mime === 'video/mp4' || mime === 'video/quicktime') && !isIsoBmff)
+    || (mime === 'video/webm' && !isWebm)) {
+    throw new PublicMediaError('视频仅支持有效的 MP4、MOV 或 WebM 文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  }
 }
 
 function safeMediaFile(filename: unknown) {
@@ -402,11 +430,11 @@ async function uploadToPublicMediaRelayUncached(data: Buffer, mime: string, kind
       ensureAutomaticRelayBypass(endpoint);
       const blobBytes = new Uint8Array(data.byteLength);
       blobBytes.set(data);
-      const useRawImageUpload = kind === 'image' && endpoint === defaultMediaRelayUrl();
+      const useRawUpload = endpoint === defaultMediaRelayUrl();
       let body: FormData | Blob;
       const headers: Record<string, string> = {};
       if (uploadToken) headers['x-sanmao-relay-token'] = uploadToken;
-      if (useRawImageUpload) {
+      if (useRawUpload) {
         body = new Blob([blobBytes.buffer], { type: mime });
         headers['content-type'] = mime;
       } else {
@@ -427,14 +455,15 @@ async function uploadToPublicMediaRelayUncached(data: Buffer, mime: string, kind
       timeout = undefined;
       const payload = await response.json().catch(() => ({})) as { url?: unknown; expiresAt?: unknown; error?: unknown };
       if (!response.ok || typeof payload.url !== 'string') {
-        const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : '图片不符合中转服务要求';
-        if (response.status >= 400 && response.status < 500) throw new PublicMediaError(`图片暂时无法提交：${message}。`, MEDIA_RELAY_REJECTED);
+        const mediaLabel = kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片';
+        const message = typeof payload.error === 'string' ? payload.error : response.status === 429 ? '上传过于频繁，请稍后重试' : `${mediaLabel}不符合中转服务要求`;
+        if (response.status >= 400 && response.status < 500) throw new PublicMediaError(`${mediaLabel}暂时无法提交：${message}。`, MEDIA_RELAY_REJECTED);
         throw new Error(message);
       }
       const url = payload.url.trim();
       let parsed: URL;
-      try { parsed = new URL(url); } catch { throw new Error('中转服务返回的图片地址无效'); }
-      if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的图片地址不安全');
+      try { parsed = new URL(url); } catch { throw new Error('中转服务返回的媒体地址无效'); }
+      if (!isUsablePublicBaseUrl(url) || parsed.origin !== new URL(endpoint).origin) throw new Error('中转服务返回的媒体地址不安全');
       return { url, expiresAt: typeof payload.expiresAt === 'string' ? payload.expiresAt : undefined };
     } catch (error) {
       if (timeout) clearTimeout(timeout);
@@ -454,7 +483,8 @@ async function uploadToPublicMediaRelayUncached(data: Buffer, mime: string, kind
       break;
     }
   }
-  throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+  const mediaLabel = kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片';
+  throw new PublicMediaError(`${mediaLabel}暂时无法提交：自动中转服务不可用，请稍后重试；也可以在高级设置中配置自己的公网媒体地址。`, MEDIA_RELAY_UNAVAILABLE);
 }
 
 async function uploadToPublicMediaRelay(data: Buffer, mime: string, kind: 'image' | 'video' | 'audio') {
@@ -564,6 +594,62 @@ export async function preparePublicMediaUrl(value: string, kind: 'image' | 'vide
   return stored.url;
 }
 
+export async function preparePublicMediaBytes(data: Buffer, mimeValue: string, kind: 'image' | 'video' | 'audio', ttlMs = AGNES_MEDIA_TTL_MS): Promise<{ url: string; expiresAt?: string }> {
+  if (!Buffer.isBuffer(data) || data.byteLength === 0) throw new PublicMediaError('没有收到有效的媒体文件。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  const mime = cleanMime(mimeValue);
+  if (!MIME_PATTERN.test(mime) || kindForMime(mime) !== kind) throw new PublicMediaError('文件格式与媒体类型不匹配。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  if (kind === 'image') await validateRelayImage(data, CANGYUAN_REFERENCE_IMAGE_MAX_BYTES);
+  if (kind === 'audio' && (data.byteLength > 25 * 1024 * 1024 || !RELAY_AUDIO_MIME_TYPES.has(mime))) {
+    throw new PublicMediaError('音频仅支持 MP3、WAV、OGG、FLAC、AAC 或 M4A，且不能超过 25 MiB（本站中转限制）。', 'AGNES_MEDIA_TYPE_NOT_ALLOWED');
+  }
+  if (kind === 'video') validateRelayVideo(data, mime);
+
+  const defaultRelay = defaultMediaRelayUrl();
+  const relay = mediaRelayUrl();
+  if (kind === 'image' && defaultRelay && relay) {
+    const relayMime = await validateRelayImage(data, CANGYUAN_REFERENCE_IMAGE_MAX_BYTES);
+    const uploaded = await uploadToPublicMediaRelay(data, relayMime, kind);
+    if (uploaded) return uploaded;
+  }
+  if (kind === 'image' && process.env.SANMAO_RELAY_MODE === '1') {
+    const configuredBase = publicBaseUrl();
+    const automaticRelay = configuredBase ? '' : await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS);
+    const base = configuredBase || automaticRelay;
+    if (!base) throw new PublicMediaError('图片暂时无法提交：自动中转服务不可用，请稍后重试；也可以配置自己的公网图片地址。', MEDIA_RELAY_UNAVAILABLE);
+    const relayMime = await validateRelayImage(data, CANGYUAN_REFERENCE_IMAGE_MAX_BYTES);
+    const stored = await storeSignedMedia(data, relayMime, kind, {
+      ttlMs,
+      publicBase: base,
+      pathPrefix: configuredBase ? '/api/media' : '/api/media',
+    });
+    return { url: stored.url, expiresAt: new Date(stored.expiresAt).toISOString() };
+  }
+  if (kind === 'image' && relay) {
+    const uploaded = await uploadToPublicMediaRelay(data, mime, kind);
+    if (uploaded) return uploaded;
+  }
+  if ((kind === 'audio' || kind === 'video') && relay && (process.env.SANMAO_RELAY_MODE !== '1' || defaultRelay)) {
+    const uploaded = await uploadToPublicMediaRelay(data, mime, kind);
+    if (uploaded) return uploaded;
+  }
+  if ((kind === 'audio' || kind === 'video') && process.env.SANMAO_RELAY_MODE === '1' && !defaultRelay) {
+    const configuredBase = publicBaseUrl();
+    const automaticRelay = configuredBase ? '' : await waitForAutomaticRelay(AUTOMATIC_RELAY_RECOVERY_WAIT_MS);
+    const base = configuredBase || automaticRelay;
+    if (!base) throw new PublicMediaError(`${kind === 'video' ? '视频' : '音频'}中转服务未连接，请检查公网媒体中转状态后重试。`, MEDIA_RELAY_UNAVAILABLE);
+    const stored = await storeSignedMedia(data, mime, kind, { ttlMs, publicBase: base, pathPrefix: '/api/media' });
+    return { url: stored.url, expiresAt: new Date(stored.expiresAt).toISOString() };
+  }
+  const base = publicBaseUrl();
+  if (!base) {
+    const label = kind === 'audio' ? '音频' : kind === 'video' ? '视频' : '图片';
+    throw new PublicMediaError(`${label}暂时无法提交：应用的公网媒体中转尚未连接，请稍后重试或配置公网媒体地址。`, MEDIA_RELAY_REQUIRED);
+  }
+  assertUsablePublicBaseUrl(base);
+  const stored = await storeSignedMedia(data, mime, kind, { ttlMs, publicBase: base, pathPrefix: '/api/media' });
+  return { url: stored.url, expiresAt: new Date(stored.expiresAt).toISOString() };
+}
+
 // Kept as a compatibility alias for existing Agnes integrations and backups.
 export const prepareAgnesMediaUrl = preparePublicMediaUrl;
 
@@ -588,7 +674,7 @@ export async function readSignedMedia(token: string) {
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
   const manifest = await readManifest();
   const entry = manifest[id];
-  if (!entry || entry.id !== id || entry.expiresAt !== expiresAt || entry.expiresAt <= Date.now() || !MEDIA_KINDS.has(entry.kind) || !MIME_PATTERN.test(entry.mime)) return null;
+  if (!entry || entry.id !== id || entry.expiresAt !== expiresAt || entry.expiresAt <= Date.now() || !MEDIA_KINDS.has(entry.kind) || !isSupportedRelayMime(entry.mime)) return null;
   const file = safeMediaFile(entry.filename);
   if (!file) return null;
   try { return { data: await readFile(file), mime: entry.mime, expiresAt: entry.expiresAt }; } catch { return null; }

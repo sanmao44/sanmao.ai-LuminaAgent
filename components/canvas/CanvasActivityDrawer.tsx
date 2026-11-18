@@ -16,6 +16,7 @@ import type { CanvasDocument, CanvasNodeCreationKind } from "@/lib/canvas/types"
 import { CanvasPanelShell } from "@/components/canvas/CanvasPanels";
 import SelectMenu, { type SelectMenuOption } from "@/components/SelectMenu";
 import CanvasProjectProgressPanel from "@/components/canvas/CanvasProjectProgressPanel";
+import { GenerationLogAudioPlayer } from "@/components/GenerationLogAudio";
 import { deriveCanvasProjectProgress, type CanvasProjectProgressAction } from "@/lib/canvas/project-progress";
 import { deriveCanvasProjectQuality } from "@/lib/canvas/project-quality";
 import { deriveCanvasWorkspaceRecommendation } from "@/lib/canvas/workspace-recommendation";
@@ -538,7 +539,13 @@ export default function CanvasActivityDrawer({
                   </div>)}
                 </div>}
                 <div className="canvas-task-log-preview">
-                  {kind === "video" && urls[0] ? <video src={urls[0]} muted playsInline preload="metadata" /> : urls.length ? <div className="canvas-task-log-images">{urls.slice(0, 3).map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${generationLogKindLabel(log)}结果 ${index + 1}`} />)}</div> : <span className={showPendingSpinner ? "loading" : "placeholder"}>{showPendingSpinner ? "◌" : kind === "video" ? "▶" : "▣"}</span>}
+                  {kind === "audio"
+                    ? <span className={showPendingSpinner ? "loading" : "placeholder"}>{showPendingSpinner ? "◌" : "♫"}</span>
+                    : kind === "video" && urls[0]
+                      ? <video src={urls[0]} muted playsInline preload="metadata" />
+                      : urls.length
+                        ? <div className="canvas-task-log-images">{urls.slice(0, 3).map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${generationLogKindLabel(log)}结果 ${index + 1}`} />)}</div>
+                        : <span className={showPendingSpinner ? "loading" : "placeholder"}>{showPendingSpinner ? "◌" : kind === "video" ? "▶" : "▣"}</span>}
                 </div>
                 <div className="canvas-task-log-status">{locallyStopped ? "已停止等待" : resultUnconfirmed || stale ? "结果待确认" : generationLogStatusLabel(log.status)}</div>
                 <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{displayStatus === "pending" && <small className="pending-note">{locallyStopped ? "已停止画布中的等待；服务商状态未知，稍后仍可能收到结果" : resultUnconfirmed ? kind === "image" ? "服务商可能已接收，结果待核对；不会重复提交" : "服务商可能已接收，请先检查音频素材和生成记录，再决定是否重试" : stale ? `${generationLogDuration(log)} 未收到完成回执；服务商可能仍在处理` : "正在等待服务商返回结果"}</small>}{log.error && !resultUnconfirmed && !stale && <small className="error-note">{log.error}</small>}</div>
@@ -559,7 +566,7 @@ export default function CanvasActivityDrawer({
                     </div>
                   </details>}
                 </div>
-                {selectedId === log.id && <div className="canvas-task-log-detail" id={`canvas-task-details-${log.id}`}><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
+                {selectedId === log.id && <div className="canvas-task-log-detail" id={`canvas-task-details-${log.id}`}><div><b>任务详情</b><small>{log.id}</small></div><p>{log.prompt || "未填写提示词"}</p>{kind === "audio" && urls[0] && <GenerationLogAudioPlayer src={urls[0]} title="音频结果" />}{kind === "llm" && <small>模型调用：{log.llmCallCount || 0} 次 · 响应：{log.responseChars || 0} 字 · 联网：{log.webSearchStatus || "未检索"}</small>}{log.references?.length ? <small>参考图：{log.references.map((reference) => reference.name || "参考素材").join("、")}</small> : null}{log.providerTaskId && <small>服务商任务：{log.providerTaskId}</small>}{log.error && <strong className="error-note">失败原因：{log.error}</strong>}</div>}
                 </article>;
             })}
           </div> : <div className="canvas-side-empty"><span>▱</span><b>{scopedTasks.length ? "没有符合条件的任务" : projectOnly ? "当前项目还没有任务" : "还没有生成任务"}</b><small>{scopedTasks.length ? "当前筛选针对生成任务记录；画布中的全部素材请从顶部“资产”面板查看。" : projectOnly ? "切换到“全部项目”可查看其它项目的历史任务。" : "从画布生成图片、视频或 Agent 结果后会出现在这里。"}</small></div>}

@@ -71,11 +71,14 @@ test('infers image and chat for unclassified models from their capabilities', ()
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', []), 'unknown');
 });
 
-test('classifies TTS families as audio without eating ASR or realtime chat audio', () => {
+test('classifies TTS and ASR families as audio without eating realtime chat audio', () => {
   for (const rawId of ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts', 'cosyvoice-v2', 'elevenlabs-multilingual-v2', 'fish-speech-1.5', 'mimo-audio-7b']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['whisper-1', 'gpt-4o-audio-preview', 'gpt-4o-realtime-preview', 'speech-to-text-v1']) {
+  for (const rawId of ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'speech-to-text-v1', 'mu1-muse-asr']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+  }
+  for (const rawId of ['gpt-4o-audio-preview', 'gpt-4o-realtime-preview']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
 });
@@ -86,13 +89,15 @@ test('keeps an explicit category and the speech capability authoritative', () =>
 });
 
 test('classifies music and 3D generators independently from chat and image models', () => {
-  for (const rawId of ['musicgen-large', 'Suno-v5', 'cangyuan/song-generation-v2', 'ace-step-1.5']) {
+  for (const rawId of ['musicgen-large', 'Suno-v5', 'cangyuan/song-generation-v2', 'ace-step-1.5', 'lyria-3.5', 'lyria-3-pro']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['Hunyuan3D-2.1', 'Qwen3D-2B', 'Tripo3D', 'Tripo3D-v2', 'TripoSR', 'text-to-3d-v1', 'Trellis.2']) {
+  for (const rawId of ['Hunyuan3D-2.1', 'Qwen3D-2B', 'Tripo3D', 'Tripo3D-v2', 'TripoSR', 'tripo3d-v3.1', 'tripo3d-p1', 'tripo3d-p2', 'text-to-3d-v1', 'Trellis.2']) {
     assert.equal(modelKind.inferModelKind({ rawId }), '3d', rawId);
   }
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['music-generate'] }), 'audio');
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['transcription'] }), 'audio');
+  assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['transcription']), 'audio');
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['3d-generate'] }), '3d');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['music-generate']), 'audio');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['3d-generate']), '3d');
@@ -109,7 +114,7 @@ test('认出国内平台把 TTS 关键词黏在词尾或带厂商前缀的配音
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['iic/SenseVoiceSmall', 'qwen3-omni-flash', 'gpt-4o-mini-transcribe']) {
+  for (const rawId of ['iic/SenseVoiceSmall', 'qwen3-omni-flash']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
 });
@@ -128,13 +133,16 @@ test('带版本号后缀的视频模型不再被当成对话模型', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'veomax-chat' }), 'chat');
 });
 
-test('向量 / 重排 / OCR / ASR 不再被当成对话模型', () => {
+test('向量 / 重排 / OCR 不再被当成对话模型，ASR 单独归为音频', () => {
   for (const rawId of [
     'Qwen3-Embedding-8B', 'Qwen3-Reranker-4B', 'bge-reranker-v2-m3', 'bge-m3', 'qwen3.5-ocr',
-    'HunyuanOCR', 'DeepSeek-OCR', 'GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3',
+    'HunyuanOCR', 'DeepSeek-OCR',
     'SenseVoiceSmall', 'clip-vit', 'resnet-50', 'YOLOv8', 'jina-embeddings-v4',
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'unknown', rawId);
+  }
+  for (const rawId of ['GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
   // 正常对话模型不能被误伤（这三个名字里都带容易误伤的片段）。
   for (const rawId of ['MiniMax-M3', 'GLM-5.3', 'Qwen3.5-Plus', 'deepseek-v4-flash', 'kimi-k3']) {

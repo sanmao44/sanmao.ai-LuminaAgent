@@ -1,4 +1,5 @@
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
+import { isProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getProviderWithKey, getPublicState, mergeProviderTransferConfiguration } from '@/lib/store';
 
@@ -21,7 +22,7 @@ function parseProviderTransferBundle(value: unknown): ProviderTransferBundle {
   const textProtocols = ['chat-completions', 'responses', 'messages'];
   const videoTransports = ['auto', 'native-task', 'openai-videos', 'jimeng-cli', 'agnes-videos', 'cangyuan-videos'];
   const modelKinds = ['chat', 'image', 'video', 'audio', '3d', 'unknown'];
-  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'music-generate', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
+  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'transcription', 'music-generate', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
   const modelIds = new Set<string>();
   const providerIds = new Set<string>();
   const providerModelIds = new Set<string>();
@@ -31,6 +32,7 @@ function parseProviderTransferBundle(value: unknown): ProviderTransferBundle {
     if (typeof provider.type !== 'string' || !providerTypes.includes(provider.type) || typeof provider.platform !== 'string' || !providerPlatforms.includes(provider.platform)) throw new Error(`服务商“${provider.name}”的平台类型不受支持`);
     if (typeof provider.modelLibraryEnabled !== 'boolean' || typeof provider.baseUrl !== 'string' || provider.baseUrl.length > 4096) throw new Error(`服务商“${provider.name}”的配置无效`);
     if (typeof provider.textProtocol !== 'string' || !textProtocols.includes(provider.textProtocol) || typeof provider.videoTransport !== 'string' || !videoTransports.includes(provider.videoTransport)) throw new Error(`服务商“${provider.name}”的协议配置不受支持`);
+    if (provider.creativeTaskProtocol !== undefined && !isProviderCreativeTaskProtocol(provider.creativeTaskProtocol)) throw new Error(`服务商“${provider.name}”的音乐与三维任务接口协议不受支持`);
     if (typeof provider.apiKey !== 'string' || provider.apiKey.length > 65_536 || typeof provider.authHeader !== 'string' || typeof provider.authPrefix !== 'string') throw new Error(`服务商“${provider.name}”的访问凭证或认证配置无效`);
     if (provider.videoApiKey !== undefined && (typeof provider.videoApiKey !== 'string' || provider.videoApiKey.length > 65_536)) throw new Error(`服务商“${provider.name}”的视频 Key 无效`);
     const endpointValues = [provider.modelsPath, provider.chatPath, provider.imageGenerationPath, provider.imageEditPath, provider.imageUpscalePath, provider.imageUpscaleStatusPath, provider.responsesPath, provider.videoBaseUrl, provider.videoTaskPath, provider.videoTaskStatusPath, provider.videoGenerationPath, provider.videoQueryPath, provider.videoModelsPath, provider.videoPricingPath, provider.jimengCliPath];
@@ -85,6 +87,7 @@ export async function exportProviderTransfer(password: string) {
       imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
       responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
       textProtocol: provider.textProtocol || 'chat-completions',
+      creativeTaskProtocol: provider.creativeTaskProtocol,
       videoTransport: provider.videoTransport || (legacy65535 ? 'native-task' : provider.platform === 'agnes' ? 'agnes-videos' : 'auto'),
       videoBaseUrl: provider.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
       videoTaskPath: provider.videoTaskPath || '/v1/tasks',

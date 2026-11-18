@@ -17,6 +17,7 @@ export async function downloadImage(url: string, filename: string): Promise<void
         const response = await fetch(url);
         if (!response.ok) throw new Error('fetch failed');
         const blob = await response.blob();
+        if (blob.type === 'image/svg+xml') filename = filename.replace(/\.(?:png|jpe?g|webp)$/i, '.svg');
         const actualExtension = blob.type.includes('jpeg')
             ? 'jpg'
             : blob.type.includes('webp')
@@ -29,6 +30,7 @@ export async function downloadImage(url: string, filename: string): Promise<void
         triggerImageDownload(objectUrl, filename);
         window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch {
+        if (/^data:image\/svg\+xml/i.test(url)) filename = filename.replace(/\.(?:png|jpe?g|webp)$/i, '.svg');
         const dataExtension = url.match(/^data:image\/(png|jpeg|webp)/i)?.[1];
         if (dataExtension) filename = filename.replace(/\.(png|jpe?g|webp)$/i, `.${dataExtension === 'jpeg' ? 'jpg' : dataExtension}`);
         triggerImageDownload(url, filename, true);

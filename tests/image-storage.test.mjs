@@ -24,6 +24,44 @@ function loadImageStorage(dataDir) {
 }
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect width="2" height="3" fill="red"/></svg>');
+
+test('stores SVG results with their real MIME type and reopens them as SVG data URLs', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  globalThis.fetch = async () => new Response(svg, {
+    status: 200,
+    headers: { 'content-type': 'image/svg+xml' },
+  });
+  try {
+    const result = await storage.persistGeneratedImages([{ url: 'https://provider.example/result.svg' }]);
+    const name = new URL('http://sanmao.local' + result.images[0].url).searchParams.get('name');
+    assert.match(name, /\.svg$/);
+    assert.equal(storage.imageMimeFromBytes(await readFile(path.join(dataDir, 'images', name))), 'image/svg+xml');
+    assert.equal(await storage.resolveStoredImageReference(result.images[0].url, path.join(dataDir, 'images')), 'data:image/svg+xml;base64,' + svg.toString('base64'));
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('rejects active SVG content instead of archiving it', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));
+  const previousFetch = globalThis.fetch;
+  const storage = loadImageStorage(dataDir);
+  globalThis.fetch = async () => new Response('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', {
+    status: 200,
+    headers: { 'content-type': 'image/svg+xml' },
+  });
+  try {
+    await assert.rejects(storage.persistGeneratedImages([{ url: 'https://provider.example/unsafe.svg' }]), /不是有效的.*SVG/);
+    assert.deepEqual(await readdir(path.join(dataDir, 'images')), []);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
 
 test('rejects an upstream response whose bytes are not an image and leaves no partial file', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-image-storage-'));

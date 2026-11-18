@@ -1,5 +1,5 @@
 import type { CanvasNodeData, CanvasVariantState } from "./types";
-import type { ImageCreationSettings, VideoCreationSettings } from "../creation/settings";
+import { imageModelParametersFromSettings, type ImageCreationSettings, type VideoCreationSettings } from "../creation/settings";
 import { canvasVariantBatchStatus } from "./variant-status";
 import { videoTaskOutputUrl } from "../video-task-output";
 import { canvasImageRequestOperation } from "./image-reference-request";
@@ -19,12 +19,17 @@ export function canvasVariantImageRequest(input: {
     imageOperation: canvasImageRequestOperation(params),
     prompt: input.prompt,
     model: params.model,
+    ...imageModelParametersFromSettings(params),
     count: params.count,
     aspect:
       params.aspect === "鑷畾涔?"
         ? `${params.customAspectWidth}:${params.customAspectHeight}`
         : params.aspect,
     resolution: params.resolution,
+    ...(params.tier ? { tier: params.tier } : {}),
+    ...(params.series ? { series: params.series } : {}),
+    ...(params.seed ? { seed: params.seed } : {}),
+    ...(params.enablePromptExpansion !== undefined ? { enablePromptExpansion: params.enablePromptExpansion } : {}),
     quality: params.quality,
     sizeMode: params.sizeMode,
     ...(params.sizeMode === "custom"

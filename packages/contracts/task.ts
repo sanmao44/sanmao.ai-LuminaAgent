@@ -11,6 +11,12 @@ export type TaskState =
 
 export type TaskOperation = 'cancel' | 'retry';
 
+/** Token usage reported by an upstream model provider. */
+export type ProviderTokenUsage = {
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
 export type TaskLifecycleEvent =
   | {
       type: 'TaskStateChanged';

@@ -26,6 +26,7 @@ import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import UpscaleConnectionGuide from '@/components/UpscaleConnectionGuide';
 import VideoRecordCard from '@/components/VideoRecordCard';
+import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
 import GenerationLogRestoreAction from '@/components/GenerationLogRestoreAction';
 import { getFavoriteModelIds, getLastModelCall, getRecentModelIds, recordModelCall, setModelFavorite, subscribeModelPreferences } from '@/lib/model-preferences';
 import { selectAutomaticModel } from '@/lib/model-selection';
@@ -70,6 +71,8 @@ import {
     generationLogSourceLabel,
     generationLogTitle,
     generationLogComposerDraft,
+    generationLogParameterRows,
+    filterAudioGenerationLogs,
     gallerySourceLabel,
     generationMediaKind,
     generationMediaLabel,
@@ -237,6 +240,7 @@ function emptyProviderForm() {
         imageUpscalePath: '/images/edits',
         imageUpscaleStatusPath: '',
         responsesPath: '/responses',
+        creativeTaskProtocol: '',
         videoTransport: '',
         videoBaseUrl: '',
         videoTaskPath: '/v1/tasks',
@@ -2886,6 +2890,7 @@ export default function Page() {
             image: quickFilteredModels.filter((model)=>model.kind === 'image').length,
             video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
             audio: quickFilteredModels.filter((model)=>model.kind === 'audio').length,
+            '3d': quickFilteredModels.filter((model)=>model.kind === '3d').length,
             unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
         }), [
         quickFilteredModels
@@ -2942,7 +2947,13 @@ export default function Page() {
         historyMediaFilter,
         historyFilter
     ]);
-    const hasCreativeRecords = filteredGallery.length > 0 || videoTotal > 0;
+    const visibleAudioLogs = useMemo(()=>filterAudioGenerationLogs(generationLogs, {
+        query: historySearch,
+        source: historyFilter,
+        media: historyMediaFilter,
+    }), [generationLogs, historySearch, historyFilter, historyMediaFilter]);
+    const hasVisibleVideoWorks = historyMediaFilter !== 'image' && historyMediaFilter !== 'audio' && videoTotal > 0;
+    const hasCreativeRecords = filteredGallery.length > 0 || hasVisibleVideoWorks || visibleAudioLogs.length > 0;
     const logSummary = useMemo(()=>{
         const completed = generationLogs.filter((log)=>log.status !== 'pending');
         const success = generationLogs.filter((log)=>log.status === 'success').length;
@@ -5130,6 +5141,7 @@ export default function Page() {
             imageUpscalePath: provider.imageUpscalePath || provider.imageEditPath || '/images/edits',
             imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
             responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? '/beta/responses' : '/responses'),
+            creativeTaskProtocol: provider.creativeTaskProtocol || '',
             videoTransport: provider.videoTransport || '',
             videoBaseUrl: provider.videoBaseUrl || '',
             videoTaskPath: provider.videoTaskPath || '/v1/tasks',
@@ -5169,6 +5181,7 @@ export default function Page() {
                 platform,
                 baseUrl: preset.needsBaseUrl ? old.platform === platform ? old.baseUrl : '' : preset.baseUrl,
                 responsesPath: platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses',
+                creativeTaskProtocol: preset.creativeTaskProtocol || (platform === old.platform ? old.creativeTaskProtocol : ''),
                 videoTransport: preset.videoTransport || (platform === 'custom' ? old.videoTransport : ''),
                 videoBaseUrl: preset.videoBaseUrl || (platform === 'custom' ? old.videoBaseUrl : ''),
                 videoTaskPath: preset.videoTaskPath || old.videoTaskPath || '/v1/tasks',
@@ -5396,7 +5409,7 @@ export default function Page() {
         }
     }
     async function toggleModelUse(model) {
-        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片、视频或配音模型”');
+        if (model.kind === 'unknown') return notify('先把这个模型标记为“对话、图片、视频、配音或三维模型”');
         const nextUse = !(model.enabled && model.published);
         const data = await patchModel(model, {
             enabled: nextUse,
@@ -8405,7 +8418,7 @@ export default function Page() {
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
-        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap;
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap === 'music-generate' ? '音乐生成' : cap === '3d-generate' ? '三维生成' : cap;
         return /*#__PURE__*/ _jsxs("article", {
             className: `model-card surface ${inUse ? 'in-use' : ''}`,
             children: [
@@ -8517,6 +8530,13 @@ export default function Page() {
                                     disabled: modelKindBusy.has(model.id),
                                     onClick: ()=>void setModelKind(model, 'audio'),
                                     children: "配音"
+                                }),
+                                /*#__PURE__*/ _jsx("button", {
+                                    type: "button",
+                                    className: `model-kind-option 3d ${model.kind === '3d' ? 'active' : ''}`,
+                                    disabled: modelKindBusy.has(model.id),
+                                    onClick: ()=>void setModelKind(model, '3d'),
+                                    children: "三维"
                                 })
                             ]
                         })
@@ -8651,6 +8671,8 @@ export default function Page() {
                         imageModelCount: availableImageModels.length,
                         chatModelCount: availableChatModels.length,
                         videoModelCount: availableVideoModels.length,
+                        audioModelCount: activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === 'audio').length,
+                        threeDModelCount: activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === '3d').length,
                         Icon: Icon,
                         onOpenModels: ()=>{
                             setManagementNavOpen(true);
@@ -10569,7 +10591,7 @@ export default function Page() {
                                                 role: "tablist",
                                                 "aria-label": "创作记录视图",
                                                 children: [
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); void refreshGenerationLogs(); }, children: "作品" }),
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); markLogErrorNoticeSeen(); }, children: "任务" })
                                                 ]
                                             }),
@@ -10593,8 +10615,8 @@ export default function Page() {
                                                     ['all', '全部作品'],
                                                     ['image', '图片'],
                                                     ['video', '视频'],
-                                                    ['audio', '音频 · 即将上线']
-                                                ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
+                                                    ['audio', '音频']
+                                                ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
                                             }),
                                             /*#__PURE__*/ _jsx("div", {
                                                 className: "filter-chips",
@@ -10727,7 +10749,8 @@ export default function Page() {
                                             })
                                         ]
                                     }),
-                                    videoTotal > 0 && /*#__PURE__*/ _jsxs("section", {
+                                    /*#__PURE__*/ _jsx(GenerationLogAudioWorks, { logs: visibleAudioLogs }),
+                                    hasVisibleVideoWorks && /*#__PURE__*/ _jsxs("section", {
                                         className: "creative-record-group",
                                         children: [
                                             /*#__PURE__*/ _jsxs("div", { className: "creative-record-group-heading", children: [
@@ -10942,7 +10965,7 @@ export default function Page() {
                                                 role: "tablist",
                                                 "aria-label": "创作记录视图",
                                                 children: [
-                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); }, children: "作品" }),
+                                                    /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'works', className: recordTab === 'works' ? 'active' : '', onClick: ()=>{ setRecordTab('works'); setSection('history'); void refreshGallery(); void refreshVideoTasks(); void refreshGenerationLogs(); }, children: "作品" }),
                                                     /*#__PURE__*/ _jsx("button", { type: "button", role: "tab", "aria-selected": recordTab === 'tasks', className: recordTab === 'tasks' ? 'active' : '', onClick: ()=>{ setRecordTab('tasks'); setSection('logs'); }, children: "任务" })
                                                 ]
                                             }),
@@ -10957,7 +10980,7 @@ export default function Page() {
                                                         children: "任务日志"
                                                     }),
                                                     /*#__PURE__*/ _jsx("small", {
-                                                        children: "同步展示 LLM、图片、视频任务的进行中、成功和失败状态"
+                                                        children: "同步展示 LLM、图片、视频和音频任务的进行中、成功和失败状态"
                                                     })
                                                 ]
                                             }),
@@ -10992,9 +11015,9 @@ export default function Page() {
                                                             ['all', '全部'],
                                                             ['image', '图片'],
                                                             ['video', '视频'],
-                                                            ['audio', '音频 · 即将上线'],
+                                                            ['audio', '音频'],
                                                             ['llm', 'LLM']
-                                                        ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", disabled: value === 'audio', className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
+                                                        ].map(([value, label])=>/*#__PURE__*/ _jsx("button", { type: "button", className: historyMediaFilter === value ? 'active' : '', onClick: ()=>setHistoryMediaFilter(value), children: label }, value))
                                                     }),
                                                      /*#__PURE__*/ _jsx("div", {
                                                          className: "filter-chips log-filters",
@@ -12130,6 +12153,16 @@ export default function Page() {
                                                         },
                                                         onUseDomesticEndpoint: ()=>applyProviderPreset('agnes')
                                                     }),
+                                                    /*#__PURE__*/ _jsxs("label", {
+                                                        className: "wide provider-creative-task-toggle",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("input", { type: "checkbox", checked: providerForm.creativeTaskProtocol === 'cangyuan-creative-v1', onChange: (event)=>setProviderForm((old)=>({ ...old, creativeTaskProtocol: event.target.checked ? 'cangyuan-creative-v1' : '' })) }),
+                                                            /*#__PURE__*/ _jsxs("span", { children: [
+                                                                "音乐与三维任务接口",
+                                                                /*#__PURE__*/ _jsx("small", { children: "仅对实现兼容异步任务协议的服务商启用" })
+                                                            ] })
+                                                        ]
+                                                    }),
                                                      false && /*#__PURE__*/ _jsxs("div", {
                                                         className: "wide provider-video-settings",
                                                         children: [
@@ -12526,7 +12559,7 @@ export default function Page() {
                                                 children: [
                                                     "已选择 ",
                                                     /*#__PURE__*/ _jsx("strong", {
-                                                    children: availableChatModels.length + availableImageModels.length + availableVideoModels.length
+                                                    children: availableChatModels.length + availableImageModels.length + availableVideoModels.length + activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === 'audio').length + activeProviderModels.filter((model)=>model.enabled && model.published && model.kind === '3d').length
                                                     }),
                                                     " / ",
                                                      activeProviderModels.length
@@ -12582,6 +12615,10 @@ export default function Page() {
                                                         '配音模型'
                                                     ],
                                                     [
+                                                        '3d',
+                                                        '三维模型'
+                                                    ],
+                                                    [
                                                         'unknown',
                                                         '未分类'
                                                     ]
@@ -12619,6 +12656,14 @@ export default function Page() {
                                                 className: "model-groups",
                                                 children: modelProviderGroups.map(([providerId, group])=>{
                                                     const expanded = Boolean(modelSearch.trim()) || modelQuickFilter !== 'all' || modelProviderFilter !== 'all' || expandedModelProviders.has(providerId);
+                                                    const groupKindSummary = [
+                                                        group.some((model)=>model.kind === 'chat') ? '对话' : '',
+                                                        group.some((model)=>model.kind === 'image') ? '图片' : '',
+                                                        group.some((model)=>model.kind === 'video') ? '视频' : '',
+                                                        group.some((model)=>model.kind === 'audio') ? '配音' : '',
+                                                        group.some((model)=>model.kind === '3d') ? '三维' : '',
+                                                        group.some((model)=>model.kind === 'unknown') ? '待归类' : ''
+                                                    ].filter(Boolean).join(' · ');
                                                     return /*#__PURE__*/ _jsxs("section", {
                                                         className: `model-group ${expanded ? 'expanded' : ''}`,
                                                         children: [
@@ -12640,14 +12685,8 @@ export default function Page() {
                                                                             /*#__PURE__*/ _jsx("h2", {
                                                                                 children: group[0].providerName
                                                                             }),
-                                                                            /*#__PURE__*/ _jsxs("p", {
-                                                                                children: [
-                                                                                    group.filter((model)=>model.kind === 'chat').length ? '对话' : '',
-                                                                                    group.filter((model)=>model.kind === 'chat').length && group.filter((model)=>model.kind === 'image').length ? ' · ' : '',
-                                                                                    group.filter((model)=>model.kind === 'image').length ? '图片' : '',
-                                                                                    group.filter((model)=>model.kind === 'video').length ? ' · 视频' : '',
-                                                                                    group.some((model)=>model.kind === 'unknown') ? ' · 待归类' : ''
-                                                                                ]
+                                                                            /*#__PURE__*/ _jsx("p", {
+                                                                                children: groupKindSummary
                                                                             })
                                                                         ]
                                                                     }),
@@ -12759,7 +12798,7 @@ export default function Page() {
                         generationMediaKind(selectedLog) === 'video' && selectedLog.videoUrls?.length ? /*#__PURE__*/ _jsx("div", {
                             className: "log-detail-video",
                             children: /*#__PURE__*/ _jsx("video", { src: selectedLog.videoUrls[0], controls: true, playsInline: true, preload: "metadata" })
-                        }) : selectedLog.imageUrls?.length ? /*#__PURE__*/ _jsx("div", {
+                        }) : generationMediaKind(selectedLog) === 'audio' && selectedLog.audioUrl ? /*#__PURE__*/ _jsx(GenerationLogAudioPlayer, { src: selectedLog.audioUrl, title: "生成的音频" }) : selectedLog.imageUrls?.length ? /*#__PURE__*/ _jsx("div", {
                             className: "log-detail-images",
                             children: selectedLog.imageUrls.map((url, index)=>/*#__PURE__*/ _jsx("a", {
                                     href: url,
@@ -12905,10 +12944,10 @@ export default function Page() {
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {
-                                            children: "分辨率"
+                                            children: generationMediaKind(selectedLog) === 'audio' ? "音色" : "分辨率"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'llm' ? `任务：${selectedLog.task || '普通对话'} · 联网：${selectedLog.webSearchStatus || '未检索'}` : generationMediaKind(selectedLog) === 'video' ? (selectedLog.resolution || '自动') : generationMediaKind(selectedLog) === 'audio' ? '音频参数见任务输入' : logResolutionLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? `任务：${selectedLog.task || '普通对话'} · 联网：${selectedLog.webSearchStatus || '未检索'}` : generationMediaKind(selectedLog) === 'video' ? (selectedLog.resolution || '自动') : generationMediaKind(selectedLog) === 'audio' ? generationLogParameterRows(selectedLog)[0]?.value : logResolutionLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),
@@ -12917,23 +12956,29 @@ export default function Page() {
                                         /*#__PURE__*/ _jsx("dt", {
                                             children: generationMediaKind(selectedLog) === 'llm' ? "LLM 任务类型"
                                                 : generationMediaKind(selectedLog) === 'video' ? "视频比例"
-                                                : generationMediaKind(selectedLog) === 'audio' ? "音频时长" : "图片尺寸"
+                                                : generationMediaKind(selectedLog) === 'audio' ? "输出格式" : "图片尺寸"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'llm' ? generationLogSourceLabel(selectedLog) : generationMediaKind(selectedLog) === 'video' ? (selectedLog.aspectRatio || '自动') : generationMediaKind(selectedLog) === 'audio' ? (selectedLog.durationMs ? `${(selectedLog.durationMs / 1000).toFixed(1)} 秒` : '—') : logOutputSizeLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? generationLogSourceLabel(selectedLog) : generationMediaKind(selectedLog) === 'video' ? (selectedLog.aspectRatio || '自动') : generationMediaKind(selectedLog) === 'audio' ? generationLogParameterRows(selectedLog)[1]?.value : logOutputSizeLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),
                                 /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {
-                                            children: generationMediaKind(selectedLog) === 'llm' ? "联网状态" : generationMediaKind(selectedLog) === 'video' ? "视频操作" : generationMediaKind(selectedLog) === 'audio' ? "音频格式" : "图片比例"
+                                            children: generationMediaKind(selectedLog) === 'llm' ? "联网状态" : generationMediaKind(selectedLog) === 'video' ? "视频操作" : generationMediaKind(selectedLog) === 'audio' ? "语速" : "图片比例"
                                         }),
                                         /*#__PURE__*/ _jsx("dd", {
-                                            children: generationMediaKind(selectedLog) === 'llm' ? (selectedLog.webSearchStatus || '未检索') : generationMediaKind(selectedLog) === 'video' ? (selectedLog.operation === 'edit' ? '编辑' : selectedLog.operation === 'extend' ? '扩展' : '生成') : generationMediaKind(selectedLog) === 'audio' ? '—' : logAspectRatioLabel(selectedLog, logImageSpecs[selectedLog.id])
+                                            children: generationMediaKind(selectedLog) === 'llm' ? (selectedLog.webSearchStatus || '未检索') : generationMediaKind(selectedLog) === 'video' ? (selectedLog.operation === 'edit' ? '编辑' : selectedLog.operation === 'extend' ? '扩展' : '生成') : generationMediaKind(selectedLog) === 'audio' ? generationLogParameterRows(selectedLog)[2]?.value : logAspectRatioLabel(selectedLog, logImageSpecs[selectedLog.id])
                                         })
                                     ]
                                 }),
+                                ...generationLogParameterRows(selectedLog).slice(generationMediaKind(selectedLog) === 'audio' ? 3 : 0).map((parameter) => /*#__PURE__*/ _jsxs("div", {
+                                    children: [
+                                        /*#__PURE__*/ _jsx("dt", { children: parameter.label }),
+                                        /*#__PURE__*/ _jsx("dd", { children: parameter.value })
+                                    ]
+                                }, `${selectedLog.id}-${parameter.label}`)),
                                 selectedLog.storagePath && /*#__PURE__*/ _jsxs("div", {
                                     children: [
                                         /*#__PURE__*/ _jsx("dt", {

@@ -238,5 +238,11 @@ export function generationLogDuration(log: GenerationLog, now = Date.now()) {
 
 export function generationLogOutputUrls(log: GenerationLog) {
   const kind = generationLogKind(log);
-  return kind === "video" ? log.videoUrls || [] : kind === "llm" || kind === "audio" ? [] : log.imageUrls || [];
+  return kind === "video"
+    ? log.videoUrls || []
+    : kind === "audio"
+      ? (log.audioUrl ? [log.audioUrl] : [])
+      : kind === "llm"
+        ? []
+        : log.imageUrls || [];
 }

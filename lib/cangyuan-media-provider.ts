@@ -1,4 +1,4 @@
-import { CANGYUAN_TRIPO3D_PUBLIC_MODEL, getCangyuan3DModelProfile, parseCangyuan3DOptions, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaOutput, type CangyuanMediaTaskInput, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
+import { getCangyuan3DModelProfile, validateCangyuan3DInput, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaOutput, type CangyuanMediaTaskInput, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
 
 export type CangyuanMediaClient = {
   baseUrl: string;
@@ -16,19 +16,27 @@ export type CangyuanProviderTask = {
 
 export function cangyuanMediaUrl(baseUrl: string, kind: CangyuanMediaKind, taskId?: string) {
   const root = String(baseUrl || '').trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
-  if (!/^https?:\/\//i.test(root)) throw new Error('沧元算力 API 地址无效');
+  if (!/^https?:\/\//i.test(root)) throw new Error('服务商 API 地址无效');
   const path = kind === 'music' ? '/v1/music' : '/v1/3d/generations';
   return `${root}${path}${taskId ? `/${encodeURIComponent(taskId)}` : ''}`;
 }
 
-export function buildCangyuanMusicPayload(model: string, input: { prompt: string } & CangyuanMusicOptions) {
+export function buildCangyuanMusicPayload(model: string, input: { prompt?: string } & CangyuanMusicOptions) {
   const normalized = validateCangyuanMusicInput(model, input);
   return {
     model,
-    prompt: normalized.prompt,
-    n: 1,
+    ...(normalized.prompt ? { prompt: normalized.prompt } : {}),
+    ...(normalized.n !== undefined ? { n: normalized.n } : { n: 1 }),
+    ...(normalized.uploadUrl ? { upload_url: normalized.uploadUrl } : {}),
+    ...(normalized.uploadUrls ? { upload_urls: normalized.uploadUrls } : {}),
+    ...(normalized.continueAt !== undefined ? { continue_at: normalized.continueAt } : {}),
+    ...(normalized.infillStartS !== undefined ? { infill_start_s: normalized.infillStartS } : {}),
+    ...(normalized.infillEndS !== undefined ? { infill_end_s: normalized.infillEndS } : {}),
+    ...(normalized.audioUrl ? { audio_url: normalized.audioUrl } : {}),
+    ...(normalized.stemType ? { type: normalized.stemType } : {}),
     ...(normalized.sourceTaskId ? { source_task_id: normalized.sourceTaskId } : {}),
     ...(normalized.sourceAudioId ? { source_audio_id: normalized.sourceAudioId } : {}),
+    ...(normalized.sourceTrack !== undefined ? { source_track: normalized.sourceTrack } : {}),
     ...(normalized.instrumental !== undefined ? { instrumental: normalized.instrumental } : {}),
     ...('title' in normalized && normalized.title !== undefined ? { title: normalized.title } : {}),
     ...('lyrics' in normalized && normalized.lyrics !== undefined ? { lyrics: normalized.lyrics } : {}),
@@ -40,7 +48,12 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt: string
     ...('audioWeight' in normalized && normalized.audioWeight !== undefined ? { audioWeight: normalized.audioWeight } : {}),
     ...('negativeTags' in normalized && normalized.negativeTags !== undefined ? { negativeTags: normalized.negativeTags } : {}),
     ...('personaId' in normalized && normalized.personaId !== undefined ? { personaId: normalized.personaId } : {}),
+    ...('personaName' in normalized && normalized.personaName !== undefined ? { persona_name: normalized.personaName } : {}),
+    ...('personaDescription' in normalized && normalized.personaDescription !== undefined ? { persona_description: normalized.personaDescription } : {}),
     ...('personaModel' in normalized && normalized.personaModel !== undefined ? { personaModel: normalized.personaModel } : {}),
+    ...('customMode' in normalized && normalized.customMode !== undefined ? { custom_mode: normalized.customMode } : {}),
+    ...('tags' in normalized && normalized.tags !== undefined ? { tags: normalized.tags } : {}),
+    ...('stemName' in normalized && normalized.stemName !== undefined ? { stem_name: normalized.stemName } : {}),
     ...('styleWeight' in normalized && normalized.styleWeight !== undefined ? { styleWeight: normalized.styleWeight } : {}),
     ...('version' in normalized && normalized.version !== undefined ? { version: normalized.version } : {}),
     ...('vocalGender' in normalized && normalized.vocalGender !== undefined ? { vocalGender: normalized.vocalGender } : {}),
@@ -51,37 +64,26 @@ export function buildCangyuanMusicPayload(model: string, input: { prompt: string
   };
 }
 
-export function buildCangyuanThreeDPayload(model: string, input: { prompt: string } & Cangyuan3DOptions) {
-  const prompt = input.prompt.trim();
-  const payload: Record<string, unknown> = { model, ...(prompt ? { prompt } : {}) };
-  const { prompt: _prompt, ...rawOptions } = input;
-  const options = parseCangyuan3DOptions(rawOptions);
+export function buildCangyuanThreeDPayload(model: string, input: { prompt?: string } & Cangyuan3DOptions) {
   if (model.toLowerCase() === 'tripo3d' && model !== 'tripo3d') throw new Error('请使用精确公共模型名 tripo3d');
   const profile = getCangyuan3DModelProfile(model);
-  if (!profile) throw new Error(`沧元三维模型尚未接入：${model}`);
-  if (profile.modelId === CANGYUAN_TRIPO3D_PUBLIC_MODEL) {
-    if (!prompt) throw new Error('Tripo3D 必须提供物体描述');
-    if (options.textureSize !== undefined || options.seed !== undefined || options.meshSimplify !== undefined
-      || options.ssGuidanceStrength !== undefined || options.ssSamplingSteps !== undefined
-      || options.slatGuidanceStrength !== undefined || options.slatSamplingSteps !== undefined) {
-      throw new Error('Tripo3D 不支持 Trellis 专属参数');
-    }
-    const mode = options.mode || profile.defaultMode;
-    const texture = options.texture || profile.defaultTexture;
-    const pbr = options.pbr ?? profile.defaultPbr;
+  if (!profile) throw new Error(`三维模型尚未接入：${model}`);
+  const normalized = validateCangyuan3DInput(model, input);
+  const { prompt, ...options } = normalized;
+  const mode = options.mode || profile.defaultMode;
+  const payload: Record<string, unknown> = { model, ...(prompt ? { prompt } : {}) };
+
+  if (mode === 'image-to-3d') payload.image_url = options.imageUrl;
+  if (mode === 'multiview-to-3d') payload.inputs = options.multiviewImages;
+
+  if (profile.modelId === 'tripo3d') {
     payload.mode = mode;
-    if (mode === 'image-to-3d') {
-      if (!options.imageUrl) throw new Error('Tripo3D 图生模式必须提供公网图片地址');
-      payload.image_url = requirePublicImageUrl(options.imageUrl);
-    } else if (options.imageUrl !== undefined) {
-      throw new Error('Tripo3D 文生模式不能同时提交参考图片');
-    }
-    payload.texture = texture;
-    payload.pbr = pbr;
-  } else {
-    if (options.mode !== undefined && options.mode !== 'image-to-3d') throw new Error('Trellis 仅支持图生三维');
-    if (options.texture !== undefined || options.pbr !== undefined) throw new Error('Trellis 不支持 Tripo3D 的贴图档位或 PBR 参数');
-    payload.image_url = requirePublicImageUrl(options.imageUrl || '');
+    payload.texture = options.texture || profile.defaultTexture;
+    payload.pbr = options.pbr ?? profile.defaultPbr;
+    return payload;
+  }
+
+  if (profile.family === 'trellis') {
     if (options.textureSize !== undefined) payload.texture_size = options.textureSize;
     if (options.seed !== undefined) payload.seed = options.seed;
     if (options.meshSimplify !== undefined) payload.mesh_simplify = options.meshSimplify;
@@ -89,7 +91,18 @@ export function buildCangyuanThreeDPayload(model: string, input: { prompt: strin
     if (options.ssSamplingSteps !== undefined) payload.ss_sampling_steps = options.ssSamplingSteps;
     if (options.slatGuidanceStrength !== undefined) payload.slat_guidance_strength = options.slatGuidanceStrength;
     if (options.slatSamplingSteps !== undefined) payload.slat_sampling_steps = options.slatSamplingSteps;
+    return payload;
   }
+
+  payload.mode = mode;
+  if (options.texture !== undefined) payload.texture = options.texture;
+  if (options.pbr !== undefined) payload.pbr = options.pbr;
+  if (options.faceLimit !== undefined) payload.face_limit = options.faceLimit;
+  if (options.generateParts !== undefined) payload.generate_parts = options.generateParts;
+  if (options.geometryQuality !== undefined) payload.geometry_quality = options.geometryQuality;
+  if (options.textureQuality !== undefined) payload.texture_quality = options.textureQuality;
+  if (options.textureVersion !== undefined) payload.texture_version = options.textureVersion;
+  if (options.quad !== undefined) payload.quad = options.quad;
   return payload;
 }
 
@@ -100,8 +113,9 @@ export function normalizeCangyuanTask(kind: CangyuanMediaKind, value: unknown): 
   const taskId = firstText(response.task_id, response.taskId, response.id, nested.task_id, nested.taskId, nested.id, task.id);
   const rawStatus = firstText(response.status, response.state, response.task_status, nested.status, nested.state, nested.task_status, task.status).toLowerCase();
   const outputs = kind === 'music' ? musicOutputs(response) : threeDOutputs(response);
+  const hasResultText = kind === 'music' && Boolean(firstText(response.text, nested.text, asRecord(response.result).text));
   const failed = /fail|error|cancel|reject|expired/.test(rawStatus);
-  const done = outputs.length > 0 || /complete|success|^done$/.test(rawStatus);
+  const done = outputs.length > 0 || hasResultText || /complete|success|^done$/.test(rawStatus);
   const status = failed ? 'failed' : done ? 'succeeded' : /progress|running|processing/.test(rawStatus) ? 'running' : 'pending';
   const errorRecord = asRecord(response.error || nested.error || task.error);
   const error = firstText(errorRecord.message, typeof response.error === 'string' ? response.error : '', response.error_message, nested.error_message, response.message);
@@ -109,14 +123,16 @@ export function normalizeCangyuanTask(kind: CangyuanMediaKind, value: unknown): 
     id: taskId || undefined,
     status,
     providerStatus: rawStatus || undefined,
-    outputs,
-    ...(status === 'failed' ? { error: error || `沧元${kind === 'music' ? '音乐' : '三维'}任务失败${rawStatus ? `：${rawStatus}` : ''}` } : {}),
+    outputs: hasResultText && outputs.length === 0
+      ? [{ text: firstText(response.text, nested.text, asRecord(response.result).text), artifactType: 'text' }]
+      : outputs,
+    ...(status === 'failed' ? { error: error || `${kind === 'music' ? '音乐' : '三维'}任务失败${rawStatus ? `：${rawStatus}` : ''}` } : {}),
   };
 }
 
 export async function submitCangyuanMediaTask(client: CangyuanMediaClient, kind: CangyuanMediaKind, model: string, input: CangyuanMediaTaskInput): Promise<CangyuanProviderTask> {
   const payload = kind === 'music'
-    ? buildCangyuanMusicPayload(model, input as { prompt: string } & CangyuanMusicOptions)
+    ? buildCangyuanMusicPayload(model, input as { prompt?: string } & CangyuanMusicOptions)
     : buildCangyuanThreeDPayload(model, input as { prompt: string } & Cangyuan3DOptions);
   return requestTask(client, kind, undefined, { method: 'POST', headers: { ...client.headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }
@@ -141,7 +157,7 @@ async function requestTask(client: CangyuanMediaClient, kind: CangyuanMediaKind,
   if (!response.ok) {
     const errorValue = asRecord(data).error;
     const detail = firstText(asRecord(errorValue).message, typeof errorValue === 'string' ? errorValue : '', asRecord(data).message, text);
-    const error = new Error(`沧元算力任务接口失败：HTTP ${response.status}${detail ? `（${detail.slice(0, 200)}）` : ''}`) as Error & { status: number };
+    const error = new Error(`媒体任务接口失败：HTTP ${response.status}${detail ? `（${detail.slice(0, 200)}）` : ''}`) as Error & { status: number };
     error.status = response.status;
     throw error;
   }
@@ -150,17 +166,37 @@ async function requestTask(client: CangyuanMediaClient, kind: CangyuanMediaKind,
 
 function musicOutputs(response: Record<string, unknown>): CangyuanMediaOutput[] {
   const data = asRecord(response.data);
-  const urls = Array.isArray(response.music_url) ? response.music_url : Array.isArray(data.music_url) ? data.music_url : [];
+  const result = asRecord(response.result);
+  const candidates = [response.music_url, data.music_url, response.audio_url, data.audio_url, response.wav_url, data.wav_url,
+    response.midi_url, data.midi_url, response.artifact_url, data.artifact_url, response.file_url, data.file_url,
+    response.outputs, data.outputs, result.outputs, result.data, response.result];
+  const urls = candidates.flatMap((value) => Array.isArray(value) ? value : value === undefined ? [] : [value]);
   const extra = asRecord(response.extra ?? data.extra);
+  const seen = new Set<string>();
   return urls.flatMap((value, index) => {
-    const url = typeof value === 'string' ? value.trim() : firstText(asRecord(value).url, asRecord(value).music_url);
-    if (!/^https?:\/\//i.test(url)) return [];
+    const record = asRecord(value);
+    const url = typeof value === 'string' ? value.trim() : firstText(record.url, record.music_url, record.audio_url, record.wav_url, record.midi_url, record.artifact_url, record.file_url);
+    const text = firstText(record.text, record.lyrics, record.content);
+    if (!url && !text) return [];
+    if (url && !/^https?:\/\//i.test(url)) return [];
+    const signature = url || `text:${text}`;
+    if (seen.has(signature)) return [];
+    seen.add(signature);
     const jobId = firstText(arrayItem(extra.job_id, index));
     const audioId = firstText(arrayItem(extra.audio_id, index));
     const title = firstText(arrayItem(extra.title, index));
     const duration = arrayItem(extra.duration, index);
+    const artifactType = firstText(record.artifact_type, record.type).toLowerCase();
+    const type: CangyuanMediaOutput['artifactType'] = /midi/.test(artifactType) || url.toLowerCase().endsWith('.mid') || url.toLowerCase().endsWith('.midi')
+      ? 'midi'
+      : /wav/.test(artifactType) || url.toLowerCase().endsWith('.wav') ? 'wav'
+        : /stem|vocal|instrument/.test(artifactType) ? 'stem'
+          : text && !url ? 'text' : 'audio';
     return [{
-      url,
+      ...(url ? { url } : {}),
+      ...(text ? { text } : {}),
+      ...(type !== 'audio' ? { artifactType: type } : {}),
+      ...(firstText(record.name, record.filename) ? { name: firstText(record.name, record.filename) } : {}),
       ...(jobId ? { jobId } : {}),
       ...(audioId ? { audioId } : {}),
       ...(title ? { title } : {}),
@@ -179,30 +215,6 @@ function threeDOutputs(response: Record<string, unknown>): CangyuanMediaOutput[]
     const url = firstText(asRecord(value).url);
     return /^https?:\/\//i.test(url) ? [{ url }] : [];
   });
-}
-
-function requirePublicImageUrl(value: string) {
-  const imageUrl = String(value || '').trim();
-  try {
-    const parsed = new URL(imageUrl);
-    if (!['https:', 'http:'].includes(parsed.protocol) || !parsed.hostname || parsed.username || parsed.password) throw new Error();
-    if (isLocalOrPrivateHost(parsed.hostname)) throw new Error();
-  } catch {
-    throw new Error('三维参考图必须是公网图片地址；本地文件、Base64 和站内文件编号不可用');
-  }
-  return imageUrl;
-}
-
-function isLocalOrPrivateHost(hostname: string) {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
-  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;
-  if (host.includes(':')) return host === '::' || host === '::1' || /^(?:fc|fd|fe[89ab])/.test(host) || /^::ffff:(?:0:)?(?:10\.|127\.|169\.254\.|192\.168\.)/.test(host);
-  const octets = host.split('.').map(Number);
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [first, second] = octets;
-  return first === 0 || first === 10 || first === 127 || (first === 169 && second === 254)
-    || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
-    || (first === 100 && second >= 64 && second <= 127) || first >= 224;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

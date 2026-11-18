@@ -1,0 +1,14 @@
+.preview{position:relative;overflow:hidden;min-width:0;aspect-ratio:1.55;border:1px solid var(--line);border-radius:6px;background:#171b20}
+.stage{position:absolute;inset:0;min-width:0;min-height:0}
+.stage canvas{display:block;width:100%;height:100%}
+.hint{position:absolute;right:8px;bottom:7px;padding:3px 6px;border-radius:4px;background:rgba(0,0,0,.55);color:#e9edf2;font-size:9px;pointer-events:none}
+.loading{position:absolute;inset:0;display:grid;place-items:center;margin:0;background:rgba(23,27,32,.68);color:#e9edf2;font-size:11px;pointer-events:none}
+.loadingPanel{display:grid;gap:9px;width:min(260px,calc(100% - 32px));padding:13px 14px;border:1px solid rgba(255,255,255,.18);border-radius:7px;background:rgba(11,14,17,.82);text-align:center}
+.loadingPanel progress{width:100%;height:6px;overflow:hidden;border:0;border-radius:999px;background:rgba(255,255,255,.18);accent-color:var(--accent)}
+.loadingPanel progress::-webkit-progress-bar{border-radius:999px;background:rgba(255,255,255,.18)}
+.loadingPanel progress::-webkit-progress-value{border-radius:999px;background:var(--accent)}
+.loadingPanel progress::-moz-progress-bar{border-radius:999px;background:var(--accent)}
+.loadingPanel small{color:#b9c0c8;font-size:9px;font-variant-numeric:tabular-nums}
+.error{position:absolute;inset:auto 8px 28px;margin:0;padding:6px;border-radius:5px;background:rgba(0,0,0,.72);color:#f6c981;font-size:10px;line-height:1.4}
+.inDialog{aspect-ratio:1.75;max-height:min(70vh,680px)}
+@media(max-width:680px){.inDialog{aspect-ratio:1.1;max-height:65vh}}

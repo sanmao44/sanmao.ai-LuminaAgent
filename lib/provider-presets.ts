@@ -1,4 +1,5 @@
 import type { ProviderConnection, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
+import { isProviderCreativeTaskProtocol, type ProviderCreativeTaskProtocol } from '../packages/contracts/provider-creative-task';
 // The domestic Agnes docs use api.agnes-ai.cn.  The international gateway is
 // intentionally not substituted here because a Key is commonly tied to the
 // region where it was created.
@@ -28,6 +29,7 @@ export type ProviderPreset = {
   videoTaskStatusPath?: string;
   videoGenerationPath?: string;
   textProtocol?: ProviderTextProtocol;
+  creativeTaskProtocol?: ProviderCreativeTaskProtocol;
   videoQueryPath?: string;
 };
 
@@ -52,6 +54,7 @@ export type ResolvedProviderConfiguration = {
   videoTaskStatusPath: string;
   videoGenerationPath: string;
   textProtocol: ProviderTextProtocol;
+  creativeTaskProtocol?: ProviderCreativeTaskProtocol;
   videoQueryPath: string;
 };
 
@@ -94,7 +97,7 @@ export const providerPresets: ProviderPreset[] = [
   { value: 'google-gemini', label: 'Google Gemini', short: 'Gemini', description: '官方地址和协议由系统处理', logo: '/brand/providers/google-gemini.svg', type: 'google-gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsBaseUrl: false, apiKeyUrl: 'https://aistudio.google.com/apikey' },
   { value: 'apimart', label: 'APIMart', short: 'APIMart', description: '内置余额校验、预置模型和异步图片任务适配', logo: '/brand/providers/apimart.ico', type: 'openai-compatible', baseUrl: 'https://api.apimart.ai/v1', needsBaseUrl: false, apiKeyUrl: 'https://apimart.ai/console', recommended: true },
   { value: 'agnes', label: 'Agnes AI', short: 'Agnes', description: '文本、多模态、图片与异步视频模型，官方地址已内置', logo: '/brand/providers/agnes.ico', type: 'openai-compatible', baseUrl: AGNES_API_BASE_URL, needsBaseUrl: false, apiKeyUrl: AGNES_API_KEY_URL, notice: '有免费/限时免费额度，可先体验', noticeTone: 'success', recommended: true, textProtocol: 'chat-completions', videoTransport: 'agnes-videos', videoBaseUrl: AGNES_VIDEO_BASE_URL, videoGenerationPath: '/v1/videos', videoQueryPath: '/agnesapi' },
-  { value: 'cangyuan', label: '沧元算力', short: '沧元', description: '图像、音频、视频与三维生成模型平台，API 地址已内置', logo: '/brand/providers/cangyuan.webp', type: 'openai-compatible', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://ai.cangyuansuanli.cn/keys', videoTransport: 'cangyuan-videos', videoBaseUrl: 'https://direct-api.cangyuansuanli.cn', videoGenerationPath: '/v1/videos', videoTaskPath: '/v1/videos', videoTaskStatusPath: '/v1/videos/{id}' },
+  { value: 'cangyuan', label: '沧元算力', short: '沧元', description: '图像、音频、视频与三维生成模型平台，API 地址已内置', logo: '/brand/providers/cangyuan.webp', type: 'openai-compatible', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', needsBaseUrl: false, apiKeyUrl: 'https://ai.cangyuansuanli.cn/keys', videoTransport: 'cangyuan-videos', creativeTaskProtocol: 'cangyuan-creative-v1', videoBaseUrl: 'https://direct-api.cangyuansuanli.cn', videoGenerationPath: '/v1/videos', videoTaskPath: '/v1/videos', videoTaskStatusPath: '/v1/videos/{id}' },
   { value: 'jimeng-cli', label: '即梦 CLI', short: '即梦 CLI', description: '本机调用即梦图片与视频能力', type: 'openai-compatible', baseUrl: '', needsBaseUrl: false, showInPicker: false, videoTransport: 'jimeng-cli' },
   { value: 'custom', label: '其他兼容平台', short: '其他平台', description: '适用于 New API、One API 和自建中转等 OpenAI 兼容地址', type: 'openai-compatible', baseUrl: '', needsBaseUrl: true, recommended: true },
 ];
@@ -170,6 +173,7 @@ export function resolveProviderConfiguration(
     videoTaskStatusPath?: string;
     videoGenerationPath?: string;
     textProtocol?: ProviderTextProtocol;
+    creativeTaskProtocol?: ProviderCreativeTaskProtocol | '' | null;
     videoQueryPath?: string;
   },
   existing?: Partial<ProviderConnection> | null,
@@ -184,6 +188,12 @@ export function resolveProviderConfiguration(
     return preserveExisting && typeof existing?.[key] === 'string' ? String(existing[key]) : fallback;
   };
   const baseUrl = normalizeProviderBaseUrl(String(input.baseUrl || existing?.baseUrl || ''), preset);
+  if (input.creativeTaskProtocol !== undefined && input.creativeTaskProtocol !== '' && input.creativeTaskProtocol !== null && !isProviderCreativeTaskProtocol(input.creativeTaskProtocol)) {
+    throw new Error('音乐与三维任务接口协议无效');
+  }
+  const creativeTaskProtocol = input.creativeTaskProtocol !== undefined
+    ? input.creativeTaskProtocol || undefined
+    : (preserveExisting ? existing?.creativeTaskProtocol : undefined) || preset.creativeTaskProtocol;
   const explicitVideoBaseUrl = String(input.videoBaseUrl || (preserveExisting ? existing?.videoBaseUrl : '') || '').replace(/\/+$/, '');
   const agnesBaseRegion = preset.value === 'agnes' ? agnesGatewayRegion(baseUrl) : '';
   const agnesVideoRegion = preset.value === 'agnes' ? agnesGatewayRegion(explicitVideoBaseUrl) : '';
@@ -213,6 +223,7 @@ export function resolveProviderConfiguration(
     videoTaskStatusPath: pick('videoTaskStatusPath', preset.videoTaskStatusPath || defaultVideoTaskStatusPath),
     videoGenerationPath: pick('videoGenerationPath', preset.videoGenerationPath || standardCompatibility.videoGenerationPath),
     textProtocol: input.textProtocol || (preserveExisting ? existing?.textProtocol : undefined) || preset.textProtocol || 'chat-completions',
+    creativeTaskProtocol,
     videoQueryPath: String(input.videoQueryPath || (preserveExisting ? existing?.videoQueryPath : '') || preset.videoQueryPath || '').trim(),
   };
 }

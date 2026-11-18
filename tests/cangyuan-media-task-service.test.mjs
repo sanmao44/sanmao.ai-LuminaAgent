@@ -25,6 +25,20 @@ function createMemoryRepository() {
     async find(id) { return records.find((task) => task.id === id) || null; },
     async findByIdempotencyKey(key) { return records.find((task) => task.idempotencyKey === key) || null; },
     async list(limit = 100) { return records.slice(0, limit); },
+    async page({ page = 1, pageSize = 12, maxPageSize = 100, matches, compare } = {}) {
+      const size = Math.min(maxPageSize, Math.max(1, Math.round(pageSize)));
+      const filtered = records.filter((task) => !matches || matches(task));
+      if (compare) filtered.sort(compare);
+      const totalPages = Math.max(1, Math.ceil(filtered.length / size));
+      const currentPage = Math.min(Math.max(1, Math.round(page)), totalPages);
+      return {
+        tasks: filtered.slice((currentPage - 1) * size, currentPage * size),
+        total: filtered.length,
+        page: currentPage,
+        pageSize: size,
+        totalPages,
+      };
+    },
     insert(task) {
       return mutate((tasks) => {
         const existing = tasks.find((item) => item.idempotencyKey === task.idempotencyKey);
@@ -39,13 +53,27 @@ function createMemoryRepository() {
 
 function createHarness(overrides = {}) {
   const repository = createMemoryRepository();
-  const providerConfig = overrides.providerConfig || {
+  const providerConfig = {
+    type: 'openai-compatible',
+    ...overrides.providerConfig,
+    ...(overrides.providerConfig ? {} : {
     id: 'provider-1',
     platform: 'cangyuan',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
     baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
     apiKey: 'test-key',
+    }),
   };
-  const runtime = overrides.runtime || {
+  const runtime = overrides.runtime ? {
+    ...overrides.runtime,
+    provider: {
+      type: 'openai-compatible',
+      ...overrides.runtime.provider,
+      ...(overrides.runtime.provider.platform === 'cangyuan'
+        ? { creativeTaskProtocol: 'cangyuan-creative-v1' }
+        : {}),
+    },
+  } : {
     provider: providerConfig,
     model: { id: 'model-1', rawId: 'su2-suno-v6', displayName: 'Suno v6', capabilities: ['music-generate', '3d-generate'] },
   };
@@ -95,14 +123,14 @@ function createHarness(overrides = {}) {
   };
 }
 
-test('service resolves music and 3D only through matching enabled Cangyuan model capabilities', async () => {
+test('service requires the declared creative task protocol and matching model capabilities', async () => {
   const harness = createHarness({ resolveModel: (_id, kind, runtime) => kind === 'audio' ? runtime : null });
   const music = await harness.service.create({ kind: 'music', modelId: 'model-1', idempotencyKey: 'music-1', input: { prompt: 'ambient synth' } });
   assert.equal(music.kind, 'music');
   assert.deepEqual(harness.resolvedKinds[0], { modelId: 'model-1', kind: 'audio' });
   await assert.rejects(
     harness.service.create({ kind: '3d', modelId: 'model-1', idempotencyKey: '3d-1', input: { prompt: 'wooden boat' } }),
-    /请选择已启用的沧元三维模型/,
+    /请选择已启用的音乐或三维模型/,
   );
 
   const otherProvider = createHarness({ runtime: {
@@ -111,9 +139,17 @@ test('service resolves music and 3D only through matching enabled Cangyuan model
   } });
   await assert.rejects(
     otherProvider.service.create({ kind: 'music', modelId: 'image-model', idempotencyKey: 'wrong-provider', input: { prompt: 'ambient synth' } }),
-    /请选择已启用的沧元音乐模型/,
+    /请为服务商启用音乐与三维任务接口/,
   );
   assert.equal(otherProvider.repository.records.length, 0);
+
+  const optedInProvider = createHarness({ runtime: {
+    provider: { id: 'provider-opted-in', platform: 'custom', creativeTaskProtocol: 'cangyuan-creative-v1', baseUrl: 'https://provider.example.test', apiKey: 'key' },
+    model: { id: 'music-model', rawId: 'su2-suno-v6', displayName: 'Music model', capabilities: ['music-generate'] },
+  } });
+  const genericMusic = await optedInProvider.service.create({ kind: 'music', modelId: 'music-model', idempotencyKey: 'generic-music', input: { prompt: 'ambient synth' } });
+  assert.equal(genericMusic.kind, 'music');
+  assert.equal(genericMusic.providerId, 'provider-opted-in');
 
   const missingCapability = createHarness({ runtime: {
     provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
@@ -130,6 +166,7 @@ test('accepts a saved generic provider with the official Cangyuan API hostname',
   const harness = createHarness({ providerConfig: {
     id: 'legacy-cangyuan',
     platform: 'custom',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
     baseUrl: 'https://ai.cangyuansuanli.cn/v1',
     apiKey: 'test-key',
   } });
@@ -160,11 +197,15 @@ test('music service only accepts exact documented model ids and stores validated
     prompt: 'ambient synth', title: 'Night Drive', style_text: 'dream pop', instrumental: false,
     duration: 180, n: 1, audioWeight: 0.4, negativeTags: 'metal', personaId: 'persona-1',
     personaModel: 'future-compatible-model', styleWeight: 0.7, version: 'v6-mini', vocalGender: 'f',
-    weirdnessConstraint: 0.2, sourceTaskId: 'job-1', sourceAudioId: 'audio-1',
+    weirdnessConstraint: 0.2,
   };
   const task = await sunoV6.service.create({ kind: 'music', modelId: 'suno-v6', idempotencyKey: 'full-contract', input });
   assert.deepEqual(task.input, input);
   assert.equal(sunoV6.submitted.length, 1);
+  await assert.rejects(
+    sunoV6.service.create({ kind: 'music', modelId: 'suno-v6', idempotencyKey: 'undocumented-source', input: { prompt: 'song', sourceTaskId: 'job-1' } }),
+    /不支持这些音乐参数/,
+  );
 });
 
 test('music service rejects out-of-range and model-incompatible options before persistence', async () => {
@@ -205,8 +246,30 @@ test('submission stores completed outputs and polling persists later provider re
   later.setTime(created.nextPollAt);
   const refreshed = await later.service.get(created.id);
   assert.equal(refreshed.status, 'succeeded');
-  assert.deepEqual(refreshed.outputs, [{ url: 'https://cdn.example.test/model.glb' }]);
+  assert.deepEqual(refreshed.outputs, [{ url: 'https://cdn.example.test/model.glb', artifactType: 'glb' }]);
   assert.equal(later.repository.records[0].status, 'succeeded');
+});
+
+test('task history filters by media kind before applying its result limit', async () => {
+  const harness = createHarness();
+  harness.repository.records.push(
+    { id: 'new-music-1', kind: 'music', createdAt: '2026-11-18T12:03:00.000Z' },
+    { id: 'new-music-2', kind: 'music', createdAt: '2026-11-18T12:02:00.000Z' },
+    { id: 'older-3d-1', kind: '3d', createdAt: '2026-11-18T12:01:00.000Z' },
+    { id: 'older-3d-2', kind: '3d', createdAt: '2026-11-18T12:00:00.000Z' },
+  );
+
+  assert.deepEqual((await harness.service.list('3d', 1)).map((task) => task.id), ['older-3d-1']);
+  assert.deepEqual((await harness.service.list('3d', 2)).map((task) => task.id), ['older-3d-1', 'older-3d-2']);
+});
+
+test('completed text artifacts are accepted without a media URL', async () => {
+  const harness = createHarness({ submit: async () => ({
+    status: 'succeeded', providerStatus: 'completed', outputs: [{ text: 'structured lyrics', artifactType: 'text' }],
+  }) });
+  const task = await harness.service.create({ kind: 'music', modelId: 'model-1', idempotencyKey: 'text-artifact', input: { prompt: 'write lyrics' } });
+  assert.equal(task.status, 'succeeded');
+  assert.deepEqual(task.outputs, [{ text: 'structured lyrics', artifactType: 'text' }]);
 });
 
 test('temporary poll failures retain the active task and schedule bounded backoff', async () => {
@@ -276,13 +339,53 @@ test('3D model-specific parameters are whitelisted before task persistence', asy
   assert.equal(unsupported.repository.records.length, 0);
 });
 
+test('Tripo tasks preserve multiview inputs and expose FBX outputs for quad mode', async () => {
+  const p2 = createHarness({
+    runtime: {
+      provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
+      model: { id: 'p2-model', rawId: 'tripo3d-p2', displayName: 'Tripo3D P2', capabilities: ['3d-generate'] },
+    },
+    submit: async () => ({ id: 'remote-p2', status: 'succeeded', outputs: [{ url: 'https://cdn.example.test/model.fbx' }] }),
+  });
+  const task = await p2.service.create({
+    kind: '3d', modelId: 'p2-model', idempotencyKey: 'p2-quad',
+    input: { prompt: 'A carved boat', mode: 'text-to-3d', quad: true, faceLimit: 25_000 },
+  });
+  assert.equal(task.status, 'succeeded');
+  assert.deepEqual(task.outputs, [{ url: 'https://cdn.example.test/model.fbx', artifactType: 'fbx' }]);
+
+  const multiview = createHarness({ runtime: {
+    provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
+    model: { id: 'p1-model', rawId: 'tripo3d-p1', displayName: 'Tripo3D P1', capabilities: ['3d-generate'] },
+  } });
+  const multiviewTask = await multiview.service.create({
+    kind: '3d', modelId: 'p1-model', idempotencyKey: 'p1-multiview',
+    input: { mode: 'multiview-to-3d', multiviewImages: { front: 'https://cdn.example.test/front.png', right: 'https://cdn.example.test/right.png' } },
+  });
+  assert.equal(multiviewTask.input.multiviewImages.front, 'https://cdn.example.test/front.png');
+  assert.equal(multiviewTask.outputs.length, 0);
+});
+
+test('invalid Tripo constraints fail before task persistence', async () => {
+  const p1 = createHarness({ runtime: {
+    provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
+    model: { id: 'p1-model', rawId: 'tripo3d-p1', displayName: 'Tripo3D P1', capabilities: ['3d-generate'] },
+  } });
+  await assert.rejects(p1.service.create({
+    kind: '3d', modelId: 'p1-model', idempotencyKey: 'p1-invalid',
+    input: { mode: 'multiview-to-3d', multiviewImages: { back: 'https://cdn.example.test/back.png', left: 'https://cdn.example.test/left.png' } },
+  }), /必须包含正面 front/);
+  assert.equal(p1.repository.records.length, 0);
+  assert.equal(p1.submitted.length, 0);
+});
+
 test('Trellis task service retains every documented option and allows image-only input', async () => {
   const trellis = createHarness({ runtime: {
     provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
     model: { id: 'trellis-model', rawId: 'trellis', displayName: 'Trellis', capabilities: ['3d-generate'] },
   } });
   const input = {
-    prompt: '', imageUrl: 'https://cdn.example.test/object.png', textureSize: '3072', seed: 'repeat-7',
+    prompt: '', imageUrl: 'https://cdn.example.test/object.png', textureSize: '3072', seed: '7',
     meshSimplify: 0.96, ssGuidanceStrength: 4.5, ssSamplingSteps: 30,
     slatGuidanceStrength: 6, slatSamplingSteps: 24,
   };
@@ -317,6 +420,21 @@ test('Trellis requires an externally reachable image and rejects undocumented mo
   assert.equal(generic.submitted.length, 0);
 });
 
+test('Trellis rejects non-string or empty seeds before task persistence', async () => {
+  for (const [idempotencyKey, seed] of [['trellis-number-seed', 7], ['trellis-empty-seed', '']]) {
+    const trellis = createHarness({ runtime: {
+      provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
+      model: { id: 'trellis-model', rawId: 'trellis', displayName: 'Trellis', capabilities: ['3d-generate'] },
+    } });
+    await assert.rejects(
+      trellis.service.create({ kind: '3d', modelId: 'trellis-model', idempotencyKey, input: { prompt: '', imageUrl: 'https://cdn.example.test/object.png', seed } }),
+      /seed 必须是非空字符串/,
+    );
+    assert.equal(trellis.repository.records.length, 0);
+    assert.equal(trellis.submitted.length, 0);
+  }
+});
+
 test('Tripo3D default image mode refuses a missing public image before task persistence', async () => {
   const tripo = createHarness({ runtime: {
     provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
@@ -343,4 +461,34 @@ test('Tripo3D text mode requires a prompt before task persistence', async () => 
   );
   assert.equal(tripo.repository.records.length, 0);
   assert.equal(tripo.submitted.length, 0);
+});
+
+test('Tripo3D image mode requires both a prompt and a public image', async () => {
+  const tripo = createHarness({ runtime: {
+    provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
+    model: { id: 'tripo-model', rawId: 'tripo3d', displayName: 'Tripo3D', capabilities: ['3d-generate'] },
+  } });
+
+  await assert.rejects(
+    tripo.service.create({ kind: '3d', modelId: 'tripo-model', idempotencyKey: 'tripo-image-no-prompt', input: { prompt: '', mode: 'image-to-3d', imageUrl: 'https://cdn.example.test/boat.png' } }),
+    /必须提供物体描述/,
+  );
+  assert.equal(tripo.repository.records.length, 0);
+  assert.equal(tripo.submitted.length, 0);
+
+  await assert.rejects(
+    tripo.service.create({ kind: '3d', modelId: 'tripo-model', idempotencyKey: 'tripo-image-no-url', input: { prompt: 'A carved wooden boat', mode: 'image-to-3d' } }),
+    /必须提供公网图片地址/,
+  );
+  assert.equal(tripo.repository.records.length, 0);
+  assert.equal(tripo.submitted.length, 0);
+
+  const task = await tripo.service.create({
+    kind: '3d', modelId: 'tripo-model', idempotencyKey: 'tripo-image-with-prompt',
+    input: { prompt: 'A carved wooden boat', mode: 'image-to-3d', imageUrl: 'https://cdn.example.test/boat.png' },
+  });
+  assert.equal(task.status, 'pending');
+  assert.equal(tripo.submitted.length, 1);
+  assert.equal(tripo.submitted[0].input.prompt, 'A carved wooden boat');
+  assert.equal(tripo.submitted[0].input.imageUrl, 'https://cdn.example.test/boat.png');
 });

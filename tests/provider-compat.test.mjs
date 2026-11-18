@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import sharp from 'sharp';
+import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
@@ -9,9 +11,12 @@ const agnes = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8'
 const cangyuanCapabilities = await readFile(new URL('../lib/cangyuan-image-capabilities.ts', import.meta.url), 'utf8');
 const cangyuanProvider = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
 const modelKind = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
+const svgImage = await readFile(new URL('../lib/svg-image.ts', import.meta.url), 'utf8');
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });").replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
+globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
+globalThis.__providerCompatSharp = sharp;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${svgImage.replace('export function isSvgImageBytes', 'function isSvgImageBytes')}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });").replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isSvgImageBytes } from './svg-image';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;').replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerCompatSharp;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -20,10 +25,15 @@ const compiled = ts.transpileModule(bundledSource, {
   fileName: sourceUrl.pathname,
 }).outputText;
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+delete globalThis.__providerImageReferenceReaderModule;
+delete globalThis.__providerCompatSharp;
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
-const presetCompiled = ts.transpileModule(presetSource, {
+const presetCompiled = ts.transpileModule(presetSource.replace(
+  "import { isProviderCreativeTaskProtocol, type ProviderCreativeTaskProtocol } from '../packages/contracts/provider-creative-task';",
+  "const isProviderCreativeTaskProtocol = (value) => value === 'cangyuan-creative-v1';",
+), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: new URL('../lib/provider-presets.ts', import.meta.url).pathname,
 }).outputText;
@@ -380,6 +390,24 @@ test('uses the OpenAI video task status default for a custom compatible provider
     videoTransport: 'openai-videos',
   });
   assert.equal(config.videoTaskStatusPath, '/v1/videos/{id}');
+});
+
+test('creative task protocol defaults for its preset and is explicit for other providers', () => {
+  const cangyuan = presets.resolveProviderConfiguration({ platform: 'cangyuan' });
+  assert.equal(cangyuan.creativeTaskProtocol, 'cangyuan-creative-v1');
+
+  const custom = presets.resolveProviderConfiguration({ platform: 'custom', baseUrl: 'https://custom.example/v1' });
+  assert.equal(custom.creativeTaskProtocol, undefined);
+
+  const optedIn = presets.resolveProviderConfiguration({
+    platform: 'custom',
+    baseUrl: 'https://custom.example/v1',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
+  });
+  assert.equal(optedIn.creativeTaskProtocol, 'cangyuan-creative-v1');
+  assert.equal(presets.resolveProviderConfiguration({ platform: 'custom' }, optedIn).creativeTaskProtocol, 'cangyuan-creative-v1');
+  assert.equal(presets.resolveProviderConfiguration({ platform: 'custom', creativeTaskProtocol: '' }, optedIn).creativeTaskProtocol, undefined);
+  assert.throws(() => presets.resolveProviderConfiguration({ platform: 'custom', creativeTaskProtocol: 'unknown-protocol' }), /协议无效/);
 });
 
 test('keeps Agnes text and video gateways in the same selected region', () => {
@@ -1191,6 +1219,7 @@ test('Cangyuan image generation and edits upload signed reference bytes and poll
   try {
     const generated = await providers.generateImage(provider, 'ax-gpt-image-2.6-flare', {
       prompt: '雾中群山', count: 1, aspectRatio: '16:9', resolution: '2K', quality: 'xhigh', outputFormat: 'gif', background: 'transparent', references: [reference],
+      seed: '42', frameCount: 8, frameDurationMs: 120,
     });
     const edited = await providers.editImage(provider, 'ax-gpt-image-2.6-flare', {
       prompt: '给主体增加柔和的轮廓光', references: [reference], mask: reference, count: 1, aspectRatio: '1:1', resolution: '1K', quality: 'max', outputFormat: 'webp', background: 'auto',
@@ -1218,6 +1247,7 @@ test('Cangyuan image generation and edits upload signed reference bytes and poll
     assert.deepEqual(JSON.parse(generationCall.init.body), {
       model: 'ax-gpt-image-2.6-flare', prompt: '雾中群山', async: true,
       size: '2K', aspect_ratio: '16:9', quality: 'xhigh', output_format: 'gif', background: 'transparent',
+      seed: '42', frame_count: 8, frame_duration_ms: 120,
       images: ['https://cdn.example.test/reference-1.png'],
     });
     const editCall = calls.find((call) => call.url.endsWith('/v1/images/edits'));
@@ -1249,15 +1279,35 @@ test('Cangyuan image requests reject unconfirmed batch count without submitting 
   }
 });
 
-test('Cangyuan image parameters use exact documented enums and model-specific batch limits', async () => {
+test('Cangyuan rejects SVG batch generation before submitting a task', async () => {
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => { requests += 1; throw new Error('should not submit'); };
+  try {
+    const provider = {
+      type: 'openai-compatible', platform: 'cangyuan',
+      baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+    };
+    await assert.rejects(providers.generateImage(provider, 'gpt-image-2.6-flare-o', {
+      prompt: '未来城市', count: 2, aspectRatio: '16:9', resolution: '1K',
+      quality: 'max', outputFormat: 'svg', background: 'auto',
+    }), /SVG 生成每次只能输出 1 张/);
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Cangyuan SVG generation normalizes nested base64 output for one image', async () => {
   const calls = [];
   const previousFetch = globalThis.fetch;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#123456"/></svg>';
+  const encodedSvg = Buffer.from(svg).toString('base64');
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url: String(url), init });
-    return new Response(JSON.stringify({ data: [
-      { url: 'https://cdn.example.test/seedream-1.svg' },
-      { url: 'https://cdn.example.test/seedream-2.svg' },
-    ] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ data: [{ b64_json: encodedSvg }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
   };
   try {
     const provider = {
@@ -1265,14 +1315,56 @@ test('Cangyuan image parameters use exact documented enums and model-specific ba
       baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
     };
     const images = await providers.generateImage(provider, 'gpt-image-2.6-flare-o', {
-      prompt: '未来城市', count: 2, aspectRatio: '16:9', resolution: '1K',
+      prompt: '未来城市', count: 1, aspectRatio: '16:9', resolution: '1K',
       quality: 'max', outputFormat: 'svg', background: 'auto',
     });
-    assert.equal(images.length, 2);
+    assert.deepEqual(images, [{ url: `data:image/svg+xml;base64,${encodedSvg}` }]);
     assert.deepEqual(JSON.parse(calls[0].init.body), {
       model: 'gpt-image-2.6-flare-o', prompt: '未来城市', async: true,
-      size: '16:9', quality: 'max', output_format: 'svg', background: 'auto', n: 2,
+      size: '16:9', quality: 'max', output_format: 'svg', background: 'auto',
     });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Cangyuan rejects SVG response bytes for a raster output request', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  const encodedSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"></svg>').toString('base64');
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ b64_json: encodedSvg }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'cangyuan',
+      baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+    }, 'gpt-image-2.6-flare-o', {
+      prompt: '未来城市', count: 1, outputFormat: 'png',
+    }), /不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片/);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Cangyuan rejects SVG reference input before uploading it', async () => {
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  const encodedSvg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"></svg>').toString('base64');
+  globalThis.fetch = async () => { requests += 1; throw new Error('should not upload'); };
+  try {
+    await assert.rejects(providers.generateImage({
+      type: 'openai-compatible', platform: 'cangyuan',
+      baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+    }, 'ax-gpt-image-2.6-flare', {
+      prompt: '使用参考图', count: 1,
+      references: [`data:image/svg+xml;base64,${encodedSvg}`],
+    }), /沧元参考图仅支持 PNG、JPEG、WebP/);
+    assert.equal(requests, 0);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1314,6 +1406,63 @@ test('Cangyuan image sizing keeps documented size and ratio fields separate and 
       model: 'gpt-image-2.6-flare-o', prompt: 'wide image', async: true,
       size: '5:4',
     });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Cangyuan image generation forwards independent resolution, tier, and required series fields', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ url: `https://cdn.example.test/${calls.length}.png` }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const provider = {
+      type: 'openai-compatible', platform: 'cangyuan',
+      baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+    };
+    await providers.generateImage(provider, 'flux-3-image', {
+      prompt: '夜色中的城市', aspectRatio: '自动', resolution: '2K',
+    });
+    await providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '一张产品海报', tier: '2k', series: 'sunburst',
+    });
+    await providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '默认系列海报',
+    });
+    await providers.generateImage(provider, 'flux-3-klein', {
+      prompt: '可复现的产品草图', resolution: '4K', seed: 'seed-42', enablePromptExpansion: false,
+    });
+
+    const resolutionPayload = JSON.parse(calls[0].init.body);
+    assert.equal(resolutionPayload.resolution, '2K');
+    assert.notEqual(resolutionPayload.size, '2K');
+
+    const tierPayload = JSON.parse(calls[1].init.body);
+    assert.equal(tierPayload.tier, '2k');
+    assert.equal(tierPayload.series, 'sunburst');
+    assert.equal(Object.hasOwn(tierPayload, 'resolution'), false);
+
+    const defaultSeriesPayload = JSON.parse(calls[2].init.body);
+    assert.equal(defaultSeriesPayload.series, 'flare');
+
+    const kleinPayload = JSON.parse(calls[3].init.body);
+    assert.equal(kleinPayload.resolution, '4K');
+    assert.equal(kleinPayload.seed, 'seed-42');
+    assert.equal(kleinPayload.enable_prompt_expansion, false);
+    assert.notEqual(kleinPayload.size, '4K');
+
+    await assert.rejects(() => providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '无效档位', tier: '8k',
+    }), /不支持生成档位“8k”/);
+    await assert.rejects(() => providers.generateImage(provider, 'flux-3-image', {
+      prompt: '不支持的选项', seed: 'seed-42',
+    }), /参数 seed=seed-42/);
+    assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -1368,7 +1517,7 @@ test('Cangyuan rejects unsupported profile parameters and masks before uploading
     );
     await assert.rejects(
       providers.generateImage(provider, 'mj2-midjourney-describe', { prompt: 'test', quality: 'high' }),
-      /未确认参数 quality=high/,
+      /不支持图片质量“high”/,
     );
     assert.equal(requests, 0);
   } finally {

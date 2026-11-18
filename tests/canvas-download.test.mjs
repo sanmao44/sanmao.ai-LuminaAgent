@@ -59,6 +59,13 @@ test('downloads images concurrently and preserves ordered, unique zip names', as
   assert.deepEqual([...files['02-同名.webp']], [98]);
 });
 
+test('preserves SVG format in canvas archive names', async () => {
+  const result = await download.createCanvasImageZip([
+    { id: 'svg', name: 'vector.svg', url: 'vector' },
+  ], async () => new Response('<svg/>', { headers: { 'content-type': 'image/svg+xml' } }));
+  assert.deepEqual(result.fileNames, ['01-vector.svg']);
+});
+
 test('does not create a partial zip when an image download fails', async () => {
   await assert.rejects(
     download.createCanvasImageZip([

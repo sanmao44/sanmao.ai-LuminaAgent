@@ -46,6 +46,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         imageUpscaleStatusPath: provider.imageUpscaleStatusPath,
         responsesPath: provider.responsesPath,
         textProtocol: provider.textProtocol,
+        creativeTaskProtocol: provider.creativeTaskProtocol,
         videoTransport: provider.videoTransport,
         videoBaseUrl: provider.videoBaseUrl,
         videoTaskPath: provider.videoTaskPath,

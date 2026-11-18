@@ -1,9 +1,10 @@
 import type { PublicState, RegistryModel } from "../types";
-import type { ImageOutputFormat } from "@/packages/contracts/creative";
+import type { ImageModelParameters, ImageOutputFormat } from "@/packages/contracts/creative";
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
 import { getCangyuanImageModelProfile } from "../cangyuan-image-capabilities";
+import type { CangyuanImageAdvancedParameter } from "../cangyuan-image-capabilities";
 import { isCangyuanProvider } from "../cangyuan-provider";
 
 export type ImageSizeMode = "system" | "custom";
@@ -32,14 +33,14 @@ export type CanvasMaskAsset = {
   feather?: number;
 };
 
-export type ImageCreationSettings = {
+export type ImageCreationSettings = Omit<ImageModelParameters, "resolution"> & {
   kind: "image";
   model: string;
   aspect: string;
   customAspectWidth: number;
   customAspectHeight: number;
   sizeMode: ImageSizeMode;
-  resolution: "1K" | "2K" | "3K" | "4K";
+  resolution: string;
   width: number;
   height: number;
   count: number;
@@ -53,6 +54,43 @@ export type ImageCreationSettings = {
   upscaleColorCorrection: "wavelet" | "none";
   upscaleAlgorithm: "lanczos" | "bicubic" | "nearest";
 };
+
+export function imageModelParametersFromSettings(settings: ImageCreationSettings): ImageModelParameters {
+  return {
+    resolution: settings.resolution,
+    tier: settings.tier,
+    series: settings.series,
+    seed: settings.seed,
+    enablePromptExpansion: settings.enablePromptExpansion,
+    style: settings.style,
+    negativePrompt: settings.negativePrompt,
+    layerDecomposition: settings.layerDecomposition,
+    layerMaxImages: settings.layerMaxImages,
+    layerTextRecognition: settings.layerTextRecognition,
+    optimizePrompt: settings.optimizePrompt,
+    watermark: settings.watermark,
+    safetyIdentifier: settings.safetyIdentifier,
+    markupImage: settings.markupImage,
+    outputCompression: settings.outputCompression,
+    moderation: settings.moderation,
+    complexity: settings.complexity,
+    frameCount: settings.frameCount,
+    frameDurationMs: settings.frameDurationMs,
+    svgAuthorModel: settings.svgAuthorModel,
+    svgReasoningEffort: settings.svgReasoningEffort,
+    chaos: settings.chaos,
+    experimentalStyle: settings.experimentalStyle,
+    hd: settings.hd,
+    referenceImageWeight: settings.referenceImageWeight,
+    rawStyle: settings.rawStyle,
+    referenceMode: settings.referenceMode,
+    referenceSlots: settings.referenceSlots,
+    speed: settings.speed,
+    stylize: settings.stylize,
+    styleWeight: settings.styleWeight,
+    weird: settings.weird,
+  };
+}
 
 export type VideoCreationSettings = {
   kind: "video";
@@ -297,19 +335,97 @@ export function normalizeImageCreationSettings(
     ? getCangyuanImageModelProfile(model.rawId)
     : null;
   const imageCountLimit = isCangyuan
-    ? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
+    ? cangyuanProfile?.fixedOutputCount ?? Math.min(10, Math.max(1, cangyuanProfile?.nMax ?? 1))
     : 8;
   const aspectCandidate = String(raw.aspect || raw.ratio || fallback.aspect);
+  const hasResolutionInput = typeof raw.resolution === "string" || typeof raw.sizeTier === "string";
   const resolutionCandidate = String(
-    raw.resolution || raw.sizeTier || fallback.resolution,
-  ).toUpperCase();
-  const resolution = IMAGE_SIZE_TIERS.some(
-    (item) => item.value === resolutionCandidate,
-  )
-    ? (resolutionCandidate as ImageCreationSettings["resolution"])
-    : fallback.resolution;
+    hasResolutionInput ? raw.resolution || raw.sizeTier : cangyuanProfile?.resolutionDefault || fallback.resolution,
+  );
+  const cangyuanResolution = cangyuanProfile?.resolutionEnum?.find(
+    (candidate) => candidate.toLowerCase() === resolutionCandidate.toLowerCase(),
+  );
+  const resolution = cangyuanProfile?.resolutionEnum?.length
+    ? cangyuanResolution || cangyuanProfile.resolutionDefault || cangyuanProfile.resolutionEnum[0]
+    : IMAGE_SIZE_TIERS.find((item) => item.value === resolutionCandidate.toUpperCase())?.value || fallback.resolution;
+  const tierCandidate = typeof raw.tier === "string" ? raw.tier.trim() : "";
+  const tier = cangyuanProfile?.tierEnum?.find((candidate) => candidate.toLowerCase() === tierCandidate.toLowerCase());
+  const seriesCandidate = typeof raw.series === "string" ? raw.series.trim() : "";
+  const series = cangyuanProfile?.seriesEnum?.find((candidate) => candidate.toLowerCase() === seriesCandidate.toLowerCase())
+    || cangyuanProfile?.seriesDefault
+    || cangyuanProfile?.seriesEnum?.[0];
+  const seedCandidate = typeof raw.seed === "string" ? raw.seed.trim() : "";
+  const seed = cangyuanProfile?.supportsSeed
+    && seedCandidate
+    && (!cangyuanProfile.seedInteger || /^-?\d+$/.test(seedCandidate))
+    ? seedCandidate
+    : undefined;
+  const enablePromptExpansion = cangyuanProfile?.supportsPromptExpansion
+    ? typeof raw.enablePromptExpansion === "boolean"
+      ? raw.enablePromptExpansion
+      : cangyuanProfile.promptExpansionDefault ?? true
+    : undefined;
+  const style = cangyuanProfile?.supportsStyle && typeof raw.style === "string" && raw.style.trim()
+    ? raw.style.trim()
+    : undefined;
+  const negativePrompt = (cangyuanProfile?.supportsNegativePrompt || cangyuanProfile?.supportsNoParameter) && typeof raw.negativePrompt === "string" && raw.negativePrompt.trim()
+    ? raw.negativePrompt.trim()
+    : undefined;
+  const layerDecomposition = cangyuanProfile?.supportsLayerDecomposition && typeof raw.layerDecomposition === "boolean"
+    ? raw.layerDecomposition
+    : undefined;
+  const layerMaxImagesCandidate = Number(raw.layerMaxImages);
+  const layerMaxImages = layerDecomposition && Number.isInteger(layerMaxImagesCandidate) && layerMaxImagesCandidate >= 2 && layerMaxImagesCandidate <= 100
+    ? layerMaxImagesCandidate
+    : undefined;
+  const layerTextRecognition = layerDecomposition && typeof raw.layerTextRecognition === "boolean"
+    ? raw.layerTextRecognition
+    : undefined;
+  const optimizePrompt = cangyuanProfile?.supportsPromptOptimization && typeof raw.optimizePrompt === "boolean"
+    ? raw.optimizePrompt
+    : undefined;
+  const watermark = cangyuanProfile?.supportsWatermarkSetting && typeof raw.watermark === "boolean"
+    ? raw.watermark
+    : undefined;
+  const safetyIdentifier = cangyuanProfile?.supportsSafetyIdentifier && typeof raw.safetyIdentifier === "string" && raw.safetyIdentifier.trim()
+    ? raw.safetyIdentifier.trim()
+    : undefined;
+  const markupImage = cangyuanProfile?.supportsMarkupImage && typeof raw.markupImage === "string" && raw.markupImage.trim()
+    ? raw.markupImage.trim()
+    : undefined;
+  const supportsAdvanced = (name: CangyuanImageAdvancedParameter) => Boolean(cangyuanProfile?.advancedParameters?.includes(name));
+  const advancedNumber = (name: CangyuanImageAdvancedParameter, value: unknown, minimum: number, maximum: number, step = 1) => {
+    if (!supportsAdvanced(name) || value === undefined || value === null || value === "") return undefined;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return undefined;
+    const stepped = Math.round((parsed - minimum) / step) * step + minimum;
+    return Math.max(minimum, Math.min(maximum, Number(stepped.toFixed(2))));
+  };
+  const outputCompression = advancedNumber("output_compression", raw.outputCompression, 0, 100);
+  const moderation = supportsAdvanced("moderation") && (raw.moderation === "auto" || raw.moderation === "low")
+    ? raw.moderation
+    : undefined;
+  const complexity = supportsAdvanced("complexity") && (raw.complexity === "low" || raw.complexity === "medium" || raw.complexity === "high")
+    ? raw.complexity
+    : undefined;
+  const frameCount = advancedNumber("frame_count", raw.frameCount, 2, 16);
+  const frameDurationMs = advancedNumber("frame_duration_ms", raw.frameDurationMs, 20, cangyuanProfile?.frameDurationMaximum ?? 2000, 10);
+  const chaos = advancedNumber("chaos", raw.chaos, 0, 100);
+  const experimentalStyle = advancedNumber("exp", raw.experimentalStyle, 0, 100);
+  const hd = supportsAdvanced("hd") && typeof raw.hd === "boolean" ? raw.hd : undefined;
+  const referenceImageWeight = advancedNumber("iw", raw.referenceImageWeight, 0, 3, 0.1);
+  const rawStyle = supportsAdvanced("raw") && typeof raw.rawStyle === "boolean" ? raw.rawStyle : undefined;
+  const referenceModes = ["image", "style", "edit", "moodboard", "editor"] as const;
+  const referenceMode = supportsAdvanced("reference") && typeof raw.referenceMode === "string" && referenceModes.includes(raw.referenceMode as (typeof referenceModes)[number])
+    ? raw.referenceMode as ImageCreationSettings["referenceMode"]
+    : undefined;
+  const referenceSlots = advancedNumber("reference_slots", raw.referenceSlots, 1, 8);
+  const speed = supportsAdvanced("speed") && (raw.speed === "relax" || raw.speed === "fast") ? raw.speed : undefined;
+  const stylize = advancedNumber("stylize", raw.stylize, 0, 1000, 10);
+  const styleWeight = advancedNumber("sw", raw.styleWeight, 0, 1000, 10);
+  const weird = advancedNumber("weird", raw.weird, 0, 3000, 50);
   const sizeMode = raw.sizeMode === "custom" ? "custom" : "system";
-  const outputFormat = raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg"
+  const outputFormat = !layerDecomposition && (raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg")
     ? raw.outputFormat
     : "png";
   const backgroundMode =
@@ -388,6 +504,41 @@ export function normalizeImageCreationSettings(
     ),
     sizeMode,
     resolution,
+    ...(tier ? { tier } : {}),
+    ...(series ? { series } : {}),
+    ...(seed ? { seed } : {}),
+    ...(enablePromptExpansion !== undefined ? { enablePromptExpansion } : {}),
+    ...(style ? { style } : {}),
+    ...(negativePrompt ? { negativePrompt } : {}),
+    ...(layerDecomposition !== undefined ? { layerDecomposition } : {}),
+    ...(layerMaxImages !== undefined ? { layerMaxImages } : {}),
+    ...(layerTextRecognition !== undefined ? { layerTextRecognition } : {}),
+    ...(optimizePrompt !== undefined ? { optimizePrompt } : {}),
+    ...(watermark !== undefined ? { watermark } : {}),
+    ...(safetyIdentifier ? { safetyIdentifier } : {}),
+    ...(markupImage ? { markupImage } : {}),
+    ...(outputCompression !== undefined && (outputFormat === "jpeg" || outputFormat === "webp") ? { outputCompression } : {}),
+    ...(moderation ? { moderation } : {}),
+    ...(complexity ? { complexity } : {}),
+    ...(frameCount !== undefined && outputFormat === "gif" ? { frameCount } : {}),
+    ...(frameDurationMs !== undefined && outputFormat === "gif" ? { frameDurationMs } : {}),
+    ...(outputFormat === "svg" && cangyuanProfile?.supportsSvgOptions && typeof raw.svgAuthorModel === "string" && raw.svgAuthorModel.trim()
+      ? { svgAuthorModel: raw.svgAuthorModel.trim() } : {}),
+    ...(outputFormat === "svg" && cangyuanProfile?.supportsSvgOptions
+      && (raw.svgReasoningEffort === "none" || raw.svgReasoningEffort === "minimal" || raw.svgReasoningEffort === "low"
+        || raw.svgReasoningEffort === "medium" || raw.svgReasoningEffort === "high" || raw.svgReasoningEffort === "xhigh" || raw.svgReasoningEffort === "max")
+      ? { svgReasoningEffort: raw.svgReasoningEffort } : {}),
+    ...(chaos !== undefined ? { chaos } : {}),
+    ...(experimentalStyle !== undefined ? { experimentalStyle } : {}),
+    ...(hd !== undefined ? { hd } : {}),
+    ...(referenceImageWeight !== undefined ? { referenceImageWeight } : {}),
+    ...(rawStyle !== undefined ? { rawStyle } : {}),
+    ...(referenceMode ? { referenceMode } : {}),
+    ...(referenceSlots !== undefined ? { referenceSlots } : {}),
+    ...(speed ? { speed } : {}),
+    ...(stylize !== undefined ? { stylize } : {}),
+    ...(styleWeight !== undefined ? { styleWeight } : {}),
+    ...(weird !== undefined ? { weird } : {}),
     width: clampInteger(raw.width ?? raw.customWidth, 1, 16384, fallback.width),
     height: clampInteger(
       raw.height ?? raw.customHeight,
@@ -398,7 +549,7 @@ export function normalizeImageCreationSettings(
     count: clampInteger(raw.count, 1, imageCountLimit, fallback.count),
     quality,
     outputFormat,
-    backgroundMode,
+    backgroundMode: layerDecomposition && backgroundMode === "api-transparent" ? "auto" : backgroundMode,
     ...(mask ? { mask } : {}),
     upscaleScale: clampInteger(
       raw.upscaleScale,

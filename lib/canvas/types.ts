@@ -9,6 +9,8 @@ import type {
   ViewMode,
 } from '../angle-control';
 import type { ProvenanceEdge } from '../provenance/types';
+import type { AudioTranscriptionResult } from '../../packages/contracts/audio-transcription';
+import type { CangyuanMediaOutput, CangyuanMediaTaskStatus, CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
 export type CanvasMediaKind = 'image' | 'video' | 'audio';
@@ -322,6 +324,8 @@ export type CanvasAudioGenerationMeta = {
   requestedModelId?: string;
   modelId?: string;
   voice?: string;
+  format?: string;
+  speed?: number;
   createdAt: number;
 };
 
@@ -330,7 +334,45 @@ export type CanvasAudioDraft = {
   text: string;
   voice?: string;
   modelId?: string;
+  format?: string;
+  speed?: number;
   updatedAt?: number;
+};
+
+export type CanvasAudioTranscriptionDraft = {
+  modelId?: string;
+  language?: string;
+  customLanguage?: string;
+  prompt?: string;
+  responseFormat?: 'json' | 'text' | 'verbose_json';
+  temperature?: number;
+  updatedAt?: number;
+};
+
+export type CanvasAudioTranscriptionMeta = Omit<AudioTranscriptionResult, 'historyError'> & {
+  sourceAudioName: string;
+  createdAt: number;
+};
+
+export type CanvasAudioMusicDraft = {
+  modelId?: string;
+  prompt: string;
+  options: CangyuanMusicOptions;
+  updatedAt?: number;
+};
+
+/** Canvas projection of the authoritative asynchronous music task. */
+export type CanvasAudioMusicTask = {
+  id: string;
+  modelId: string;
+  modelName: string;
+  prompt?: string;
+  status: CangyuanMediaTaskStatus;
+  outputs: CangyuanMediaOutput[];
+  error?: string;
+  providerStatus?: string;
+  createdAt: string;
+  updatedAt?: string;
 };
 
 export type CanvasHistoryEntry = {
@@ -429,6 +471,10 @@ export type CanvasNodeData = {
   generation?: CanvasGenerationMeta;
   speechGeneration?: CanvasAudioGenerationMeta;
   speechDraft?: CanvasAudioDraft;
+  transcriptionDraft?: CanvasAudioTranscriptionDraft;
+  transcription?: CanvasAudioTranscriptionMeta;
+  musicDraft?: CanvasAudioMusicDraft;
+  musicTask?: CanvasAudioMusicTask;
   /** One line per requested batch variation on a generator node. */
   variantRequirements?: string[];
   /** Editing buffer that preserves empty lines while the user types. */

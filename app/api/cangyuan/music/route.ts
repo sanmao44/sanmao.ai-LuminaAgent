@@ -14,17 +14,18 @@ export async function POST(request: Request) {
     releaseRuntimeRequest = await beginRuntimeRequest('cangyuan-music-generate');
     const raw = await request.json() as Record<string, unknown>;
     if (raw.kind !== undefined && raw.kind !== 'music') return Response.json({ error: '请求类型与音乐生成接口不匹配。' }, { status: 400 });
+    if (raw.prompt !== undefined && typeof raw.prompt !== 'string') return Response.json({ error: '音乐描述必须是字符串。' }, { status: 400 });
     const options = parseCangyuanMusicOptions(raw.options);
     const modelId = String(raw.modelId || '').trim();
-    const prompt = String(raw.prompt || '').trim();
-    if (!modelId || !prompt) return Response.json({ error: '必须选择模型并填写音乐描述。' }, { status: 400 });
+    const prompt = typeof raw.prompt === 'string' ? raw.prompt.trim() : undefined;
+    if (!modelId) return Response.json({ error: '必须选择音乐模型。' }, { status: 400 });
     const idempotencyKey = request.headers.get('Idempotency-Key')?.trim();
     if (!idempotencyKey) return Response.json({ error: '缺少 Idempotency-Key，请为每次新生成创建唯一请求标识。' }, { status: 400 });
     const task = await createCangyuanCreativeGeneration({
       kind: 'music',
       modelId,
       input: {
-        prompt,
+        ...(prompt !== undefined ? { prompt } : {}),
         ...options,
       },
       idempotencyKey,

@@ -56,3 +56,16 @@ test('capability filtering matches the executable image-model gate', () => {
   const visible = availability.filterModelsByActiveProviders(imageModels, providers, { kind: 'image', capability: 'generate' });
   assert.deepEqual(visible.map((model) => model.id), ['ready-image']);
 });
+
+test('speech capability includes models from every active provider', () => {
+  const speechModels = [
+    { id: 'provider-a-tts', providerId: 'legacy', enabled: true, published: true, capabilities: ['speech'] },
+    { id: 'provider-b-tts', providerId: 'enabled', enabled: true, published: true, capabilities: ['speech'] },
+    { id: 'hidden-provider-tts', providerId: 'hidden', enabled: true, published: true, capabilities: ['speech'] },
+    { id: 'disabled-tts', providerId: 'enabled', enabled: false, published: true, capabilities: ['speech'] },
+    { id: 'draft-tts', providerId: 'enabled', enabled: true, published: false, capabilities: ['speech'] },
+  ];
+
+  const visible = availability.filterModelsByActiveProviders(speechModels, providers, { capability: 'speech' });
+  assert.deepEqual(visible.map((model) => model.id), ['provider-a-tts', 'provider-b-tts']);
+});

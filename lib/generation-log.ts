@@ -27,6 +27,11 @@ export type GenerationLog = {
   modelName?: string;
   /** Voice requested by synchronous speech synthesis. */
   voice?: string;
+  format?: string;
+  outputFormat?: string;
+  speed?: number;
+  tier?: string;
+  series?: string;
   providerName?: string;
   resolution?: string;
   aspectRatio?: string;
@@ -37,6 +42,14 @@ export type GenerationLog = {
   storageDurationMs?: number;
   imageCount?: number;
   imageUrls?: string[];
+  audioUrl?: string;
+  /** Text returned by synchronous speech recognition. */
+  textResult?: string;
+  transcriptionSegments?: Array<{ start: number; end: number; text: string }>;
+  sourceAudioName?: string;
+  transcriptionLanguage?: string;
+  transcriptionResponseFormat?: string;
+  temperature?: number;
   storagePath?: string;
   storageError?: string;
   error?: string;
@@ -180,7 +193,7 @@ export async function listGenerationLogs(limit = 200): Promise<GenerationLog[]> 
 }
 
 function normalizeCompletedMediaLog(log: GenerationLog): GenerationLog {
-  const outputUrls = [...(log.imageUrls || []), ...(log.videoUrls || [])];
+  const outputUrls = [...(log.imageUrls || []), ...(log.videoUrls || []), ...(log.audioUrl ? [log.audioUrl] : [])];
   if (log.mode !== 'llm' && log.taskKind !== 'llm' && projectResultStatus(log.status, outputUrls) === 'success' && log.status !== 'success') {
     return { ...log, status: 'success', error: undefined };
   }
@@ -202,7 +215,7 @@ export async function findGenerationLog(taskId: string): Promise<GenerationLog |
   // exists.
   const mediaMatches = matches.filter((log) => log.mode !== 'llm' && log.taskKind !== 'llm');
   const candidates = mediaMatches.length ? mediaMatches : matches;
-  return candidates.find((log) => log.status === 'success' && (log.imageUrls?.length || log.videoUrls?.length))
+  return candidates.find((log) => log.status === 'success' && (log.imageUrls?.length || log.videoUrls?.length || log.audioUrl))
     || candidates.find((log) => log.status === 'pending')
     || candidates.find((log) => log.status === 'error')
     || matches[0];

@@ -12,6 +12,7 @@ const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
 globalThis.__providerTestSharp = sharp;
 const signedCompiled = ts.transpileModule(signedSource
+  .replace("import { isSvgImageBytes } from './svg-image';", 'const isSvgImageBytes = () => false;')
   .replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerTestSharp;')
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredVideoFileWithFallback \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFileWithFallback = () => null;\n')
@@ -172,12 +173,11 @@ test('Cangyuan Seedance Fast maps only its documented video fields', async () =>
     videoTransport: 'cangyuan-videos',
     videoBaseUrl: 'https://api.cangyuan.example/v1',
     videoGenerationPath: undefined,
-  }), 'doubao-seedance-2-0-fast-260128', {
+  }), 'sd20-seedance-2.0-fast', {
     prompt: 'slow camera move through a garden',
     seconds: 8,
     aspectRatio: '4:3',
-    resolution: '1080p',
-    seed: 7,
+    resolution: '720p',
     referenceImages: ['https://assets.example/reference.png'],
     referenceVideos: ['https://assets.example/reference.mp4'],
     audios: ['https://assets.example/reference.wav'],
@@ -185,12 +185,11 @@ test('Cangyuan Seedance Fast maps only its documented video fields', async () =>
 
   assert.equal(request.url, 'https://api.cangyuan.example/v1/videos');
   assert.deepEqual(JSON.parse(request.init.body), {
-    model: 'doubao-seedance-2-0-fast-260128',
+    model: 'sd20-seedance-2.0-fast',
     prompt: 'slow camera move through a garden',
     duration: 8,
     aspect_ratio: '4:3',
-    resolution: '1080p',
-    seed: '7',
+    resolution: '720p',
     reference_image_urls: ['https://assets.example/reference.png'],
     reference_videos: ['https://assets.example/reference.mp4'],
     reference_audios: ['https://assets.example/reference.wav'],
@@ -225,6 +224,8 @@ test('Cangyuan video polling also accepts the documented video_url result field'
   globalThis.fetch = async () => new Response(JSON.stringify({
     task_id: 'cangyuan-task-3',
     status: 'completed',
+    progress: 100,
+    usage: { completion_tokens: 121, total_tokens: 128 },
     video_url: 'https://cdn.example/cangyuan-video-url.mp4',
   }), { status: 200, headers: { 'content-type': 'application/json' } });
   const result = await video.pollRemoteVideo(provider({
@@ -236,6 +237,8 @@ test('Cangyuan video polling also accepts the documented video_url result field'
 
   assert.equal(result.status, 'done');
   assert.deepEqual(result.videos, [{ url: 'https://cdn.example/cangyuan-video-url.mp4' }]);
+  assert.equal(result.progress, 100);
+  assert.deepEqual(result.usage, { completionTokens: 121, totalTokens: 128 });
 });
 
 test('Cangyuan queued responses do not treat echoed reference media as generated videos', async () => {

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createTsRequire } from "./ts-require.mjs";
 
-function createGenerateRoute(task) {
+function createGenerateRoute(task, onGenerate = () => {}) {
   const modules = {
     "@/lib/auth": { isTrustedAppRequest: () => true },
-    "@/apps/worker/task-entry": { runVideoGeneration: async () => task },
+    "@/apps/worker/task-entry": { runVideoGeneration: async (options) => { onGenerate(options); return task; } },
     "@/lib/generation-source": { normalizeGenerationSource: (source, fallback) => source || fallback },
     "@/lib/runtime-operation": {
       beginRuntimeRequest: async () => async () => {},
@@ -15,11 +15,11 @@ function createGenerateRoute(task) {
   return createTsRequire(process.cwd(), modules)("./app/api/video/generate/route");
 }
 
-function generateRequest() {
+function generateRequest(input = { prompt: "a test video" }) {
   return new Request("http://localhost:3210/api/video/generate", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ input: { prompt: "a test video" } }),
+    body: JSON.stringify({ input }),
   });
 }
 
@@ -49,4 +49,29 @@ test("video generate route still acknowledges a submitted task", async () => {
 
   assert.equal(response.status, 202);
   assert.deepEqual(await response.json(), { ok: true, task });
+});
+
+test("video generate route preserves the native audio boolean for the worker", async () => {
+  const task = { id: "video-task-pending", status: "pending" };
+  let received;
+  const { POST } = createGenerateRoute(task, (options) => { received = options.input; });
+
+  const response = await POST(generateRequest({ prompt: "a test video", generate_audio: false }));
+
+  assert.equal(response.status, 202);
+  assert.equal(received.generateAudio, false);
+});
+
+test("video generate route parses and preserves model-specific parameter values", async () => {
+  const task = { id: "video-task-pending", status: "pending" };
+  let received;
+  const { POST } = createGenerateRoute(task, (options) => { received = options.input; });
+
+  const response = await POST(generateRequest({
+    prompt: "a test video",
+    modelParameters: { camera_movement: "slow orbit", mute_voice: "true" },
+  }));
+
+  assert.equal(response.status, 202);
+  assert.deepEqual(received.modelParameters, { camera_movement: "slow orbit", mute_voice: "true" });
 });
