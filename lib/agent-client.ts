@@ -9,6 +9,7 @@ import type { WorkspaceContext } from "./workspace-context";
 import type { CanvasDocument } from "./canvas/types";
 import type { CanvasPatch } from "./canvas/patch";
 import type { CanvasAgentTarget } from "./canvas/run-context";
+import type { AudioTranscriptionModelSelection } from "@/packages/contracts/audio-transcription";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
@@ -32,6 +33,7 @@ export type AgentClientMessage = {
   /** New structured references; string[] remains accepted for old sessions. */
   references?: CreativeReference[] | string[];
   files?: AgentClientFile[];
+  audioTranscriptionModelId?: string;
 };
 
 export type AgentRequestPayload = {
@@ -46,6 +48,8 @@ export type AgentRequestPayload = {
   model?: string;
   /** Explicit creative/image model. `auto` keeps the server's capability-aware fallback policy. */
   imageModelId?: string;
+  /** Explicit ASR choice for audio subtitle generation in chat. */
+  audioTranscription?: AudioTranscriptionModelSelection;
   task?: string;
   durationSeconds?: number;
   webMode?: "off" | "auto" | "always";

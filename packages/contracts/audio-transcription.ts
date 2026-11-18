@@ -6,6 +6,10 @@ export const AUDIO_TRANSCRIPTION_RESPONSE_FORMATS = Object.freeze([
 
 export type AudioTranscriptionResponseFormat = typeof AUDIO_TRANSCRIPTION_RESPONSE_FORMATS[number];
 
+export type AudioTranscriptionModelSelection = {
+  modelId: string;
+};
+
 export type AudioTranscriptionRequest = {
   modelId: string;
   file: { name: string; mimeType: string; bytes: Uint8Array };

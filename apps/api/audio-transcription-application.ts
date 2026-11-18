@@ -1,5 +1,5 @@
 import type { LocalTranscriptionResult } from '@/packages/contracts/transcription';
-import type { AudioTranscriptionRequest, AudioTranscriptionResult } from '@/packages/contracts/audio-transcription';
+import type { AudioTranscriptionModelSelection, AudioTranscriptionRequest, AudioTranscriptionResult } from '@/packages/contracts/audio-transcription';
 
 export const AUDIO_TRANSCRIPTION_MAX_BYTES = 50 * 1024 * 1024;
 
@@ -112,7 +112,10 @@ export async function transcribeUploadedAudio(
 export type AudioTranscriptionInput = {
   audio: { artifactId: string; name: string; mimeType: string; size?: number };
   referenceText?: string;
+  modelSelection?: AudioTranscriptionModelSelection;
 };
+
+export type AudioTranscriptionEngine = 'local' | 'cloud' | 'cloud-with-local-timing';
 
 export type AudioTranscriptionOutputFile = {
   name: string;
@@ -129,7 +132,7 @@ export type AudioTranscriptionPorts = {
     signal?: AbortSignal;
     onProgress?: (stage: 'loading-model' | 'transcribing') => void;
   }) => Promise<LocalTranscriptionResult>;
-  getCloudTranscriber?: () => Promise<((input: {
+  getCloudTranscriber?: (selection?: AudioTranscriptionModelSelection) => Promise<((input: {
     artifactId: string;
     referenceText?: string;
     signal?: AbortSignal;
@@ -161,18 +164,22 @@ function hasTimedSegments(result: LocalTranscriptionResult) {
 }
 
 async function transcribeWithConfiguredProvider(
-  input: { artifactId: string; referenceText?: string },
+  input: { artifactId: string; referenceText?: string; modelSelection?: AudioTranscriptionModelSelection },
   ports: AudioTranscriptionPorts,
   signal?: AbortSignal,
   onProgress?: (stage: 'loading-model' | 'transcribing') => void,
 ) {
   const localInput = { ...input, ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) };
+  const transcribeLocally = async () => ({
+    transcript: await ports.transcribeAudio(localInput),
+    engine: 'local' as const,
+  });
   let cloudTranscriber: Awaited<ReturnType<NonNullable<AudioTranscriptionPorts['getCloudTranscriber']>>> = null;
-  try { cloudTranscriber = await ports.getCloudTranscriber?.() || null; } catch (error) {
+  try { cloudTranscriber = await ports.getCloudTranscriber?.(input.modelSelection) || null; } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
   }
   if (signal?.aborted) throw signal.reason || new Error('Transcription cancelled');
-  if (!cloudTranscriber) return ports.transcribeAudio(localInput);
+  if (!cloudTranscriber) return transcribeLocally();
 
   let cloud: LocalTranscriptionResult;
   try {
@@ -180,15 +187,17 @@ async function transcribeWithConfiguredProvider(
     cloud = await cloudTranscriber(localInput);
   } catch (error) {
     if (signal?.aborted) throw signal.reason || error;
-    return ports.transcribeAudio(localInput);
+    return transcribeLocally();
   }
-  if (hasTimedSegments(cloud)) return ports.applyReferenceText?.(cloud, input.referenceText) || cloud;
-  if (!cloud.text.trim()) return ports.transcribeAudio(localInput);
+  if (hasTimedSegments(cloud)) return { transcript: ports.applyReferenceText?.(cloud, input.referenceText) || cloud, engine: 'cloud' as const };
+  if (!cloud.text.trim()) return transcribeLocally();
 
   const localTiming = await ports.transcribeAudio(localInput);
   if (signal?.aborted) throw signal.reason || new Error('Transcription cancelled');
   const aligned = ports.alignCloudTranscript?.(cloud, localTiming, input.referenceText);
-  return aligned && hasTimedSegments(aligned) ? aligned : localTiming;
+  return aligned && hasTimedSegments(aligned)
+    ? { transcript: aligned, engine: 'cloud-with-local-timing' as const }
+    : { transcript: localTiming, engine: 'local' as const };
 }
 
 function subtitleName(audioName: string) {
@@ -204,11 +213,12 @@ export async function generateAudioSubtitle(
   signal?: AbortSignal,
 ) {
   if (!input.audio.artifactId.trim()) throw new Error('Audio attachment is missing or expired. Upload it again.');
-  const result = await transcribeWithConfiguredProvider({
+  const { transcript, engine } = await transcribeWithConfiguredProvider({
     artifactId: input.audio.artifactId,
     ...(input.referenceText?.trim() ? { referenceText: input.referenceText.trim().slice(0, 12_000) } : {}),
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
   }, ports, signal, onProgress);
-  const srt = ports.formatSrt(result.segments);
+  const srt = ports.formatSrt(transcript.segments);
   if (!srt) throw new Error('No usable speech segments were recognized in the audio.');
   const saved = await ports.saveSubtitle({
     name: subtitleName(input.audio.name),
@@ -216,7 +226,8 @@ export async function generateAudioSubtitle(
     data: new TextEncoder().encode(srt),
   });
   return {
-    transcript: result,
+    transcript,
+    engine,
     file: {
       name: saved.name,
       mimeType: saved.mimeType,

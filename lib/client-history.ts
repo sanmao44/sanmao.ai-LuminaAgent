@@ -97,6 +97,8 @@ export type ChatHistoryMessage = {
   followUp?: ChatFollowUp;
   webSearch?: WebSearchMeta;
   webSearchDecision?: WebSearchDecisionMeta;
+  /** Transient per-task ASR preference retained so retry can repeat the same subtitle engine. */
+  audioTranscriptionModelId?: string;
 };
 
 export type ChatSession = {

@@ -1,6 +1,6 @@
 import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 import { correctTranscriptWithReference, projectReferencePunctuation } from './reference-script-correction';
-import { groupTranscriptWords } from './local-whisper';
+import { groupTranscriptWords, repairUnsafeTranscriptSegments, restoreReferenceDecimalSeparators } from './local-whisper';
 
 type TimedPoint = { value: string; start: number; end: number };
 type TextPoint = { value: string; character: string; offset: number };
@@ -199,11 +199,23 @@ export function applyReferenceTextToTranscript(
   referenceText?: string,
 ): LocalTranscriptionResult {
   const corrected = correctTranscriptWithReference(transcript, referenceText);
-  const punctuatedWords = projectReferencePunctuation(corrected.words, referenceText);
-  if (punctuatedWords === corrected.words) return corrected;
+  if (!referenceText?.trim()) return corrected;
+  const timedWords = corrected.words.length
+    ? corrected.words
+    : corrected.segments.flatMap((segment) => segment.words || []);
+  const punctuatedWords = projectReferencePunctuation(timedWords, referenceText);
+  if (punctuatedWords.length) {
+    const segments = groupTranscriptWords(punctuatedWords, 5, referenceText);
+    return {
+      ...corrected,
+      words: [...punctuatedWords],
+      segments,
+    };
+  }
+  const segments = repairUnsafeTranscriptSegments(corrected.segments, referenceText);
   return {
     ...corrected,
-    words: [...punctuatedWords],
-    segments: groupTranscriptWords(punctuatedWords),
+    text: restoreReferenceDecimalSeparators(corrected.text, referenceText),
+    segments,
   };
 }

@@ -54,6 +54,7 @@ import { applicationJson as createApplicationJson } from '@/apps/api/agent-appli
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
+import type { AudioTranscriptionModelSelection } from '@/packages/contracts/audio-transcription';
 import { classifyDesktopInstruction, desktopCompletionGap as evaluateDesktopCompletion, desktopInputMatchesRequestedText, isDesktopAppLaunchTool, isDesktopObservationTool, isDesktopScreenshotTool, isDesktopTextInputTool, isDesktopTypingTool, normalizeDesktopToolName, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
@@ -115,7 +116,7 @@ type ClientFile = {
   artifactId?: string;
   downloadUrl?: string;
 };
-type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: ClientFile[] };
+type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: ClientFile[]; audioTranscriptionModelId?: string };
 type GeneratedFile = {
   name: string;
   mimeType: string;
@@ -348,7 +349,7 @@ function videoDownloadSessionConsentQuestion(url: string, status: string, error:
 
 import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
 import { applicationStream, type AgentApplicationOutput } from '@/apps/api/agent-application-contract';
-import { generateAudioSubtitle } from '@/apps/api/audio-transcription-application';
+import { generateAudioSubtitle, type AudioTranscriptionEngine } from '@/apps/api/audio-transcription-application';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
   const refs = normalizeCreativeReferences(message.references, 16).map((reference) => (
     reference.kind === 'text' && reference.text
@@ -391,6 +392,7 @@ function isAudioClientFile(file: ClientFile) {
 type AudioSubtitleResult = {
   file: GeneratedFile;
   model: string;
+  engine: AudioTranscriptionEngine;
   segmentCount: number;
   referenceDocumentCount: number;
 };
@@ -400,6 +402,7 @@ async function transcribeAudioAttachment(
   transcription: AgentApplicationInfrastructure['transcription'],
   onProgress: (message: string) => void,
   signal: AbortSignal,
+  modelSelection?: AudioTranscriptionModelSelection,
 ): Promise<AudioSubtitleResult | null> {
   const audio = (message.files || []).find((file) => isAudioClientFile(file) && file.artifactId);
   if (!audio?.artifactId) return null;
@@ -418,6 +421,7 @@ async function transcribeAudioAttachment(
   const result = await generateAudioSubtitle({
     audio: { artifactId: audio.artifactId, name: audio.name, mimeType: audio.mimeType || 'audio/mpeg', ...(audio.size ? { size: audio.size } : {}) },
     ...(referenceText ? { referenceText } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
   }, {
     getCloudTranscriber: transcription.getCloudTranscriber,
     alignCloudTranscript: transcription.alignCloudTranscript,
@@ -453,6 +457,7 @@ async function transcribeAudioAttachment(
   return {
     file: descriptor,
     model: result.transcript.model,
+    engine: result.engine,
     segmentCount: result.transcript.segments.length,
     referenceDocumentCount,
   };
@@ -560,6 +565,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       .map((m: any) => ({
         role: m.role,
         content: m.content,
+        ...(typeof m.audioTranscriptionModelId === 'string' && m.audioTranscriptionModelId.trim()
+          ? { audioTranscriptionModelId: m.audioTranscriptionModelId.trim().slice(0, 240) }
+          : {}),
         references: normalizeCreativeReferences(m.references, 16),
         // inline 文本文件继续带 content；Office/ZIP artifact 只保留元数据与 id。
         files: Array.isArray(m.files)
@@ -577,19 +585,42 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const latestMessage = latestUser(messages);
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
+      const messageSelection = typeof latestMessage.audioTranscriptionModelId === 'string' && latestMessage.audioTranscriptionModelId.trim()
+        ? { modelId: latestMessage.audioTranscriptionModelId.trim() }
+        : undefined;
+      const hasSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription') || Boolean(messageSelection);
+      const audioTranscription = body.audioTranscription;
+      let modelSelection: AudioTranscriptionModelSelection | undefined = messageSelection;
+      if (hasSelection) {
+        const modelId = Object.prototype.hasOwnProperty.call(body, 'audioTranscription')
+          ? audioTranscription && typeof audioTranscription === 'object' && !Array.isArray(audioTranscription)
+            ? (audioTranscription as Record<string, unknown>).modelId
+            : undefined
+          : messageSelection?.modelId;
+        if (typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 240) {
+          return applicationJson({ error: '字幕转写模型选择无效，请重新选择。' }, { status: 400 });
+        }
+        modelSelection = { modelId: modelId.trim() };
+      }
       const audioSubtitle = await transcribeAudioAttachment(
         latestMessage,
         transcriptionInfrastructure,
         (message) => reportProgress({ stage: 'artifact', message }),
         requestController.signal,
+        modelSelection,
       );
       if (audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
           ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；会用其中的专名提示识别，并谨慎校正与参考稿上下文高度匹配的错字，无法确认处保留识别原文。时间戳仍来自音频识别，并非按参考稿逐字强制对齐，字幕建议人工核对。`
           : '未附带参考文档；如需辅助识别专有名词，可同时上传短术语表。';
-        const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}。${referenceNote}`;
+        const sourceLabel = audioSubtitle.engine === 'local'
+          ? '本地 Whisper'
+          : audioSubtitle.engine === 'cloud-with-local-timing'
+            ? '云端识别（本地 Whisper 辅助时间轴）'
+            : '云端识别';
+        const message = `已生成 ${audioSubtitle.file.name}，包含 ${audioSubtitle.segmentCount} 个字幕片段。识别模型：${audioSubtitle.model}；识别来源：${sourceLabel}。${referenceNote}`;
         const files = [audioSubtitle.file];
-        const modelLabel = `本地语音识别 · ${audioSubtitle.model}`;
+        const modelLabel = `${sourceLabel} · ${audioSubtitle.model}`;
         if (wantsStream) {
           const release = releaseRuntimeRequest;
           const response = createAgentStream(null, {

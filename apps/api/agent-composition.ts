@@ -18,6 +18,7 @@ import {
   isValidArtifactId,
   artifactDownloadUrl,
   artifactStore,
+  readArtifactBytes,
 } from '@/lib/artifacts';
 import { transcribeLocalAudioFile, formatSrt } from '@/lib/transcription/local-whisper';
 import { transcribeMoarkAudioFile } from '@/lib/transcription/moark-asr';
@@ -59,6 +60,8 @@ import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import path from 'node:path';
+import type { AudioTranscriptionModelSelection } from '@/packages/contracts/audio-transcription';
+import { transcribeWithSelectedModel } from './audio-transcription-composition';
 import { BufferedRuntimeObserver, CompositeRuntimeObserver, type RuntimeObserver } from '@/packages/contracts/observability';
 import type { SkillCapabilityPorts } from '@/packages/contracts/skill';
 import { FileRuntimeObserver } from '@/packages/observability/index';
@@ -142,7 +145,7 @@ export type AgentApplicationInfrastructure = {
     readArtifact: typeof artifactStore.read;
     saveArtifact: typeof artifactStore.save;
     transcribeAudioFile: typeof transcribeLocalAudioFile;
-    getCloudTranscriber: () => Promise<((input: {
+    getCloudTranscriber: (selection?: AudioTranscriptionModelSelection) => Promise<((input: {
       artifactId: string;
       referenceText?: string;
       signal?: AbortSignal;
@@ -249,7 +252,39 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
       readArtifact: artifactStore.read,
       saveArtifact: artifactStore.save,
       transcribeAudioFile: transcribeLocalAudioFile,
-      getCloudTranscriber: async () => {
+      getCloudTranscriber: async (selection) => {
+        if (selection?.modelId) {
+          const modelId = selection.modelId.trim();
+          if (!modelId || modelId.length > 240) throw new Error('所选转写模型无效，请重新选择。');
+          const candidates = await getRuntimeModelCandidates(modelId, 'audio');
+          const runtime = candidates.find((candidate) => candidate.model.id === modelId && candidate.model.capabilities.includes('transcription'));
+          if (!runtime) throw new Error('所选模型不可用或不支持音频转写，请在模型库检查其分类和能力。');
+          if (runtime.provider.type !== 'openai-compatible') throw new Error('所选语音模型使用的接口协议尚未接入，请选择兼容语音转写接口的模型。');
+          return async ({ artifactId, referenceText, signal, onProgress }) => {
+            const stored = await artifactStore.read(artifactId);
+            if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
+            onProgress?.('transcribing');
+            const result = await transcribeWithSelectedModel({
+              modelId,
+              file: {
+                name: stored.descriptor.name || path.basename(stored.filePath),
+                mimeType: stored.descriptor.mimeType || 'audio/mpeg',
+                bytes: await readArtifactBytes(stored),
+              },
+              language: String(process.env.SANMAO_ASR_LANGUAGE || '').trim() || 'zh',
+              ...(referenceText ? { prompt: referenceText.slice(0, 12_000) } : {}),
+              responseFormat: 'verbose_json',
+              temperature: 0,
+            }, signal);
+            return {
+              text: result.text,
+              segments: result.segments || [],
+              words: [],
+              model: result.modelName,
+              ...(result.language ? { language: result.language } : {}),
+            };
+          };
+        }
         const provider = await getRuntimeMoarkAudioProvider();
         if (!provider) return null;
         return async ({ artifactId, referenceText, signal, onProgress }) => {

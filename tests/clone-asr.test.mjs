@@ -52,6 +52,7 @@ async function materializeModuleGraph(entry, outputRoot) {
 const moduleRoot = await mkdtemp(path.join(repoRoot, 'tests', '.clone-asr-'));
 const asrModule = await import(await materializeModuleGraph(path.join(repoRoot, 'lib', 'clone', 'asr.ts'), path.join(moduleRoot, 'modules')));
 const transcriptionModule = await import(await materializeModuleGraph(path.join(repoRoot, 'lib', 'transcription', 'local-whisper.ts'), path.join(moduleRoot, 'modules')));
+const alignmentModule = await import(await materializeModuleGraph(path.join(repoRoot, 'lib', 'transcription', 'transcript-timing-alignment.ts'), path.join(moduleRoot, 'modules')));
 
 test('Clone ASR normalizes word timestamps, drops zero-length chunks and clips to the audio duration', () => {
   const normalized = asrModule.normalizeLocalAsrResult({
@@ -369,6 +370,183 @@ test('decimal values split across ASR chunks remain intact inside one subtitle c
     ],
   }, 2, 'test-model', 'zh');
   assert.deepEqual(sentenceBoundary.segments.map((segment) => segment.text), ['产品。', '2倍']);
+});
+
+test('reference-matched short-gap boundaries keep Chinese words and continuous numbers together', () => {
+  const reference = '方案持续深化协作同时在应急事件识别分析时长小于3分钟时完成处理处理时长由8.6小时降至5小时以内';
+  const cases = [
+    { left: '方案持续深', right: '化协作同时', word: '深化' },
+    { left: '应急事件识别分析时', right: '长小于3分钟时完成处理', word: '时长' },
+    { left: '处理时长由8', right: '6小时降至5小时以内', word: '8.6小时', expected: '处理时长由8.6小时降至5小时以内' },
+  ];
+
+  for (const item of cases) {
+    const normalized = transcriptionModule.normalizeLocalAsrResult({
+      text: `${item.left}${item.right}`,
+      chunks: [
+        { text: item.left, timestamp: [0, 4.8] },
+        { text: item.right, timestamp: [4.8, 6.2] },
+      ],
+    }, 6.2, 'test-model', 'zh', reference);
+
+    assert.ok(normalized.segments.some((segment) => segment.text.includes(item.word)), `${item.word}: ${JSON.stringify(normalized.segments)}`);
+    assert.equal(normalized.segments.map((segment) => segment.text).join(''), item.expected || `${item.left}${item.right}`);
+    if (item.expected) assert.equal(normalized.text, item.expected);
+    assert.deepEqual(normalized.words.map(({ start, end }) => ({ start, end })), [
+      { start: 0, end: 4.8 },
+      { start: 4.8, end: 6.2 },
+    ]);
+  }
+
+  const unmatched = transcriptionModule.normalizeLocalAsrResult({
+    text: '方案持续深化协作',
+    chunks: [
+      { text: '方案持续深', timestamp: [0, 4.8] },
+      { text: '化协作', timestamp: [4.8, 6.2] },
+    ],
+  }, 6.2, 'test-model', 'zh');
+  assert.equal(unmatched.segments.length, 2);
+
+  const paused = transcriptionModule.normalizeLocalAsrResult({
+    text: '方案持续深化协作',
+    chunks: [
+      { text: '方案持续深', timestamp: [0, 4.8] },
+      { text: '化协作', timestamp: [5.3, 6.2] },
+    ],
+  }, 6.2, 'test-model', 'zh', reference);
+  assert.equal(paused.segments.length, 2);
+
+  const punctuatedReference = transcriptionModule.normalizeLocalAsrResult({
+    text: '方案持续深化协作',
+    chunks: [
+      { text: '方案持续深', timestamp: [0, 4.8] },
+      { text: '化协作', timestamp: [4.8, 6.2] },
+    ],
+  }, 6.2, 'test-model', 'zh', '方案持续深，化协作');
+  assert.equal(punctuatedReference.segments.length, 2);
+});
+
+test('reference-matched decimal digits stay together when duration forces a cue boundary', () => {
+  const reference = '试点范围内覆盖问题处理时长由8.6小时降至5小时以内';
+  const segments = transcriptionModule.groupTranscriptWords([
+    { start: 114.031, end: 119.533, text: '试点范围内覆盖问题处理时长由8' },
+    { start: 119.533, end: 122.91, text: '6小时降至5小时以内' },
+  ], 5, reference);
+
+  assert.deepEqual(segments.map((segment) => segment.text), [
+    '试点范围内覆盖问题处理时长由8.6',
+    '小时降至5小时以内',
+  ]);
+  assert.equal(segments[0].end, segments[1].start);
+  assert.equal(segments.map((segment) => segment.text).join(''), reference);
+  assert.ok(segments[0].end > 119.533);
+  assert.ok(segments[0].words?.some((word) => word.text === '.6'));
+
+  const withoutReference = transcriptionModule.groupTranscriptWords([
+    { start: 0, end: 5.1, text: '版本由8' },
+    { start: 5.1, end: 6.4, text: '6小时支持' },
+  ], 5);
+  assert.deepEqual(withoutReference.map((segment) => segment.text), ['版本由8', '6小时支持']);
+});
+
+test('reference correction shifts only split words in cloud cues and preserves outer timings', () => {
+  const text = '灾害场景下可实现应急事件识别分析时长小于3分钟';
+  const result = alignmentModule.applyReferenceTextToTranscript({
+    text,
+    segments: [
+      { start: 83.74, end: 88.233, text: '灾害场景下可实现应急事件识别分析时' },
+      { start: 88.233, end: 92.72, text: '长小于3分钟' },
+    ],
+    words: [],
+    model: 'cloud-model',
+  }, text);
+
+  assert.equal(result.segments.length, 2);
+  assert.equal(result.segments[0].text, '灾害场景下可实现应急事件识别分析');
+  assert.equal(result.segments[1].text, '时长小于3分钟');
+  assert.equal(result.segments[0].start, 83.74);
+  assert.equal(result.segments[0].end, result.segments[1].start);
+  assert.equal(result.segments[1].end, 92.72);
+  assert.equal(result.segments.map((segment) => segment.text).join(''), text);
+  assert.equal(result.text, text);
+
+  const collaboration = alignmentModule.applyReferenceTextToTranscript({
+    text: '中国移动与中兴通讯持续深化协作',
+    segments: [
+      { start: 31.42, end: 35.928, text: '中国移动与中兴通讯持续深' },
+      { start: 35.928, end: 37.5, text: '化协作' },
+    ],
+    words: [],
+    model: 'cloud-model',
+  }, '中国移动与中兴通讯持续深化协作');
+  assert.equal(collaboration.segments.map((segment) => segment.text).join(''), '中国移动与中兴通讯持续深化协作');
+  assert.equal(collaboration.segments[0].text, '中国移动与中兴通讯持续');
+  assert.equal(collaboration.segments[1].text, '深化协作');
+  assert.ok(collaboration.segments.every((segment) => Array.from(segment.text).length <= 20));
+
+  const paused = alignmentModule.applyReferenceTextToTranscript({
+    text,
+    segments: [
+      { start: 83.74, end: 88.233, text: '灾害场景下可实现应急事件识别分析时' },
+      { start: 88.733, end: 92.72, text: '长小于3分钟' },
+    ],
+    words: [],
+    model: 'cloud-model',
+  }, text);
+  assert.equal(paused.segments[0].end, 88.233);
+  assert.equal(paused.segments[1].start, 88.733);
+
+  const numeric = alignmentModule.applyReferenceTextToTranscript({
+    text: '试点范围内覆盖问题处理时长由86小时降至5小时以内',
+    segments: [
+      { start: 114.031, end: 115.833, text: '试点范围内覆盖问题处理时长由8' },
+      { start: 115.833, end: 119.21, text: '6小时降至5小时以内' },
+    ],
+    words: [],
+    model: 'cloud-model',
+  }, '试点范围内覆盖问题处理时长由8.6小时降至5小时以内');
+
+  assert.equal(numeric.segments.length, 2);
+  assert.equal(numeric.segments[0].text, '试点范围内覆盖问题处理时长由8.6');
+  assert.equal(numeric.segments[1].text, '小时降至5小时以内');
+  assert.equal(numeric.segments[0].start, 114.031);
+  assert.equal(numeric.segments[0].end, numeric.segments[1].start);
+  assert.equal(numeric.segments[1].end, 119.21);
+  assert.equal(numeric.segments.map((segment) => segment.text).join(''), '试点范围内覆盖问题处理时长由8.6小时降至5小时以内');
+  assert.ok(numeric.segments.every((segment) => Array.from(segment.text).length <= 20));
+  assert.equal(numeric.text, '试点范围内覆盖问题处理时长由8.6小时降至5小时以内');
+
+  const punctuated = alignmentModule.applyReferenceTextToTranscript({
+    text: '方案持续深化协作',
+    segments: [
+      { start: 0, end: 2, text: '方案持续深' },
+      { start: 2, end: 3, text: '化协作' },
+    ],
+    words: [],
+    model: 'cloud-model',
+  }, '方案持续深，化协作');
+  assert.deepEqual(punctuated.segments.map((segment) => segment.text), ['方案持续深', '化协作']);
+});
+
+test('reference correction keeps word-timed Chinese phrases together across cue boundaries', () => {
+  const prefix = '\u793a\u524d\u6587\u5185\u5bb9'.repeat(4);
+  const reference = `${prefix}\u6301\u7eed\u6df1\u5316\u534f\u4f5c`;
+  const result = transcriptionModule.groupTranscriptWords([
+    { start: 31.42, end: 33.5, text: prefix },
+    { start: 33.5, end: 35.928, text: '\u6301\u7eed\u6df1' },
+    { start: 35.928, end: 37.5, text: '\u5316\u534f\u4f5c' },
+  ], 5, reference);
+
+  assert.deepEqual(result.map((segment) => segment.text), [
+    prefix,
+    '\u6301\u7eed\u6df1\u5316\u534f\u4f5c',
+  ]);
+  assert.equal(result[0].end, 33.5);
+  assert.equal(result[1].start, 33.5);
+  assert.deepEqual(result[1].words.map((word) => ({ start: word.start, end: word.end })), [
+    { start: 33.5, end: 35.928 },
+    { start: 35.928, end: 37.5 },
+  ]);
 });
 
 test('reference-guided correction fixes high-confidence substitutions and keeps ASR timestamps', () => {

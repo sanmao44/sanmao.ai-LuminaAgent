@@ -13,7 +13,7 @@ export type { SpreadsheetInput, SpreadsheetSheetInput, SpreadsheetColumnInput, S
 export type { PresentationInput, PresentationSlideInput, PresentationChartInput } from './powerpoint';
 export type { ArchiveEntryInput } from './archive';
 export type { ArtifactImageInput, ArtifactImage, ArtifactGenerateOptions } from './images';
-export { artifactStore, createArtifactStore } from './storage';
+export { artifactStore, createArtifactStore, readArtifactBytes } from './storage';
 export { buildZipArchive, resolveArchiveFileName } from './archive';
 export { buildWordDocument, markdownToSections, parseMarkdownBlocks, resolveDocumentFileName } from './word';
 export { buildSpreadsheet, resolveSpreadsheetFileName } from './excel';

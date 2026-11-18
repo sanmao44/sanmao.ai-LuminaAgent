@@ -23,3 +23,7 @@ const ports: AudioTranscriptionApplicationPorts = {
 export function transcribeAudio(input: unknown, signal?: AbortSignal) {
   return transcribeUploadedAudio(input, ports, signal);
 }
+
+export function transcribeWithSelectedModel(input: AudioTranscriptionRequest, signal?: AbortSignal) {
+  return ports.transcribe(input, signal);
+}

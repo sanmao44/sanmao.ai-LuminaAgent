@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 async function loadTypeScript(path) {
   const sourceUrl = new URL(path, import.meta.url);
   const source = await readFile(sourceUrl, 'utf8');
+  globalThis.__canvasApiCreativeContract = createTsRequire(process.cwd())('./packages/contracts/creative');
   let compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
@@ -40,8 +42,15 @@ async function loadTypeScript(path) {
     const dependencyDataUrl = `data:text/javascript;base64,${Buffer.from(dependencyCompiled).toString('base64')}`;
     compiled = compiled.replace('from "../video-task-output"', `from "${dependencyDataUrl}"`);
   }
-  compiled = compiled.replace('import { MAX_IMAGE_REFERENCES } from "@/packages/contracts/creative";', 'const MAX_IMAGE_REFERENCES = 16;');
-  return import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+  compiled = compiled.replace(
+    /import \{\s*MAX_IMAGE_REFERENCES,\s*parseImageModelParameters\s*\} from ["']@\/packages\/contracts\/creative["'];/u,
+    'const { MAX_IMAGE_REFERENCES, parseImageModelParameters } = globalThis.__canvasApiCreativeContract;',
+  );
+  try {
+    return await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+  } finally {
+    delete globalThis.__canvasApiCreativeContract;
+  }
 }
 
 const api = await loadTypeScript('../lib/canvas/api.ts');
@@ -170,7 +179,7 @@ test('canvas image generation follows SANMAO response protocol', async () => {
   assert.equal(request.input, '/api/generate');
   assert.deepEqual(JSON.parse(request.options.body), {
     source: 'canvas', imageOperation: 'generate', prompt: '紫色云海', model: 'image-model', count: 2, aspectRatio: '16:9',
-    resolution: '自动', quality: '自动', references: [], referenceImages: [],
+    quality: '自动', references: [], referenceImages: [],
   });
 });
 

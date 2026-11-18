@@ -14,7 +14,7 @@ export function canvasVariantImageRequest(input: {
   references: readonly { url: string; name?: string }[];
 }) {
   const { params } = input;
-  return {
+  const request = {
     taskId: input.taskId,
     imageOperation: canvasImageRequestOperation(params),
     prompt: input.prompt,
@@ -49,6 +49,7 @@ export function canvasVariantImageRequest(input: {
       : {}),
     references: input.references.map((reference) => ({ ...reference })),
   };
+  return Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)) as typeof request;
 }
 
 /** Projects resolved video inputs into the existing canvas video API shape. */

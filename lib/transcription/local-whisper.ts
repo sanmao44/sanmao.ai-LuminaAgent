@@ -48,6 +48,14 @@ const MAX_PROMPT_TOKENS = 64;
 const MAX_REFERENCE_PROMPT_CHARS = 160;
 const MAX_UNSPACED_CUE_CHARS = 20;
 const SOFT_UNSPACED_CUE_CHARS = 24;
+const MAX_REPAIRED_CUE_CHARS = MAX_UNSPACED_CUE_CHARS;
+// Covers known high-risk subtitle seams; word segmentation is only a fallback.
+const PROTECTED_CJK_BOUNDARY_TERMS = new Set([
+  '持续', '深化', '协作', '时长', '小于', '大于', '识别', '分析', '应急', '事件', '处理', '小时', '分钟',
+  '以内', '以上', '降低', '提升', '优化', '改善', '业务', '体验', '应用', '场景', '工作', '效率', '数据',
+  '网络', '设备', '自动', '调度', '保障', '服务', '系统', '能力', '字幕', '语音', '模型', '文档', '参考',
+  '结果', '时间', '平均', '方案', '项目', '支持', '实际', '内容', '专业', '功能', '问题', '范围', '覆盖',
+]);
 const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
 const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
 const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
@@ -292,22 +300,139 @@ function softBoundaryScore(characters: readonly string[], cut: number, targetSiz
   return score;
 }
 
-function chooseUnspacedCut(characters: readonly string[], targetSize: number, allowSoftExpansion: boolean) {
+function isNumericContinuation(leftText: string, rightText: string) {
+  return (
+    /\p{N}$/u.test(leftText)
+    && /^(?:\p{N}|[.,]\p{N})/u.test(rightText)
+  ) || (
+    /\p{N}[.,]$/u.test(leftText)
+    && /^\p{N}/u.test(rightText)
+  );
+}
+
+function hasPunctuationAtBoundary(leftText: string, rightText: string) {
+  return /[，。？！；：,!?;:、”’"']$/u.test(leftText) || /^[，。？！；：,!?;:、“‘"']/u.test(rightText);
+}
+
+function mappedTranscriptionCharacters(text: string) {
+  return Array.from(text).flatMap((character, charIndex) => (
+    Array.from(character.normalize('NFKC').toLowerCase())
+      .filter((normalized) => /[\p{L}\p{N}\p{S}]/u.test(normalized))
+      .map((value) => ({ value, charIndex }))
+  ));
+}
+
+function uniqueReferenceBoundary(leftText: string, rightText: string, referenceText?: string) {
+  if (!referenceText?.trim()) return null;
+  const leftPoints = mappedTranscriptionCharacters(leftText).slice(-5);
+  const rightPoints = mappedTranscriptionCharacters(rightText).slice(0, 5);
+  if (leftPoints.length < 2 || rightPoints.length < 2 || leftPoints.length + rightPoints.length < 5) return null;
+
+  const documentText = referenceText.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/u, '');
+  const referencePoints = mappedTranscriptionCharacters(documentText);
+  const context = [...leftPoints, ...rightPoints].map((point) => point.value);
+  let matchStart = -1;
+  for (let start = 0; start + context.length <= referencePoints.length; start += 1) {
+    if (!context.every((value, offset) => referencePoints[start + offset].value === value)) continue;
+    if (matchStart >= 0) return null;
+    matchStart = start;
+  }
+  if (matchStart < 0) return null;
+
+  const previous = referencePoints[matchStart + leftPoints.length - 1];
+  const following = referencePoints[matchStart + leftPoints.length];
+  const separator = Array.from(documentText).slice(previous.charIndex + 1, following.charIndex).join('');
+  return { leftPoints, rightPoints, context: context.join(''), boundary: leftPoints.length, separator };
+}
+
+function referenceMatchedUnsafeTextMove(leftText: string, rightText: string, referenceText?: string) {
+  const numericContinuation = isNumericContinuation(leftText, rightText);
+  const match = uniqueReferenceBoundary(leftText, rightText, referenceText);
+  if (!match) return null;
+
+  if (numericContinuation) {
+    const sourceHasDecimal = /\p{N}\.$/u.test(leftText) || /^\.\p{N}/u.test(rightText);
+    if (hasPunctuationAtBoundary(leftText, rightText) && !(match.separator === '.' && sourceHasDecimal)) return null;
+    if (match.separator && match.separator !== '.') return null;
+    const number = rightText.match(/^(?:\.\p{N}+|\p{N}+)/u)?.[0];
+    if (!number) return null;
+    const restoreDecimal = /\p{N}$/u.test(leftText)
+      && /^\p{N}/u.test(rightText)
+      && match.separator === '.'
+      ? '.'
+      : '';
+    return { direction: 'right' as const, moveLength: number.length, separator: restoreDecimal };
+  }
+
+  if (hasPunctuationAtBoundary(leftText, rightText)) return null;
+  if (match.separator && /[\p{P}\p{S}]/u.test(match.separator)) return null;
+  for (const term of PROTECTED_CJK_BOUNDARY_TERMS) {
+    let start = match.context.indexOf(term);
+    while (start >= 0) {
+      if (start < match.boundary && start + term.length > match.boundary) {
+        const leftContextStart = match.leftPoints[0].charIndex;
+        const pointOffset = start;
+        const moveStart = match.leftPoints[pointOffset].charIndex;
+        if (moveStart >= leftContextStart && moveStart < leftText.length) return { direction: 'left' as const, moveStart, separator: '' };
+      }
+      start = match.context.indexOf(term, start + 1);
+    }
+  }
+
+  if (typeof Intl.Segmenter !== 'function') return null;
+  const points = [...new Intl.Segmenter('zh-CN', { granularity: 'word' }).segment(match.context)];
+  for (const part of points) {
+    if (!part.isWordLike) continue;
+    const start = Array.from(match.context.slice(0, part.index)).length;
+    const end = start + Array.from(part.segment).length;
+    if (start >= match.boundary || end <= match.boundary) continue;
+    const moveStart = match.leftPoints[start]?.charIndex;
+    if (moveStart !== undefined && moveStart < leftText.length) return { direction: 'left' as const, moveStart, separator: '' };
+  }
+  return null;
+}
+
+function referenceMatchedUnsafeTextBoundary(leftText: string, rightText: string, referenceText?: string) {
+  return referenceMatchedUnsafeTextMove(leftText, rightText, referenceText) !== null;
+}
+
+export function restoreReferenceDecimalSeparators(text: string, referenceText?: string) {
+  if (!referenceText?.trim()) return text;
+  const characters = Array.from(text);
+  for (let index = 1; index < characters.length; index += 1) {
+    if (!/\p{N}/u.test(characters[index - 1]) || !/\p{N}/u.test(characters[index])) continue;
+    const match = referenceMatchedUnsafeTextMove(characters.slice(0, index).join(''), characters.slice(index).join(''), referenceText);
+    if (match?.direction !== 'right' || match.separator !== '.') continue;
+    characters.splice(index, 0, '.');
+    index += 1;
+  }
+  return characters.join('');
+}
+
+function chooseUnspacedCut(characters: readonly string[], targetSize: number, allowSoftExpansion: boolean, referenceText?: string) {
   const lowerBound = Math.max(1, Math.floor(targetSize * 0.65));
   const upperBound = Math.min(characters.length - 1, targetSize + (allowSoftExpansion ? 4 : 0));
   let bestCut = Math.min(targetSize, characters.length - 1);
   let bestScore = softBoundaryScore(characters, bestCut, targetSize);
+  let bestSafeCut = -1;
+  let bestSafeScore = Number.NEGATIVE_INFINITY;
   for (let cut = lowerBound; cut <= upperBound; cut += 1) {
     const score = softBoundaryScore(characters, cut, targetSize);
     if (score > bestScore) {
       bestScore = score;
       bestCut = cut;
     }
+    const left = characters.slice(0, cut).join('');
+    const right = characters.slice(cut).join('');
+    if (!referenceMatchedUnsafeTextBoundary(left, right, referenceText) && score > bestSafeScore) {
+      bestSafeScore = score;
+      bestSafeCut = cut;
+    }
   }
-  return bestCut;
+  return bestSafeCut >= 0 ? bestSafeCut : bestCut;
 }
 
-function splitUnspacedChunk(text: string, start: number, end: number): TimestampedTranscriptWord[] {
+function splitUnspacedChunk(text: string, start: number, end: number, referenceText?: string): TimestampedTranscriptWord[] {
   const characters = Array.from(text);
   const duration = Math.max(0, end - start);
   const pieceCount = Math.min(characters.length, Math.max(
@@ -319,7 +444,7 @@ function splitUnspacedChunk(text: string, start: number, end: number): Timestamp
   let remaining = characters;
   const allowSoftExpansion = duration <= 6;
   while (remaining.length > targetSize) {
-    const cut = chooseUnspacedCut(remaining, targetSize, allowSoftExpansion);
+    const cut = chooseUnspacedCut(remaining, targetSize, allowSoftExpansion, referenceText);
     pieces.push(remaining.slice(0, cut).join(''));
     remaining = remaining.slice(cut);
   }
@@ -373,7 +498,7 @@ function readPcm16Wav(buffer: Buffer) {
   return samples;
 }
 
-function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): TimestampedTranscriptWord[] {
+function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number, referenceText?: string): TimestampedTranscriptWord[] {
   const words: TimestampedTranscriptWord[] = [];
   let lastTextIndex = -1;
   for (let index = 0; index < chunks.length; index += 1) {
@@ -390,7 +515,7 @@ function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): T
     const end = round3(Math.min(Math.max(start, rawEnd), durationSeconds));
     if (end <= start) continue;
     if (isUnspacedScript(text) && (Array.from(text).length > MAX_UNSPACED_CUE_CHARS || end - start > 5)) {
-      words.push(...splitUnspacedChunk(text, start, end));
+      words.push(...splitUnspacedChunk(text, start, end, referenceText));
     } else {
       words.push({ start, end, text });
     }
@@ -441,7 +566,7 @@ function needsWordSpace(previous: string, next: string) {
 }
 
 /** Group timestamped ASR words into stable subtitle-sized segments. */
-export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[], maxSegmentSeconds = 5): TimestampedTranscriptSegment[] {
+export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[], maxSegmentSeconds = 5, referenceText?: string): TimestampedTranscriptSegment[] {
   const segments: TimestampedTranscriptSegment[] = [];
   let current: TimestampedTranscriptSegment | null = null;
   for (const word of words) {
@@ -454,22 +579,200 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
     const unspacedTextTooLong = isUnspacedScript(current.text) &&
       isUnspacedScript(word.text) &&
       Array.from(`${current.text}${word.text}`).length > MAX_UNSPACED_CUE_CHARS;
-    if (endsSentence(current.text) || endsSubtitleClause(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
+    const numericContinuation = isNumericContinuation(current.text, word.text);
+    const numericMatch = numericContinuation
+      ? referenceMatchedUnsafeTextMove(current.text, word.text, referenceText)
+      : null;
+    const protectedBoundary = (longEnough || unspacedTextTooLong)
+      && gap <= 0.35
+      && gap >= -0.15
+      && Array.from(`${current.text}${word.text}`).length <= SOFT_UNSPACED_CUE_CHARS
+      && word.end - current.start <= maxSegmentSeconds + 4
+      && referenceMatchedUnsafeTextBoundary(current.text, word.text, referenceText);
+    if ((!numericContinuation && (endsSentence(current.text) || endsSubtitleClause(current.text)))
+      || gap > 1.2
+      || ((longEnough || unspacedTextTooLong) && !protectedBoundary)) {
       segments.push(current);
       current = { start: word.start, end: word.end, text: word.text, words: [word] };
       continue;
     }
     current.end = word.end;
-    current.text = `${current.text}${needsWordSpace(current.text, word.text) ? ' ' : ''}${word.text}`.trim();
+    if (numericMatch?.separator === '.') {
+      current.text += '.';
+      const previousWord = current.words?.at(-1);
+      if (previousWord && !/[.,]$/u.test(previousWord.text)) previousWord.text += '.';
+    }
+    current.text = `${current.text}${numericContinuation ? '' : needsWordSpace(current.text, word.text) ? ' ' : ''}${word.text}`.trim();
     current.words?.push(word);
   }
   if (current) segments.push(current);
-  return segments.map((segment) => ({
+  const grouped = segments.map((segment) => ({
     ...segment,
     start: round3(segment.start),
     end: round3(segment.end),
     text: cleanText(segment.text),
   }));
+  return repairUnsafeTranscriptSegments(grouped, referenceText);
+}
+
+function transcriptWordsText(words: readonly TimestampedTranscriptWord[]) {
+  return words.reduce((text, word) => {
+    const value = cleanText(word.text);
+    const separator = isNumericContinuation(text, value) ? '' : needsWordSpace(text, value) ? ' ' : '';
+    return `${text}${separator}${value}`;
+  }, '').trim();
+}
+
+function splitTimestampedWordPrefix(word: TimestampedTranscriptWord, prefixLength: number) {
+  const characters = Array.from(word.text);
+  const prefix = characters.slice(0, prefixLength).join('');
+  const remainder = characters.slice(prefixLength).join('');
+  if (!prefix || !remainder) return null;
+
+  const weight = (text: string) => Math.max(1, Array.from(text).filter((character) => /[\p{L}\p{N}\p{S}]/u.test(character)).length);
+  const duration = Math.max(0, word.end - word.start);
+  const prefixEnd = round3(word.start + duration * weight(prefix) / weight(word.text));
+  return {
+    prefix: { ...word, end: prefixEnd, text: prefix },
+    remainder: { ...word, start: prefixEnd, text: remainder },
+  };
+}
+
+/** Move only the text needed to keep a reference-confirmed word or number inside one cue. */
+export function repairUnsafeTranscriptSegments(
+  segments: readonly TimestampedTranscriptSegment[],
+  referenceText?: string,
+): TimestampedTranscriptSegment[] {
+  const repaired = segments.map((segment) => ({ ...segment }));
+  for (let index = 0; index + 1 < repaired.length;) {
+    const current = repaired[index];
+    const next = repaired[index + 1];
+    const gap = next.start - current.end;
+    const move = referenceMatchedUnsafeTextMove(current.text, next.text, referenceText);
+    if (!move) {
+      index += 1;
+      continue;
+    }
+    const shouldMove = gap <= 0.35
+      && gap >= -0.15
+      && Array.from(move.direction === 'left' ? next.text + current.text.slice(move.moveStart) : current.text + next.text.slice(0, move.moveLength) + move.separator).length <= MAX_REPAIRED_CUE_CHARS
+      && !endsSentence(current.text)
+      && !endsSubtitleClause(current.text);
+    if (!shouldMove) {
+      index += 1;
+      continue;
+    }
+
+    if (current.words?.length && next.words?.length) {
+      if (move.direction !== 'left') {
+        if (!isNumericContinuation(current.text, next.text)) {
+          index += 1;
+          continue;
+        }
+        const split = splitTimestampedWordPrefix(next.words[0], move.moveLength);
+        if (!split) {
+          index += 1;
+          continue;
+        }
+        const movedWord = { ...split.prefix, text: `${move.separator}${split.prefix.text}` };
+        const nextWords = [
+          ...(split.remainder.text ? [split.remainder] : []),
+          ...next.words.slice(1),
+        ];
+        const currentWords = [...current.words, movedWord];
+        const currentText = `${current.text}${movedWord.text}`;
+        if (!nextWords.length) {
+          repaired[index] = {
+            ...current,
+            end: movedWord.end,
+            text: currentText,
+            words: currentWords,
+          };
+          repaired.splice(index + 1, 1);
+          continue;
+        }
+        repaired[index] = {
+          ...current,
+          end: movedWord.end,
+          text: currentText,
+          words: currentWords,
+        };
+        repaired[index + 1] = {
+          ...next,
+          start: nextWords[0].start,
+          text: transcriptWordsText(nextWords),
+          words: nextWords,
+        };
+        index += 1;
+        continue;
+      }
+      let repairedBoundary = false;
+      for (let count = 1; count < current.words.length; count += 1) {
+        const retainedWords = current.words.slice(0, -count);
+        const movedWords = current.words.slice(-count);
+        const nextWords = [...movedWords, ...next.words];
+        const retainedLast = retainedWords.at(-1)!;
+        const movedFirst = movedWords[0];
+        const wordGap = movedFirst.start - retainedLast.end;
+        if (wordGap > 0.35 || wordGap < -0.15) break;
+        const hasInternalPause = nextWords.some((word, wordIndex) => (
+          wordIndex > 0 && word.start - nextWords[wordIndex - 1].end > 0.35
+        ));
+        if (hasInternalPause) break;
+
+        const retainedText = transcriptWordsText(retainedWords);
+        const nextText = transcriptWordsText(nextWords);
+        if (!retainedText || Array.from(nextText).length > MAX_REPAIRED_CUE_CHARS) break;
+        if (referenceMatchedUnsafeTextMove(retainedText, nextText, referenceText)) continue;
+
+        repaired[index] = {
+          ...current,
+          end: retainedLast.end,
+          text: retainedText,
+          words: [...retainedWords],
+        };
+        repaired[index + 1] = {
+          ...next,
+          start: movedFirst.start,
+          text: nextText,
+          words: nextWords,
+        };
+        repairedBoundary = true;
+        break;
+      }
+      if (repairedBoundary) continue;
+      index += 1;
+      continue;
+    }
+
+    if (current.words?.length || next.words?.length) {
+      index += 1;
+      continue;
+    }
+
+    const textWeight = (value: string) => Math.max(1, Array.from(value).filter((character) => /[\p{L}\p{N}\p{S}]/u.test(character)).length);
+    if (move.direction === 'left') {
+      const characters = Array.from(current.text);
+      const moveText = characters.slice(move.moveStart).join('');
+      const remainingText = characters.slice(0, move.moveStart).join('');
+      const duration = Math.max(0, current.end - current.start);
+      const remainingDuration = duration * textWeight(remainingText) / textWeight(current.text);
+      const boundary = Math.max(current.start, Math.min(current.end, current.start + remainingDuration));
+      repaired[index] = { ...current, end: boundary, text: remainingText };
+      repaired[index + 1] = { ...next, start: boundary, text: `${moveText}${move.separator}${next.text}` };
+    } else {
+      const characters = Array.from(next.text);
+      const moveText = characters.slice(0, move.moveLength).join('');
+      const remainingText = characters.slice(move.moveLength).join('');
+      const duration = Math.max(0, next.end - next.start);
+      const movedDuration = duration * textWeight(moveText) / textWeight(next.text);
+      const boundary = Math.max(next.start, Math.min(next.end, next.start + movedDuration));
+      repaired[index] = { ...current, end: boundary, text: `${current.text}${move.separator}${moveText}` };
+      repaired[index + 1] = { ...next, start: boundary, text: remainingText };
+    }
+    index += 1;
+  }
+  return repaired;
 }
 
 function transcriptionCharacters(value: string) {
@@ -543,20 +846,23 @@ function stitchOverlappingDuplicateSegments(segments: readonly TimestampedTransc
 
 export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string, referenceText?: string): LocalTranscriptionResult {
   const chunks = Array.isArray(raw.chunks) ? raw.chunks as RawChunk[] : [];
-  const words = normalizeWords(chunks, Math.max(0, durationSeconds));
-  const grouped = groupTranscriptWords(words);
+  const words = normalizeWords(chunks, Math.max(0, durationSeconds), referenceText);
+  const grouped = groupTranscriptWords(words, 5, referenceText);
   const stitched = stitchOverlappingDuplicateSegments(grouped);
   const segments = stitched.segments;
   const normalizedWords = segments.flatMap((segment) => segment.words || []);
   const segmentText = segments.map((segment) => segment.text).join(' ');
-  const text = cleanText(stitched.removedDuplicate ? segmentText : raw.text || segmentText);
+  const text = restoreReferenceDecimalSeparators(
+    cleanText(stitched.removedDuplicate ? segmentText : raw.text || segmentText),
+    referenceText,
+  );
   const result = { text, segments, words: normalizedWords, model, ...(language ? { language } : {}) };
   if (!referenceText) return result;
 
   const corrected = correctTranscriptWithReference(result, referenceText);
   const punctuatedWords = projectReferencePunctuation(corrected.words, referenceText);
   if (punctuatedWords === corrected.words) return corrected;
-  const punctuatedSegments = stitchOverlappingDuplicateSegments(groupTranscriptWords(punctuatedWords)).segments;
+  const punctuatedSegments = stitchOverlappingDuplicateSegments(groupTranscriptWords(punctuatedWords, 5, referenceText)).segments;
   const punctuatedText = cleanText(punctuatedWords.reduce((value, word) => (
     `${value}${needsWordSpace(value, word.text) ? ' ' : ''}${word.text}`
   ), ''));

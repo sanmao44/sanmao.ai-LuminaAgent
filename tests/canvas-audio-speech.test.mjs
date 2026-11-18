@@ -16,6 +16,7 @@ const load = createTsRequire(process.cwd(), {
   '@/components/ModelPicker': () => null,
   '@/components/SelectMenu': selectMenu,
   '@/components/canvas/CanvasAudioPlayer': ({ name }) => createElement('span', { 'data-audio-preview': true }, name),
+  '@/components/cangyuan/CangyuanMusicOptionsFields': () => null,
   '@/lib/model-selection': { selectAutomaticModel: (models) => models[0] },
   '@/lib/canvas/media': { formatCanvasAudioDuration: () => '0:00' },
   '@/lib/canvas/layers': { CANVAS_Z_INDEX: { modalPopover: 400, modelDialog: 500 } },

@@ -39,6 +39,11 @@ export type ArtifactStore = {
   cleanup: (options?: { maxAgeMs?: number; maxTotalBytes?: number; protect?: readonly string[] }) => Promise<{ removed: number; removedBytes: number; files: number; bytes: number }>;
 };
 
+/** Read an already resolved artifact through the filesystem adapter. */
+export async function readArtifactBytes(stored: ArtifactStored) {
+  return new Uint8Array(await readFile(stored.filePath));
+}
+
 function monthBucket(at: number) {
   return new Date(at).toISOString().slice(0, 7);
 }

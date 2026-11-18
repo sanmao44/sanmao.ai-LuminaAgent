@@ -111,6 +111,7 @@ function harness(options = {}) {
           },
           transcription: {
             readArtifact: options.readAudioArtifact || (async (id) => ({ descriptor: { id, name: 'interview.mp3', mimeType: 'audio/mpeg' }, filePath: '/tmp/interview.mp3' })),
+            getCloudTranscriber: options.getCloudTranscriber,
             saveArtifact: options.saveSubtitleArtifact || (async (input) => {
               savedSubtitleArtifacts.push(input);
               return { id: 'test-subtitle-artifact', kind: 'file', name: input.name, mimeType: input.mimeType, size: input.data.length, downloadUrl: '/api/artifacts/test-subtitle-artifact', createdAt: Date.now() };
@@ -372,6 +373,9 @@ function harness(options = {}) {
       const data = output.body;
       return data;
     },
+    async postRaw(request) {
+      return application.runAgentApplication({ body: await request.json(), signal: request.signal }, infrastructure);
+    },
   };
 }
 
@@ -412,6 +416,49 @@ test('audio attachments generate a timestamped SRT artifact locally without a ch
   assert.equal(result.files[0].downloadUrl, '/api/artifacts/test-subtitle-artifact');
   assert.match(result.message, /已读取 1 个参考文档；会用其中的专名提示识别/);
   assert.equal(agent.modelCalls.length, 0);
+});
+
+test('chat audio subtitle requests pass the selected ASR model to transcription and report its source', async () => {
+  const selections = [];
+  const agent = harness({
+    noChatModel: true,
+    getCloudTranscriber: async (selection) => {
+      selections.push(selection);
+      return async () => ({
+        text: '云端识别结果',
+        words: [],
+        segments: [{ start: 0, end: 1.5, text: '云端识别结果' }],
+        model: 'Selected ASR',
+      });
+    },
+  });
+  const result = await agent.post([{
+    role: 'user',
+    content: '根据这段配音生成字幕',
+    files: [{ name: 'interview.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact', size: 1024 }],
+  }], {
+    audioTranscription: { modelId: 'selected-asr' },
+  });
+
+  assert.deepEqual(selections, [{ modelId: 'selected-asr' }]);
+  assert.equal(agent.transcriptionCalls.length, 0);
+  assert.match(result.message, /识别模型：Selected ASR；识别来源：云端识别/);
+  assert.match(result.model, /云端识别 · Selected ASR/);
+});
+
+test('chat audio subtitle rejects a malformed explicit ASR model selection', async () => {
+  const agent = harness({ noChatModel: true });
+  const request = new Request('http://localhost/api/agent', {
+    method: 'POST',
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '生成字幕', files: [{ name: 'interview.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact' }] }],
+      audioTranscription: { modelId: { invalid: true } },
+    }),
+  });
+  const output = await agent.postRaw(request);
+  assert.equal(output.status, 400);
+  assert.match(output.body.error, /模型选择无效/);
+  assert.equal(agent.transcriptionCalls.length, 0);
 });
 
 test('cinematic director passes custom requirements to a vision-capable model with an extended deadline', async () => {

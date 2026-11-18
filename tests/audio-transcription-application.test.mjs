@@ -157,6 +157,48 @@ test('audio transcription prefers a configured cloud provider and applies refere
   ]);
 });
 
+test('an explicit cloud model is forwarded and missing cloud timestamps still use local timing', async () => {
+  const calls = [];
+  const localResult = { text: 'local transcript', words: [], segments: [{ start: 1, end: 2, text: 'local transcript' }], model: 'local-whisper' };
+  const result = await application.generateAudioSubtitle({
+    audio: { artifactId: 'audio-id', name: 'voice.mp3', mimeType: 'audio/mpeg' },
+    modelSelection: { modelId: 'selected-asr' },
+  }, {
+    getCloudTranscriber: async (selection) => {
+      calls.push(['resolve', selection]);
+      return async () => ({ text: 'cloud transcript', words: [], segments: [], model: 'selected-asr' });
+    },
+    transcribeAudio: async () => { calls.push(['local']); return localResult; },
+    alignCloudTranscript: () => null,
+    formatSrt,
+    saveSubtitle: async (input) => ({ id: 'subtitle-id', name: input.name, mimeType: input.mimeType, size: input.data.byteLength, downloadUrl: '/api/artifacts/subtitle-id' }),
+  });
+
+  assert.deepEqual(calls, [['resolve', { modelId: 'selected-asr' }], ['local']]);
+  assert.equal(result.transcript.model, 'local-whisper');
+  assert.equal(result.engine, 'local');
+});
+
+test('an explicitly selected cloud model remains identified when it supplies timed text', async () => {
+  let selection;
+  const result = await application.generateAudioSubtitle({
+    audio: { artifactId: 'audio-id', name: 'voice.mp3', mimeType: 'audio/mpeg' },
+    modelSelection: { modelId: 'selected-asr' },
+  }, {
+    getCloudTranscriber: async (value) => {
+      selection = value;
+      return async () => ({ text: 'cloud transcript', words: [], segments: [{ start: 0, end: 1, text: 'cloud transcript' }], model: 'Selected ASR' });
+    },
+    transcribeAudio: async () => { throw new Error('timed cloud result should not run local recognition'); },
+    formatSrt,
+    saveSubtitle: async (input) => ({ id: 'subtitle-id', name: input.name, mimeType: input.mimeType, size: input.data.byteLength, downloadUrl: '/api/artifacts/subtitle-id' }),
+  });
+
+  assert.deepEqual(selection, { modelId: 'selected-asr' });
+  assert.equal(result.transcript.model, 'Selected ASR');
+  assert.equal(result.engine, 'cloud');
+});
+
 test('audio transcription falls back locally when the cloud provider is missing or fails', async () => {
   const results = [];
   const localResult = { text: 'local', words: [], segments: [{ start: 0, end: 1, text: 'local' }], model: 'local-model' };

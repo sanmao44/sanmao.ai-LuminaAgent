@@ -28,6 +28,7 @@ const detectionSource = await readFile(new URL('../lib/native-search-detection.t
 const modelKindSource = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const agnesSource = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
 globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
+globalThis.__agnesTestSharp = sharp;
 const providers = await importTypeScript(providersUrl, [
   detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch'),
   modelKindSource,
@@ -42,12 +43,14 @@ const providers = await importTypeScript(providersUrl, [
     .replace("import { inferModelKind } from './model-kind';", '')
     .replace("import { agnesModelCatalog } from './agnes';", '')
     .replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });")
-    .replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;'),
+    .replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')
+    .replace("import sharp from 'sharp';", 'const sharp = globalThis.__agnesTestSharp;'),
 ].join('\n').replace(signedMediaImport, `Promise.resolve({ preparePublicMediaUrl: async (value, kind) => {
   const signed = await globalThis.__providerTestSignedMedia.preparePublicMediaUrl(value, kind);
   return signed;
 } })`));
 delete globalThis.__providerImageReferenceReaderModule;
+delete globalThis.__agnesTestSharp;
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
