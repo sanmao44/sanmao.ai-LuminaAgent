@@ -7,6 +7,10 @@ import worker from '../relay/cloudflare/src/index.mjs';
 const PNG_1X1 = await sharp({
   create: { width: 1, height: 1, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },
 }).png().toBuffer();
+const MP3_HEADER = Uint8Array.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+const AAC_ADTS_HEADER = Uint8Array.from([0xff, 0xf1, 0x50, 0x80, 0x00, 0x1f, 0xfc]);
+const MP4_HEADER = Uint8Array.from([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]);
+const WEBM_HEADER = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, 0x93, 0x42, 0x82, 0x88]);
 const SIGNING_KEY = 'test-signing-key-with-at-least-32-bytes';
 
 async function collectBody(body) {
@@ -95,6 +99,25 @@ async function rawUploadRequest(bytes = PNG_1X1, contentType = 'image/png') {
   });
 }
 
+async function rawAudioUploadRequest(bytes = MP3_HEADER, contentType = 'audio/mpeg') {
+  return new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: {
+      'cf-connecting-ip': '192.0.2.10',
+      'content-type': contentType,
+    },
+    body: bytes,
+  });
+}
+
+async function rawVideoUploadRequest(bytes = MP4_HEADER, contentType = 'video/mp4') {
+  return new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '192.0.2.10', 'content-type': contentType },
+    body: bytes,
+  });
+}
+
 test('health endpoint reports ready only when storage, limiter, and signing secret exist', async () => {
   const { env } = makeEnvironment();
   const ready = await worker.fetch(new Request('https://relay.example.workers.dev/api/health'), env);
@@ -132,6 +155,122 @@ test('keeps the existing multipart relay contract working', async () => {
   assert.deepEqual([...bucket.objects.values()][0].body, new Uint8Array(PNG_1X1));
 });
 
+test('stores raw audio uploads and serves them through a short-lived signed URL', async () => {
+  const { env, bucket } = makeEnvironment();
+  const uploaded = await worker.fetch(await rawAudioUploadRequest(), env);
+  assert.equal(uploaded.status, 200);
+  const payload = await uploaded.json();
+  assert.equal(payload.ok, true);
+  assert.equal(payload.bytes, MP3_HEADER.length);
+  assert.match(payload.url, /^https:\/\/relay\.example\.workers\.dev\/api\/relay\/media\//);
+  assert.equal(bucket.objects.size, 1);
+
+  const served = await worker.fetch(new Request(payload.url), env);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'audio/mpeg');
+  assert.deepEqual(new Uint8Array(await served.arrayBuffer()), MP3_HEADER);
+});
+
+test('detects ADTS AAC before the broader MPEG frame signature', async () => {
+  const { env, bucket } = makeEnvironment();
+  const uploaded = await worker.fetch(await rawAudioUploadRequest(AAC_ADTS_HEADER, 'audio/aac'), env);
+  assert.equal(uploaded.status, 200);
+  const payload = await uploaded.json();
+  assert.equal(payload.bytes, AAC_ADTS_HEADER.length);
+  assert.equal([...bucket.objects.values()][0].httpMetadata.contentType, 'audio/aac');
+
+  const form = new FormData();
+  form.append('file', new Blob([AAC_ADTS_HEADER], { type: 'audio/aac' }), 'reference.aac');
+  form.append('kind', 'audio');
+  const multipart = await worker.fetch(new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '192.0.2.10' },
+    body: form,
+  }), env);
+  assert.equal(multipart.status, 200);
+});
+
+test('accepts multipart audio and rejects audio with a mismatched declared MIME', async () => {
+  const { env, bucket } = makeEnvironment();
+  const form = new FormData();
+  form.append('file', new Blob([MP3_HEADER], { type: 'audio/mpeg' }), 'reference.mp3');
+  form.append('kind', 'audio');
+  const accepted = await worker.fetch(new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '192.0.2.10' },
+    body: form,
+  }), env);
+  assert.equal(accepted.status, 200);
+
+  const mismatched = await worker.fetch(await rawAudioUploadRequest(MP3_HEADER, 'audio/wav'), env);
+  assert.equal(mismatched.status, 415);
+  assert.equal(bucket.objects.size, 1);
+});
+
+test('stores raw and multipart video references and serves signed videos', async () => {
+  const { env, bucket } = makeEnvironment();
+  const uploaded = await worker.fetch(await rawVideoUploadRequest(), env);
+  assert.equal(uploaded.status, 200);
+  const payload = await uploaded.json();
+  const served = await worker.fetch(new Request(payload.url), env);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'video/mp4');
+  assert.deepEqual(new Uint8Array(await served.arrayBuffer()), MP4_HEADER);
+
+  const form = new FormData();
+  form.append('file', new Blob([WEBM_HEADER], { type: 'video/webm' }), 'reference.webm');
+  form.append('kind', 'video');
+  const multipart = await worker.fetch(new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST', headers: { 'cf-connecting-ip': '192.0.2.10' }, body: form,
+  }), env);
+  assert.equal(multipart.status, 200);
+  assert.equal(bucket.objects.size, 2);
+  assert.equal([...bucket.objects.values()][1].httpMetadata.contentType, 'video/webm');
+});
+
+test('rejects malformed or MIME-mismatched videos before writing to R2', async () => {
+  const { env, bucket } = makeEnvironment();
+  const malformed = await worker.fetch(await rawVideoUploadRequest(Uint8Array.from([1, 2, 3, 4])), env);
+  assert.equal(malformed.status, 415);
+  const mismatch = await worker.fetch(await rawVideoUploadRequest(MP4_HEADER, 'video/webm'), env);
+  assert.equal(mismatch.status, 415);
+  assert.equal(bucket.objects.size, 0);
+});
+
+test('enforces the streaming video limit without relying on Content-Length', async () => {
+  const { env, bucket } = makeEnvironment();
+  const request = new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: { 'cf-connecting-ip': '192.0.2.10', 'content-type': 'video/mp4' },
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(MP4_HEADER);
+        controller.enqueue(new Uint8Array(25 * 1024 * 1024 - MP4_HEADER.byteLength + 1));
+        controller.close();
+      },
+    }),
+    duplex: 'half',
+  });
+  const response = await worker.fetch(request, env);
+  assert.equal(response.status, 413);
+  assert.equal(bucket.objects.size, 0);
+});
+
+test('rejects raw audio over the 25 MiB relay limit before reading it', async () => {
+  const { env, bucket } = makeEnvironment();
+  const response = await worker.fetch(new Request('https://relay.example.workers.dev/api/relay/media', {
+    method: 'POST',
+    headers: {
+      'cf-connecting-ip': '192.0.2.10',
+      'content-type': 'audio/mpeg',
+      'content-length': String(25 * 1024 * 1024 + 1),
+    },
+    body: MP3_HEADER,
+  }), env);
+  assert.equal(response.status, 413);
+  assert.equal(bucket.objects.size, 0);
+});
+
 test('rejects malformed images before writing to R2', async () => {
   const { env, bucket } = makeEnvironment();
   const response = await worker.fetch(await uploadRequest(Uint8Array.from([1, 2, 3, 4])), env);
@@ -146,9 +285,9 @@ test('rejects truncated PNG streams before completing an R2 object', async () =>
   assert.equal(bucket.objects.size, 0);
 });
 
-test('enforces the raw streaming size limit when content length is absent', async () => {
+test('enforces the raw image streaming size limit when content length is absent', async () => {
   const { env, bucket } = makeEnvironment();
-  const bytes = new Uint8Array(4 * 1024 * 1024 + 1);
+  const bytes = new Uint8Array(30 * 1024 * 1024 + 1);
   const request = new Request('https://relay.example.workers.dev/api/relay/media', {
     method: 'POST',
     headers: {
@@ -185,9 +324,9 @@ test('enforces the shared relay per-IP rate limit', async () => {
   assert.equal(bucket.objects.size, 0);
 });
 
-test('rejects oversized multipart bodies even when content length is absent', async () => {
+test('rejects oversized multipart bodies beyond the image upload limit even when content length is absent', async () => {
   const { env, bucket } = makeEnvironment();
-  const body = new Uint8Array(4 * 1024 * 1024 + 128 * 1024 + 1);
+  const body = new Uint8Array(30 * 1024 * 1024 + 128 * 1024 + 1);
   const request = new Request('https://relay.example.workers.dev/api/relay/media', {
     method: 'POST',
     headers: {

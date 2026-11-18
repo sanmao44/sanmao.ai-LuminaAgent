@@ -75,6 +75,27 @@ html:has(.video-studio-page),body:has(.video-studio-page){height:100%;min-height
   .video-preview-card,.video-task-list{min-height:0;overflow:hidden}.video-preview-card{padding:18px;display:flex;flex-direction:column}.video-preview-player,.video-preview-empty{min-height:0;flex:1;margin-top:13px}.video-task-list{overflow-y:auto;overscroll-behavior:contain;padding:18px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
 }
 
+.video-upload-grid > .video-cangyuan-frames,
+.video-upload-grid > .video-cangyuan-reference-fields{grid-column:1/-1;min-width:0}
+.video-cangyuan-frames{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.video-cangyuan-reference-fields{display:grid;gap:9px;margin-top:12px;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}
+.video-cangyuan-upload-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px;min-width:0}
+.video-cangyuan-add-button{min-height:34px;padding:0 11px;border:1px solid color-mix(in srgb,var(--accent) 38%,var(--line));border-radius:6px;background:var(--panel);color:var(--accent);font:inherit;font-size:10px;font-weight:700;cursor:pointer}
+.video-cangyuan-add-button:hover:not(:disabled){background:var(--accent-soft)}
+.video-cangyuan-add-button:disabled{opacity:.5;cursor:not-allowed}
+.video-cangyuan-reference-item{display:grid;grid-template-columns:76px minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0;padding:7px 8px;border-bottom:1px solid var(--line);font-size:10px}
+.video-cangyuan-reference-item span{color:var(--muted)}
+.video-cangyuan-reference-item a{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-2)}
+.video-cangyuan-reference-item button{min-height:26px;padding:0 8px;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--text-2);font:inherit;font-size:9px;cursor:pointer}
+.video-cangyuan-reference-item button:hover{border-color:var(--danger);color:var(--danger)}
+.video-cangyuan-reference-fields>small{color:var(--muted);font-size:9px;line-height:1.45}
+@media(max-width:620px){
+  .video-cangyuan-frames{grid-template-columns:minmax(0,1fr)}
+  .video-cangyuan-upload-row{grid-template-columns:minmax(0,1fr)}
+  .video-cangyuan-add-button{width:100%}
+  .video-cangyuan-reference-item{grid-template-columns:52px minmax(0,1fr) auto;gap:6px;padding-inline:2px}
+}
+
 /* The task panel keeps its heading fixed while only the recent-task body scrolls. */
 .video-task-list{display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0;overflow:hidden!important}
 .video-task-list-heading{position:relative;z-index:1;display:flex;margin-bottom:0;padding-bottom:12px;background:transparent}
@@ -698,3 +719,5 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
   .video-task-actions::-webkit-scrollbar{display:none}
   .video-task-actions a,.video-task-actions button{flex:none;min-height:25px;padding-inline:8px;font-size:9px;white-space:nowrap}
 }
+.video-option-segment .video-cangyuan-audio-field{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:39px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2);color:var(--text-2)}
+.video-option-segment .video-cangyuan-audio-field input[type=checkbox]{width:18px;height:18px;margin:0;accent-color:var(--accent)}

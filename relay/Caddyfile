@@ -1,6 +1,6 @@
 {$SANMAO_RELAY_DOMAIN} {
     request_body {
-        max_size 5MB
+        max_size 32MB
     }
     reverse_proxy sanmao-media-relay:3210
 }

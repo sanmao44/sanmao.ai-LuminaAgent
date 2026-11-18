@@ -9,6 +9,7 @@ import type { RuntimeProvider } from './providers';
 import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';
 import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
+import type { ProviderTokenUsage } from '@/packages/contracts/task';
 
 export type VideoProviderTask = {
   providerTaskId?: string;
@@ -16,6 +17,7 @@ export type VideoProviderTask = {
   model?: string;
   providerStatus?: string;
   progress?: number;
+  usage?: ProviderTokenUsage;
   status: 'pending' | 'running' | 'done' | 'failed';
   videos: GeneratedVideo[];
   costUsd?: number;
@@ -126,6 +128,33 @@ function statusFrom(data: any): VideoProviderTask['status'] {
   if (/(done|success|succeed|completed|complete|finished|ready)/.test(value) || values.includes('50')) return 'done';
   if (/(running|processing|in_progress|generating)/.test(value)) return 'running';
   return 'pending';
+}
+
+function cangyuanProgressFrom(data: unknown) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const value = (data as Record<string, unknown>).progress;
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value === 'string' && !value.trim()) return undefined;
+  const progress = Number(value);
+  return Number.isFinite(progress) && progress >= 0 && progress <= 100 ? progress : undefined;
+}
+
+function cangyuanUsageFrom(data: unknown): ProviderTokenUsage | undefined {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
+  const usage = (data as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return undefined;
+  const fields = usage as Record<string, unknown>;
+  const completionTokens = validTokenCount(fields.completion_tokens);
+  const totalTokens = validTokenCount(fields.total_tokens);
+  if (completionTokens === undefined && totalTokens === undefined) return undefined;
+  return {
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  };
+}
+
+function validTokenCount(value: unknown) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 function addVideo(value: unknown, output: GeneratedVideo[], seen: Set<string>, key = '', depth = 0) {
@@ -588,9 +617,11 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
     const statusFromResponse = statusFrom(data);
     const videos = statusFromResponse === 'failed' ? [] : cangyuanVideosFrom(data);
     const status = videos.length ? 'done' : statusFromResponse;
-    if (status === 'failed') return { providerTaskId, status, videos, error: errorFrom(data, '沧元算力视频任务失败'), errorCode: 'CANGYUAN_VIDEO_FAILED', raw: data };
+    const progress = cangyuanProgressFrom(data);
+    const usage = cangyuanUsageFrom(data);
+    if (status === 'failed') return { providerTaskId, status, videos, progress, usage, error: errorFrom(data, '沧元算力视频任务失败'), errorCode: 'CANGYUAN_VIDEO_FAILED', raw: data };
     if (!videos.length && !providerTaskId) throw new VideoProviderError('沧元算力视频接口已响应，但没有返回视频地址或 task_id。', { code: 'CANGYUAN_VIDEO_TASK_ID_MISSING' });
-    return { providerTaskId: providerTaskId || undefined, status, videos, raw: data };
+    return { providerTaskId: providerTaskId || undefined, status, videos, progress, usage, raw: data };
   }
   const preparedInput = transport === 'openai-videos' && requiresPublicMediaRelay(provider, { hasVideoModel: true })
     ? await prepareRemoteVideoMedia(provider, input)
@@ -630,7 +661,15 @@ export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId:
   const statusFromResponse = statusFrom(data);
   const videos = statusFromResponse === 'failed' ? [] : cangyuan ? cangyuanVideosFrom(data) : videosFrom(data);
   const status = videos.length ? 'done' : statusFromResponse;
-  return { providerTaskId, status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data, ...(status === 'failed' ? { error: errorFrom(data, '视频任务失败') } : {}) };
+  return {
+    providerTaskId,
+    status,
+    videos,
+    costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined,
+    ...(cangyuan ? { progress: cangyuanProgressFrom(data), usage: cangyuanUsageFrom(data) } : {}),
+    raw: data,
+    ...(status === 'failed' ? { error: errorFrom(data, '视频任务失败') } : {}),
+  };
 }
 
 export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTransport' | 'platform' | 'baseUrl' | 'videoBaseUrl'>): 'native-task' | 'openai-videos' | 'cangyuan-videos' {

@@ -77,6 +77,7 @@ test("generation log kind labels describe each output type", () => {
 
 test("audio task logs do not pretend to have image output URLs", () => {
   assert.deepEqual(activityLog.generationLogOutputUrls({ mode: "audio", mediaKind: "audio", imageUrls: ["wrong-image.png"] }), []);
+  assert.deepEqual(activityLog.generationLogOutputUrls({ mode: "audio", mediaKind: "audio", audioUrl: "/api/storage/audio?name=speech.mp3" }), ["/api/storage/audio?name=speech.mp3"]);
 });
 
 test("generation log duration distinguishes active, missing, and recorded time", () => {

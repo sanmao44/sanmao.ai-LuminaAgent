@@ -1,4 +1,4 @@
-export type ActivityTaskKind = "agent" | "image" | "video" | "upscale" | "artifact" | "mcp" | "clone";
+export type ActivityTaskKind = "agent" | "image" | "video" | "audio" | "upscale" | "artifact" | "mcp" | "clone";
 
 export type ActivityTaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 

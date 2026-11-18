@@ -12,7 +12,7 @@ services:
       SANMAO_DATA_DIR: /data
       SANMAO_RELAY_PUBLIC_BASE_URL: ${SANMAO_RELAY_PUBLIC_BASE_URL:?Set the public HTTPS relay URL}
       SANMAO_MASTER_KEY: ${SANMAO_MASTER_KEY:?Set a long random signing secret}
-      SANMAO_MEDIA_RELAY_UPLOAD_TOKEN: ${SANMAO_MEDIA_RELAY_UPLOAD_TOKEN:-}
+      SANMAO_MEDIA_RELAY_UPLOAD_TOKEN: ${SANMAO_MEDIA_RELAY_UPLOAD_TOKEN:?Set a long random upload token}
       SANMAO_DISABLE_LOCAL_UPDATE: "1"
     volumes:
       - sanmao_media_relay_data:/data

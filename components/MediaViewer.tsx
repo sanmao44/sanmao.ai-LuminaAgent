@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboa
 import type { CreationSettings, ImageCreationSettings, VideoCreationSettings } from "@/lib/creation/settings";
 import type { ImageVersionInfo, MediaViewerItem, MediaViewerReference } from "@/lib/canvas/media-viewer";
 import { handleMediaViewerWheel } from "@/components/canvas/trackpad-input";
+import { GenerationLogAudioPlayer } from "@/components/GenerationLogAudio";
 
 export type MediaViewerSurface = "workspace" | "canvas";
 
@@ -576,9 +577,15 @@ export default function MediaViewer({
             </div>
           ) : (
             <div className="media-viewer-single-layer">
-              <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
-                {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : item.kind === "audio" ? <audio src={item.url} controls style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
-              </div>
+              {item.kind === "audio" ? (
+                <div className="media-viewer-image-frame media-viewer-audio-frame" style={mediaFrameStyle(frameSizes.item)}>
+                  <GenerationLogAudioPlayer src={item.url} fileName={item.name} downloadable={false} onMetadata={(audio) => handleMediaLoad("item", audio)} />
+                </div>
+              ) : (
+                <div className="media-viewer-image-frame" style={mediaFrameStyle(frameSizes.item)}>
+                  {item.kind === "video" ? <video src={item.url} controls playsInline style={mediaStyle} onLoadedMetadata={(event) => handleMediaLoad("item", event.currentTarget)} /> : <img className="media-viewer-copyable-image" draggable={false} src={item.url} alt={item.name} style={mediaStyle} onLoad={(event) => handleMediaLoad("item", event.currentTarget)} />}
+                </div>
+              )}
             </div>
           )}
           <span className="media-viewer-wheel-tip">滚轮缩放 · 双击复位{zoom > 1 ? " · 拖动查看" : ""} · 点击百分比恢复完整画面</span>

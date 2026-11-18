@@ -3,7 +3,7 @@ import type { AngleCameraState } from "../angle-control";
 import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
-import { MAX_IMAGE_REFERENCES, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { MAX_IMAGE_REFERENCES, parseImageModelParameters, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageModelParameters, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import { canvasInlineImageUrls, replaceCanvasMediaUrls } from './inline-images';
@@ -711,6 +711,10 @@ export async function generateCanvasImage(input: {
   count?: number;
   aspect?: string;
   resolution?: string;
+  tier?: string;
+  series?: string;
+  seed?: string;
+  enablePromptExpansion?: boolean;
   quality?: string;
   width?: number;
   height?: number;
@@ -731,7 +735,9 @@ export async function generateCanvasImage(input: {
   /** Allow a single-source continuation to fall back to ordinary generation
    * when the provider has no image-edit endpoint. */
   fallbackToGenerationOnEdit404?: boolean;
-}) {
+} & ImageModelParameters) {
+  const parsedImageParameters = parseImageModelParameters(input);
+  if (!parsedImageParameters.ok) throw new Error(parsedImageParameters.error);
   const sourceReferences = input.references || [];
   if (sourceReferences.length > MAX_IMAGE_REFERENCES) {
     throw new Error(`图片参考最多 ${MAX_IMAGE_REFERENCES} 张，请移除多余参考后再提交。`);
@@ -798,9 +804,9 @@ export async function generateCanvasImage(input: {
       ...(input.presetId ? { presetId: input.presetId } : {}),
       ...(input.presetName ? { presetName: input.presetName } : {}),
       model: input.model || "auto",
+      ...parsedImageParameters.value,
       count: Math.max(1, Math.min(10, Number(input.count || 1))),
       aspectRatio: input.aspect || "自动",
-      resolution: input.resolution || "自动",
       quality: input.quality || "自动",
       ...(input.width && input.height
         ? { width: input.width, height: input.height }

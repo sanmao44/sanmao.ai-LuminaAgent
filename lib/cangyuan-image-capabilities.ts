@@ -1,5 +1,6 @@
 export type CangyuanImageParameterProfile = {
   readonly nMax?: number;
+  readonly fixedOutputCount?: number;
   readonly supportsSize: boolean;
   readonly sizeEnum: readonly string[];
   readonly sizeRecommendations: readonly string[];
@@ -11,7 +12,49 @@ export type CangyuanImageParameterProfile = {
   readonly supportsAspectRatio: boolean;
   readonly aspectRatioEnum: readonly string[];
   readonly aspectRatioRecommendations: readonly string[];
+  readonly resolutionEnum?: readonly string[];
+  readonly resolutionDefault?: string;
+  readonly tierEnum?: readonly string[];
+  readonly seriesEnum?: readonly string[];
+  readonly seriesDefault?: string;
+  readonly seriesRequired?: boolean;
+  readonly supportsSeed?: boolean;
+  readonly seedInteger?: boolean;
+  readonly supportsPromptExpansion?: boolean;
+  readonly promptExpansionDefault?: boolean;
+  readonly supportsStyle?: boolean;
+  readonly supportsNegativePrompt?: boolean;
+  readonly supportsNoParameter?: boolean;
+  readonly supportsLayerDecomposition?: boolean;
+  readonly supportsPromptOptimization?: boolean;
+  readonly supportsWatermarkSetting?: boolean;
+  readonly supportsSafetyIdentifier?: boolean;
+  readonly supportsMarkupImage?: boolean;
+  readonly safetyIdentifierMaxLength?: number;
+  readonly seedWireType?: 'string' | 'integer';
+  readonly seedMinimum?: number;
+  readonly seedMaximum?: number;
+  readonly requiresReference?: boolean;
+  readonly advancedParameters?: readonly CangyuanImageAdvancedParameter[];
 };
+
+export type CangyuanImageAdvancedParameter =
+  | 'output_compression'
+  | 'moderation'
+  | 'complexity'
+  | 'frame_count'
+  | 'frame_duration_ms'
+  | 'chaos'
+  | 'exp'
+  | 'hd'
+  | 'iw'
+  | 'raw'
+  | 'reference'
+  | 'reference_slots'
+  | 'speed'
+  | 'stylize'
+  | 'sw'
+  | 'weird';
 
 export type CangyuanImageModelProfile = CangyuanImageParameterProfile & {
   readonly publicModel: string;
@@ -142,6 +185,101 @@ const PROFILE_INDEX_BY_PUBLIC_MODEL: Readonly<Record<string, number>> = Object.f
   }
 );
 
+// These parameters have independent wire fields in the public model schemas;
+// they must not be folded into `size` or inferred from model-name suffixes.
+const MODEL_PARAMETER_OVERRIDES: Readonly<Record<string, Pick<
+  CangyuanImageParameterProfile,
+  "resolutionEnum" | "resolutionDefault" | "tierEnum" | "seriesEnum" | "seriesDefault" | "seriesRequired"
+  | "fixedOutputCount"
+  | "supportsSeed" | "supportsPromptExpansion" | "promptExpansionDefault" | "seedInteger"
+  | "supportsStyle" | "supportsNegativePrompt" | "supportsLayerDecomposition"
+  | "supportsPromptOptimization" | "supportsWatermarkSetting" | "supportsSafetyIdentifier" | "supportsMarkupImage"
+  | "supportsNoParameter" | "safetyIdentifierMaxLength" | "seedWireType" | "seedMinimum" | "seedMaximum"
+  | "requiresReference" | "advancedParameters"
+>>> = Object.freeze({
+  "doubao-seedream-5-5": { resolutionEnum: ["1k", "2k"], resolutionDefault: "1k" },
+  "doubao-seedream-5-0-pro-x": { resolutionEnum: ["1K", "2K"], resolutionDefault: "1K" },
+  "doubao-seedream-5-5-x": { resolutionEnum: ["1K", "1.5K", "2K"], resolutionDefault: "1K" },
+  "doubao-seedream-5-0-lite-x": { resolutionEnum: ["2K", "3K", "4K"], resolutionDefault: "2K" },
+  "flux-3-image": { resolutionEnum: ["768sq", "1K", "1.5K", "2K", "4K"], resolutionDefault: "1K" },
+  "flux-3-klein": {
+    resolutionEnum: ["1K", "2K", "4K"],
+    resolutionDefault: "1K",
+    supportsSeed: true,
+    supportsPromptExpansion: true,
+    promptExpansionDefault: true,
+  },
+  "mu1-muse-image": {
+    supportsSeed: true,
+    seedInteger: true,
+    supportsStyle: true,
+    supportsNegativePrompt: true,
+  },
+  "doubao-seedream-5-5-261028": {
+    supportsLayerDecomposition: true,
+    supportsPromptOptimization: true,
+    supportsWatermarkSetting: true,
+    supportsSafetyIdentifier: true,
+    safetyIdentifierMaxLength: 64,
+  },
+  "Midjourney-v8.1": {
+    supportsSeed: true,
+    seedInteger: true,
+    seedWireType: "integer",
+    seedMinimum: 0,
+    seedMaximum: 4294967295,
+    requiresReference: true,
+    supportsNoParameter: true,
+    advancedParameters: ["chaos", "exp", "hd", "iw", "raw", "reference_slots", "stylize", "sw"],
+  },
+  "Midjourney-v8.2": {
+    supportsSeed: true,
+    seedInteger: true,
+    seedWireType: "integer",
+    seedMinimum: 0,
+    seedMaximum: 4294967295,
+    requiresReference: true,
+    supportsNoParameter: true,
+    advancedParameters: ["chaos", "exp", "hd", "iw", "raw", "reference_slots", "stylize", "sw", "weird"],
+  },
+  "ax-gpt-image-2": { supportsSeed: true, seedInteger: true, advancedParameters: ["output_compression", "moderation"] },
+  "ax-gpt-image-2.5-flare": { supportsSeed: true, seedInteger: true, advancedParameters: ["output_compression", "moderation"] },
+  "ax-gpt-image-2.5-sunburst": { supportsSeed: true, seedInteger: true, advancedParameters: ["output_compression", "moderation"] },
+  "ax-gpt-image-2.6-flare": { supportsSeed: true, seedInteger: true, advancedParameters: ["output_compression", "moderation", "frame_count", "frame_duration_ms"] },
+  "ax-gpt-image-2.6-sunburst": { supportsSeed: true, seedInteger: true, advancedParameters: ["output_compression", "moderation", "frame_count", "frame_duration_ms"] },
+  "flux-pro-2": { advancedParameters: ["output_compression"] },
+  "gpt-image-2-az": { advancedParameters: ["output_compression", "moderation"] },
+  "gpt-image-2-o": { supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation"] },
+  "gpt-image-2.5-flare-az": { advancedParameters: ["output_compression", "moderation"] },
+  "gpt-image-2.5-sunburst-az": { advancedParameters: ["output_compression", "moderation"] },
+  "gpt-image-2.5-flare-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity"] },
+  "gpt-image-2.5-sunburst-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity"] },
+  "gpt-image-2.6-flare-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-sunburst-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-flare-1k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-flare-2k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-flare-4k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-sunburst-1k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-sunburst-2k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-sunburst-4k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
+  "midjourney-1k": { advancedParameters: ["speed", "reference"] },
+  "midjourney-2k": { advancedParameters: ["speed", "reference"] },
+  "gpt-image-2-x": { tierEnum: ["web", "1k", "2k", "4k"] },
+  "gpt-image-2.5-x": {
+    tierEnum: ["web", "1k", "2k", "4k"],
+    seriesEnum: ["flare", "sunburst"],
+    seriesDefault: "flare",
+    seriesRequired: true,
+  },
+  "gpt-image-2.6-x": {
+    tierEnum: ["web", "1k", "2k", "4k"],
+    seriesEnum: ["flare", "sunburst"],
+    seriesDefault: "flare",
+    seriesRequired: true,
+  },
+});
+
 export const CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES: readonly string[] = Object.freeze(
   Object.keys(PROFILE_INDEX_BY_PUBLIC_MODEL),
 );
@@ -153,10 +291,12 @@ export function getCangyuanImageModelProfile(
   const profileIndex = PROFILE_INDEX_BY_PUBLIC_MODEL[rawPublicModelName];
   const profile = PROFILE_SETS[profileIndex];
   if (!profile) return null;
+  const parameterOverrides = MODEL_PARAMETER_OVERRIDES[rawPublicModelName];
 
   return {
     publicModel: rawPublicModelName,
     ...profile,
+    ...parameterOverrides,
     sizeEnum: [...profile.sizeEnum],
     sizeRecommendations: [...profile.sizeRecommendations],
     aspectRatioEnum: [...profile.aspectRatioEnum],
@@ -164,5 +304,8 @@ export function getCangyuanImageModelProfile(
     qualityEnum: [...profile.qualityEnum],
     backgroundEnum: [...profile.backgroundEnum],
     outputFormatEnum: [...profile.outputFormatEnum],
+    ...(parameterOverrides?.resolutionEnum ? { resolutionEnum: [...parameterOverrides.resolutionEnum] } : {}),
+    ...(parameterOverrides?.tierEnum ? { tierEnum: [...parameterOverrides.tierEnum] } : {}),
+    ...(parameterOverrides?.seriesEnum ? { seriesEnum: [...parameterOverrides.seriesEnum] } : {}),
   };
 }

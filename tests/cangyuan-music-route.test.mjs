@@ -38,7 +38,6 @@ test('music route parses and forwards the documented Suno v6 option fields', asy
     title: 'Night Drive', style_text: 'dream pop', instrumental: false, duration: 180, n: 1,
     audioWeight: 0.4, negativeTags: 'metal', personaId: 'persona-1', personaModel: 'future-compatible-model',
     styleWeight: 0.7, version: 'v6-wild', vocalGender: 'f', weirdnessConstraint: 0.2,
-    sourceTaskId: 'job-1', sourceAudioId: 'audio-1',
   };
 
   const response = await route.POST(request({ modelId: 'model-record', prompt: 'ambient synth', options }));
@@ -59,4 +58,15 @@ test('music route rejects unknown fields and invalid transport types before disp
   const wrongType = await route.POST(request({ modelId: 'model-record', prompt: 'song', options: { instrumental: 'yes' } }));
   assert.equal(wrongType.status, 400);
   assert.equal(route.getSubmitted(), undefined);
+
+  const wrongPrompt = await route.POST(request({ modelId: 'model-record', prompt: 42 }));
+  assert.equal(wrongPrompt.status, 400);
+  assert.equal(route.getSubmitted(), undefined);
+});
+
+test('music route permits an omitted prompt for model-specific workflows', async () => {
+  const route = createRoute();
+  const response = await route.POST(request({ modelId: 'model-record', options: { uploadUrl: 'https://cdn.example.test/song.mp3' } }));
+  assert.equal(response.status, 202);
+  assert.deepEqual(route.getSubmitted().input, { uploadUrl: 'https://cdn.example.test/song.mp3' });
 });

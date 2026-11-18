@@ -239,7 +239,14 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
-  const normalizedKind = resolveModelKind(model.kind, inferred.kind, capabilities);
+  // Discovered records are projections of the provider catalog. Recompute a
+  // known category when the catalog gains better capability or ID signals;
+  // only manual records retain an explicit user-selected category.
+  const normalizedKind = model.source === 'manual'
+    ? resolveModelKind(model.kind, inferred.kind, capabilities)
+    : inferred.kind !== 'unknown'
+      ? inferred.kind
+      : model.kind;
   return { ...model, kind: normalizedKind, capabilities, ...(nativeSearchProtocol ? { nativeSearchProtocol } : {}), ...(nativeSearchDetection ? { nativeSearchDetection } : {}) };
 }
 

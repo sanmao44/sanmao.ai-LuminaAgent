@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
@@ -11,7 +12,8 @@ const cangyuanProvider = await readFile(new URL('../lib/cangyuan-provider.ts', i
 const modelKind = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
+globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -20,6 +22,7 @@ const compiled = ts.transpileModule(bundledSource, {
   fileName: sourceUrl.pathname,
 }).outputText;
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
+delete globalThis.__providerImageReferenceReaderModule;
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
@@ -1299,6 +1302,63 @@ test('Cangyuan image sizing keeps documented size and ratio fields separate and 
       model: 'gpt-image-2.6-flare-o', prompt: 'wide image', async: true,
       size: '5:4',
     });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Cangyuan image generation forwards independent resolution, tier, and required series fields', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ url: `https://cdn.example.test/${calls.length}.png` }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const provider = {
+      type: 'openai-compatible', platform: 'cangyuan',
+      baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+    };
+    await providers.generateImage(provider, 'flux-3-image', {
+      prompt: '夜色中的城市', aspectRatio: '自动', resolution: '2K',
+    });
+    await providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '一张产品海报', tier: '2k', series: 'sunburst',
+    });
+    await providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '默认系列海报',
+    });
+    await providers.generateImage(provider, 'flux-3-klein', {
+      prompt: '可复现的产品草图', resolution: '4K', seed: 'seed-42', enablePromptExpansion: false,
+    });
+
+    const resolutionPayload = JSON.parse(calls[0].init.body);
+    assert.equal(resolutionPayload.resolution, '2K');
+    assert.notEqual(resolutionPayload.size, '2K');
+
+    const tierPayload = JSON.parse(calls[1].init.body);
+    assert.equal(tierPayload.tier, '2k');
+    assert.equal(tierPayload.series, 'sunburst');
+    assert.equal(Object.hasOwn(tierPayload, 'resolution'), false);
+
+    const defaultSeriesPayload = JSON.parse(calls[2].init.body);
+    assert.equal(defaultSeriesPayload.series, 'flare');
+
+    const kleinPayload = JSON.parse(calls[3].init.body);
+    assert.equal(kleinPayload.resolution, '4K');
+    assert.equal(kleinPayload.seed, 'seed-42');
+    assert.equal(kleinPayload.enable_prompt_expansion, false);
+    assert.notEqual(kleinPayload.size, '4K');
+
+    await assert.rejects(() => providers.generateImage(provider, 'gpt-image-2.5-x', {
+      prompt: '无效档位', tier: '8k',
+    }), /参数 tier=8k/);
+    await assert.rejects(() => providers.generateImage(provider, 'flux-3-image', {
+      prompt: '不支持的选项', seed: 'seed-42',
+    }), /参数 seed=seed-42/);
+    assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = previousFetch;
   }

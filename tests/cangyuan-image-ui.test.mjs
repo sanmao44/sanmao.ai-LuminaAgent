@@ -82,3 +82,47 @@ test('Cangyuan image counts follow each documented model limit while other provi
   assert.equal(generic.count, 8);
   assert.doesNotMatch(renderEditor(genericRuntime, generic), /10 张/);
 });
+
+test('Cangyuan image options preserve model-specific resolution and tier fields in the shared editor', () => {
+  const runtime = createRuntime({ rawId: 'gpt-image-2.5-x' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    resolution: '2k',
+    tier: '4k',
+  }, runtime);
+
+  assert.equal(settings.resolution, '2K');
+  assert.equal(settings.tier, '4k');
+  assert.equal(settings.series, 'flare');
+  const markup = renderEditor(runtime, settings);
+  assert.match(markup, /生成系列/);
+  assert.match(markup, /Flare 系列/);
+});
+
+test('Cangyuan resolution controls retain exact documented enum spellings', () => {
+  const runtime = createRuntime({ rawId: 'doubao-seedream-5-5' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    resolution: '2K',
+  }, runtime);
+
+  assert.equal(settings.resolution, '2k');
+  const markup = renderEditor(runtime, settings);
+  assert.match(markup, /模型清晰度/);
+  assert.match(markup, /2K/);
+});
+
+test('Flux 3 Klein image settings retain prompt expansion and a reproducible seed', () => {
+  const runtime = createRuntime({ rawId: 'flux-3-klein' });
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: runtime.models[0].id,
+    seed: '  seed-42  ',
+    enablePromptExpansion: false,
+  }, runtime);
+
+  assert.equal(settings.seed, 'seed-42');
+  assert.equal(settings.enablePromptExpansion, false);
+});

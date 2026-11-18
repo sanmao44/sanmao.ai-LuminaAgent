@@ -13,6 +13,8 @@ export type VideoModelLimits = {
   minSeconds: number;
   maxSeconds: number;
   fixedSeconds?: number;
+  requiresDuration?: boolean;
+  requiresAspectRatio?: boolean;
   durationScope?: 'total' | 'per-transition';
   aspectRatioSource?: 'first-reference';
   resolutions: string[];
@@ -196,16 +198,34 @@ export function getVideoModelLimits(model?: { rawId?: string; displayName?: stri
         ...defaults,
         minSeconds: profile.minSeconds,
         maxSeconds: profile.maxSeconds,
+        ...(profile.requiresDuration ? { requiresDuration: true } : {}),
+        ...(profile.requiresAspectRatio ? { requiresAspectRatio: true } : {}),
         allowedSeconds: Array.from({ length: profile.maxSeconds - profile.minSeconds + 1 }, (_, index) => profile.minSeconds + index),
-        resolutions: [...profile.suggestedResolutions],
-        maxReferenceImages: profile.maxReferenceImages,
-        maxReferenceVideos: profile.maxReferenceVideos,
-        maxAudios: profile.maxReferenceAudios,
+        resolutions: [...(profile.allowedResolutions ?? profile.suggestedResolutions)],
+        maxReferenceImages: profile.supportsReferenceImages ? profile.maxReferenceImages ?? defaults.maxReferenceImages : 0,
+        maxReferenceVideos: profile.supportsReferenceVideos ? profile.maxReferenceVideos ?? defaults.maxReferenceVideos : 0,
+        maxAudios: profile.supportsReferenceAudios ? profile.maxReferenceAudios ?? defaults.maxAudios : 0,
+        ...(profile.maxTotalInputs !== undefined ? { maxTotalInputs: profile.maxTotalInputs } : {}),
         notes: [
           `沧元 ${profile.publicModel}：${profile.minSeconds}–${profile.maxSeconds} 秒整数时长`,
-          '比例和分辨率清单是建议值，不是完整允许枚举',
-          '首尾帧必须成对，且不能与参考图、参考视频或参考音频同时使用',
-          '参考素材必须是公网 HTTPS URL；每张参考图或首尾帧文件上限 30 MiB',
+          '画面比例使用文档建议值，不代表完整允许枚举',
+          ...(profile.allowedResolutions ? ['分辨率使用文档明确支持的枚举值'] : ['分辨率使用文档建议值，不代表完整允许枚举']),
+          ...(profile.requiresDuration ? ['必须指定视频时长'] : []),
+          ...(profile.requiresAspectRatio ? ['必须指定画面比例'] : []),
+          ...(profile.allowedResolutions ? [`分辨率仅支持 ${profile.allowedResolutions.join(' / ')}`] : []),
+          ...(profile.maxTotalInputs !== undefined ? [`参考素材总数最多 ${profile.maxTotalInputs} 个`] : []),
+          ...(profile.maxReferenceImages === undefined || profile.maxReferenceVideos === undefined || profile.maxReferenceAudios === undefined
+            ? ['文档未核实的素材分类使用本站安全上限，不代表服务商上限']
+            : []),
+          ...(profile.supportsFirstFrame ? ['支持首帧图片'] : ['不支持首帧图片']),
+          ...(profile.supportsLastFrame ? ['支持尾帧图片'] : ['不支持尾帧图片']),
+          ...(profile.requiresFirstFrameForLastFrame ? ['尾帧必须与首帧一起提供；首帧可以单独使用'] : []),
+          ...(profile.allowsFramesWithReferences === false ? ['首尾帧不能与参考图片、视频或音频混合'] : []),
+          ...(profile.allowsFramesWithAudio === false ? ['提供首尾帧时不能同时使用参考音频'] : []),
+          ...(profile.requiresImageWithVideoOrAudio ? ['使用参考视频或音频时必须至少再提供一张参考图'] : []),
+          ...(profile.allowsNoReferences ? ['可以不提供参考素材'] : []),
+          '参考素材必须是公网 HTTPS URL',
+          '本站 inline 图片设有 30 MiB 安全上限，实际文件上传限制由上传服务执行',
         ],
       };
     }

@@ -143,6 +143,19 @@ test('activity adapters expose one status vocabulary and preserve workspace IDs'
   });
   assert.equal(recoveredUpscale.status, 'succeeded');
   assert.deepEqual(recoveredUpscale.outputIds, ['/api/storage/file?name=recovered.png']);
+
+  const audio = activity.activityTaskFromGenerationLog({
+    id: 'audio-1',
+    createdAt: '2026-09-20T10:00:00.000Z',
+    status: 'success',
+    mode: 'audio',
+    mediaKind: 'audio',
+    prompt: '旁白',
+    audioUrl: '/api/storage/audio?name=narration.mp3',
+  });
+  assert.equal(audio.kind, 'audio');
+  assert.equal(audio.status, 'succeeded');
+  assert.deepEqual(audio.outputIds, ['/api/storage/audio?name=narration.mp3']);
 });
 
 test('result projection prefers a retained image or video over a stale failure', () => {

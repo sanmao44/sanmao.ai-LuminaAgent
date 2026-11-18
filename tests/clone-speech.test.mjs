@@ -4,12 +4,20 @@ import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const projectRoot = process.cwd();
+let runtimeCandidates = [];
 const load = createTsRequire(projectRoot, {
   [path.resolve(projectRoot, 'lib/providers')]: {
     authHeaders: () => ({ Authorization: 'Bearer test' }),
     runtimeBaseUrl: (provider) => provider.baseUrl,
   },
-  [path.resolve(projectRoot, 'lib/store')]: { getRuntimeModel: async () => null },
+  [path.resolve(projectRoot, 'lib/store')]: {
+    getRuntimeModelCandidates: async (modelId, kind) => {
+      assert.equal(kind, 'audio');
+      return modelId && modelId !== 'auto'
+        ? runtimeCandidates.filter((runtime) => runtime.model.id === modelId)
+        : runtimeCandidates;
+    },
+  },
 });
 const speech = load('./lib/clone/speech');
 
@@ -37,6 +45,36 @@ function stubFetch(handler) {
 function audioResponse(buffer, contentType) {
   return { ok: true, status: 200, headers: new Headers(contentType ? { 'content-type': contentType } : {}), arrayBuffer: async () => buffer };
 }
+
+test('自动配音选择跳过排在前面的纯音乐模型', async () => {
+  const musicRuntime = { model: { id: 'music-model', capabilities: ['music-generate'] }, provider: {} };
+  const speechRuntime = { model: { id: 'speech-model', capabilities: ['speech'] }, provider: {} };
+  runtimeCandidates = [musicRuntime, speechRuntime];
+  assert.equal(await speech.resolveSpeechRuntime(), speechRuntime);
+});
+
+test('显式选择音乐模型时配音应用返回明确的不支持错误', async () => {
+  runtimeCandidates = [{ model: { id: 'music-model', capabilities: ['music-generate'] }, provider: {} }];
+  const compositionLoad = createTsRequire(projectRoot, {
+    [path.resolve(projectRoot, 'lib/clone/speech')]: {
+      resolveSpeechRuntime: speech.resolveSpeechRuntime,
+      synthesizeSpeech: async () => { throw new Error('音乐模型不应调用 TTS'); },
+      audioExtension: () => 'mp3',
+    },
+    [path.resolve(projectRoot, 'lib/clone/offline-speech')]: {
+      offlineSpeechSupported: () => false,
+      synthesizeOfflineSpeech: async () => { throw new Error('不应回退到离线配音'); },
+    },
+    [path.resolve(projectRoot, 'lib/audio-storage')]: {
+      persistAudioBuffer: async () => ({ url: '/api/storage/audio/test.mp3' }),
+    },
+  });
+  const composition = compositionLoad('./apps/api/audio-synthesis-composition');
+  await assert.rejects(
+    composition.synthesizeCanvasNarration({ text: '一段旁白', modelId: 'music-model' }),
+    /所选配音模型当前不可用或不支持配音/,
+  );
+});
 
 test('配音地址兼容带与不带 /v1 的服务商地址', () => {
   assert.equal(speech.speechEndpoint({ baseUrl: 'https://ai.gitee.com/v1' }), 'https://ai.gitee.com/v1/audio/speech');

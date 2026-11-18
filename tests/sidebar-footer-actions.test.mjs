@@ -28,12 +28,15 @@ test('SidebarFooterActions renders model status and support entry points', () =>
     imageModelCount: 2,
     chatModelCount: 3,
     videoModelCount: 1,
+    audioModelCount: 2,
+    threeDModelCount: 1,
     Icon,
     onOpenModels: () => {},
     onOpenSupport: () => {},
   }));
   assert.match(openMarkup, /class="sidebar-model-status"/);
-  assert.match(openMarkup, /6 个模型/);
+  assert.match(openMarkup, /9 个模型/);
+  assert.match(openMarkup, /2 音频 · 1 三维/);
   assert.match(openMarkup, /class="sidebar-support-button"/);
   assert.match(openMarkup, /class="support-rail-button"/);
 
@@ -42,6 +45,8 @@ test('SidebarFooterActions renders model status and support entry points', () =>
     imageModelCount: 0,
     chatModelCount: 0,
     videoModelCount: 0,
+    audioModelCount: 0,
+    threeDModelCount: 0,
     Icon,
     onOpenModels: () => {},
     onOpenSupport: () => {},

@@ -86,10 +86,10 @@ test('keeps an explicit category and the speech capability authoritative', () =>
 });
 
 test('classifies music and 3D generators independently from chat and image models', () => {
-  for (const rawId of ['musicgen-large', 'Suno-v5', 'cangyuan/song-generation-v2', 'ace-step-1.5']) {
+  for (const rawId of ['musicgen-large', 'Suno-v5', 'cangyuan/song-generation-v2', 'ace-step-1.5', 'lyria-3.5', 'lyria-3-pro']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['Hunyuan3D-2.1', 'Qwen3D-2B', 'Tripo3D', 'Tripo3D-v2', 'TripoSR', 'text-to-3d-v1', 'Trellis.2']) {
+  for (const rawId of ['Hunyuan3D-2.1', 'Qwen3D-2B', 'Tripo3D', 'Tripo3D-v2', 'TripoSR', 'tripo3d-v3.1', 'tripo3d-p1', 'tripo3d-p2', 'text-to-3d-v1', 'Trellis.2']) {
     assert.equal(modelKind.inferModelKind({ rawId }), '3d', rawId);
   }
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['music-generate'] }), 'audio');

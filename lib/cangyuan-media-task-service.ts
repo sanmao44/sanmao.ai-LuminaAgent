@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { TaskRepository } from './repositories/types';
-import { getCangyuan3DModelProfile, parseCangyuan3DOptions, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
+import { validateCangyuan3DInput, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
 import { cangyuanMediaBaseUrl, isCangyuanProvider } from './cangyuan-provider';
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from './providers';
 import { getProviderWithKey, getRuntimeModel } from './store';
@@ -9,10 +9,10 @@ import { buildCangyuanThreeDPayload, isRetryableCangyuanProviderError, pollCangy
 import { cangyuanMediaTaskPollIntervalMs } from './cangyuan-media-task-polling';
 
 export type CreateCangyuanCreativeTaskInput =
-  | { kind: 'music'; modelId: string; input: { prompt: string } & CangyuanMusicOptions; idempotencyKey?: string }
-  | { kind: '3d'; modelId: string; input: { prompt: string } & Cangyuan3DOptions; idempotencyKey?: string };
+  | { kind: 'music'; modelId: string; input: { prompt?: string } & CangyuanMusicOptions; idempotencyKey?: string }
+  | { kind: '3d'; modelId: string; input: { prompt?: string } & Cangyuan3DOptions; idempotencyKey?: string };
 
-type CangyuanMediaTaskRepository = Pick<TaskRepository<CangyuanMediaTask>, 'find' | 'findByIdempotencyKey' | 'insert' | 'list' | 'mutate'>;
+type CangyuanMediaTaskRepository = Pick<TaskRepository<CangyuanMediaTask>, 'find' | 'findByIdempotencyKey' | 'insert' | 'page' | 'mutate'>;
 type CangyuanResolvedModel = NonNullable<Awaited<ReturnType<typeof getRuntimeModel>>>;
 type CangyuanResolvedProvider = NonNullable<Awaited<ReturnType<typeof getProviderWithKey>>>;
 
@@ -70,9 +70,10 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
       input = validateCangyuanMusicInput(runtime.model.rawId, options.input);
       task = { ...common, kind: 'music', input };
     } else {
-      input = validate3DInput(runtime.model.rawId, options.input);
-      dependencies.provider.buildThreeDPayload(runtime.model.rawId, input);
-      task = { ...common, kind: '3d', input };
+      const threeInput = validate3DInput(runtime.model.rawId, options.input);
+      input = threeInput;
+      dependencies.provider.buildThreeDPayload(runtime.model.rawId, threeInput);
+      task = { ...common, kind: '3d', input: threeInput };
     }
 
     const inserted = await dependencies.repository.insert(task);
@@ -111,8 +112,13 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
   }
 
   async function list(kind: CangyuanMediaKind, limit = 50): Promise<CangyuanMediaTask[]> {
-    const tasks = await dependencies.repository.list(Math.max(1, Math.min(100, Math.round(limit))));
-    return tasks.filter((task) => task.kind === kind);
+    const page = await dependencies.repository.page({
+      page: 1,
+      pageSize: Math.max(1, Math.min(100, Math.round(limit))),
+      maxPageSize: 100,
+      matches: (task) => task.kind === kind,
+    });
+    return [...page.tasks];
   }
 
   async function updateActive(id: string, patch: Partial<CangyuanMediaTask>) {
@@ -133,12 +139,12 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
     }
     try {
       const result = await dependencies.provider.poll(dependencies.createClient(provider), task.kind, task.providerTaskId);
-      const missingOutput = result.status === 'succeeded' && !result.outputs.length;
+      const missingOutput = result.status === 'succeeded' && !result.outputs.some((output) => Boolean(output.url || output.text));
       const status = missingOutput ? 'failed' : result.status;
       return updateActive(task.id, {
         status,
         providerStatus: result.providerStatus,
-        outputs: result.outputs.length ? result.outputs : task.outputs,
+        outputs: result.outputs.length ? withThreeDOutputFormats(task, result.outputs) : task.outputs,
         pollCount: task.pollCount + 1,
         ...(status === 'running' && !task.startedAt ? { startedAt: new Date(now()).toISOString() } : {}),
         ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
@@ -181,13 +187,13 @@ async function applySubmissionResult(
   updateActive: (id: string, patch: Partial<CangyuanMediaTask>) => Promise<CangyuanMediaTask | null>,
   now: () => number,
 ) {
-  const missingOutput = result.status === 'succeeded' && !result.outputs.length;
+  const missingOutput = result.status === 'succeeded' && !result.outputs.some((output) => Boolean(output.url || output.text));
   const missingTaskId = !result.id && (result.status === 'pending' || result.status === 'running');
   const status = missingOutput || missingTaskId ? 'failed' : result.status;
   return updateActive(task.id, {
     providerTaskId: result.id,
     providerStatus: result.providerStatus,
-    outputs: result.outputs,
+    outputs: withThreeDOutputFormats(task, result.outputs),
     status,
     ...(status === 'running' || status === 'succeeded' ? { startedAt: new Date(now()).toISOString() } : {}),
     ...(status === 'succeeded' || status === 'failed' ? { completedAt: new Date(now()).toISOString() } : {}),
@@ -197,14 +203,17 @@ async function applySubmissionResult(
   });
 }
 
-function validate3DInput(modelId: string, input: { prompt: string } & Cangyuan3DOptions) {
-  const profile = getCangyuan3DModelProfile(modelId);
-  if (!profile) throw new Error(`沧元三维模型尚未接入：${modelId}`);
-  if (typeof input.prompt !== 'string') throw new Error('物体描述必须是字符串');
-  const prompt = input.prompt.trim();
-  if (profile.modelId !== 'trellis' && !prompt) throw new Error('Tripo3D 必须提供物体描述');
-  const { prompt: _prompt, ...rawOptions } = input;
-  return { prompt, ...parseCangyuan3DOptions(rawOptions) };
+function validate3DInput(modelId: string, input: { prompt?: string } & Cangyuan3DOptions) {
+  return validateCangyuan3DInput(modelId, input);
+}
+
+function withThreeDOutputFormats(task: CangyuanMediaTask, outputs: CangyuanMediaTask['outputs']) {
+  if (task.kind !== '3d') return outputs;
+  const isQuad = task.input.quad === true;
+  return outputs.map((output) => ({
+    ...output,
+    artifactType: isQuad ? 'fbx' as const : output.artifactType || 'glb' as const,
+  }));
 }
 
 function isActive(status: CangyuanMediaTaskStatus) {

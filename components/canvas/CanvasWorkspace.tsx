@@ -152,6 +152,7 @@ import { formatCanvasAudioDuration, formatCanvasVideoDuration } from "@/lib/canv
 import { downloadCanvasShareImage } from "@/lib/canvas/share";
 import {
   normalizeCreationSettings,
+  imageModelParametersFromSettings,
   imageModelOptions,
   imageModelIdForRequest,
   readSharedCreationSettings,
@@ -6752,11 +6753,16 @@ export default function SuperCanvas() {
         ...(presetId ? { presetId } : {}),
         ...(presetName ? { presetName } : {}),
         model: params.model,
+        ...imageModelParametersFromSettings(params),
         count: params.count,
         aspect: params.aspect === "自定义"
           ? `${params.customAspectWidth}:${params.customAspectHeight}`
           : params.aspect,
         resolution: params.resolution,
+        ...(params.tier ? { tier: params.tier } : {}),
+        ...(params.series ? { series: params.series } : {}),
+        ...(params.seed ? { seed: params.seed } : {}),
+        ...(params.enablePromptExpansion !== undefined ? { enablePromptExpansion: params.enablePromptExpansion } : {}),
         quality: params.quality,
         sizeMode: params.sizeMode,
         ...(params.sizeMode === "custom" ? { width: params.width, height: params.height } : {}),
@@ -7860,12 +7866,17 @@ export default function SuperCanvas() {
           ...(presetId ? { presetId } : {}),
           ...(presetName ? { presetName } : {}),
           model: imageParams.model,
+          ...imageModelParametersFromSettings(imageParams),
           count: imageParams.count,
           aspect:
             imageParams.aspect === "自定义"
               ? `${imageParams.customAspectWidth}:${imageParams.customAspectHeight}`
               : imageParams.aspect,
                 resolution: imageParams.resolution,
+                ...(imageParams.tier ? { tier: imageParams.tier } : {}),
+                ...(imageParams.series ? { series: imageParams.series } : {}),
+                ...(imageParams.seed ? { seed: imageParams.seed } : {}),
+                ...(imageParams.enablePromptExpansion !== undefined ? { enablePromptExpansion: imageParams.enablePromptExpansion } : {}),
                 quality: imageParams.quality,
                 sizeMode: imageParams.sizeMode,
                 ...(imageParams.sizeMode === "custom"

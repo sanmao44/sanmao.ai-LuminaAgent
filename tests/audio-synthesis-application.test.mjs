@@ -85,6 +85,30 @@ test('audio synthesis preserves an explicit speech model selection through the a
   assert.deepEqual(received, { text: '指定模型配音', voice: '清晰女声', modelId: 'provider-a:speech-v1' });
 });
 
+test('audio synthesis persists successful output and preserves provider bytes when storage fails', async () => {
+  const audio = new Uint8Array([4, 5, 6]);
+  const synthesis = { synthesize: async () => ({ data: audio, contentType: 'audio/mpeg', extension: 'mp3', engine: 'provider' }) };
+  let persisted;
+  const result = await application.synthesizeAndPersistAudio(
+    { text: '保存配音' },
+    synthesis,
+    { persist: async (data, contentType) => {
+      persisted = { data, contentType };
+      return { url: '/api/storage/audio?name=speech.mp3' };
+    } },
+  );
+  assert.deepEqual(persisted, { data: audio, contentType: 'audio/mpeg' });
+  assert.equal(result.storageUrl, '/api/storage/audio?name=speech.mp3');
+
+  const unsaved = await application.synthesizeAndPersistAudio(
+    { text: '保留原始结果' },
+    synthesis,
+    { persist: async () => { throw new Error('disk full'); } },
+  );
+  assert.equal(unsaved.storageError, '音频生成成功，但保存到媒体库失败。请先下载本次结果。');
+  assert.deepEqual(unsaved.data, audio);
+});
+
 test('audio synthesis preserves project and canvas provenance metadata without changing spoken text', async () => {
   let received;
   await application.synthesizeAudioRequest(

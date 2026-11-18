@@ -45,16 +45,24 @@ function draft(overrides = {}) {
   };
 }
 
-test('video studio draft round-trips only versioned prompt and scalar settings', () => {
+test('video studio draft round-trips versioned settings and documented model parameters', () => {
   const storage = new MemoryStorage();
 
-  assert.equal(saveVideoStudioDraft(draft({ hasUnpersistedMedia: true }), storage), true);
+  assert.equal(saveVideoStudioDraft(draft({
+    hasUnpersistedMedia: true,
+    generateAudio: false,
+    modelParameters: { camera_movement: '向左摇镜', mute_voice: 'true', seed: 123, speakers: ['甲', '乙'] },
+  }), storage), true);
   const restored = loadVideoStudioDraft(storage);
 
   assert.deepEqual(restored, {
     version: 1,
     savedAt: restored.savedAt,
-    ...draft({ hasUnpersistedMedia: true }),
+    ...draft({
+      hasUnpersistedMedia: true,
+      generateAudio: false,
+      modelParameters: { camera_movement: '向左摇镜', mute_voice: 'true', seed: 123, speakers: ['甲', '乙'] },
+    }),
   });
   assert.ok(Number.isFinite(restored.savedAt));
 });
@@ -66,6 +74,7 @@ test('video studio recognizes Agnes-only parameter edits as a draft', () => {
     agnesNumFrames: 81, agnesFrameRate: 24, hasUnpersistedMedia: false,
   });
   assert.equal(hasVideoStudioDraftContent(defaults), false);
+  assert.equal(hasVideoStudioDraftContent({ ...defaults, modelParameters: { camera_movement: 'orbit' } }), true);
   assert.equal(hasVideoStudioDraftContent({ ...defaults, agnesWidth: 1216 }), true);
   assert.equal(hasVideoStudioDraftContent({ ...defaults, agnesHeight: 832 }), true);
   assert.equal(hasVideoStudioDraftContent({ ...defaults, agnesNumFrames: 89 }), true);
@@ -89,7 +98,7 @@ test('video studio draft drops media payload fields and normalizes invalid setti
   assert.equal(restored.ratio, '16:9');
   assert.equal(restored.agnesNumFrames, 81);
   assert.equal(restored.inputMode, 'reference');
-  assert.equal('generateAudio' in restored, false);
+  assert.equal(restored.generateAudio, true);
   assert.equal('firstFrame' in restored, false);
   assert.equal('referenceImages' in restored, false);
 });
@@ -105,6 +114,18 @@ test('video studio draft ignores malformed, oversized, and unsupported versions'
     storage.setItem(STORAGE_KEY, raw);
     assert.equal(loadVideoStudioDraft(storage), null);
   }
+});
+
+test('video studio draft rejects malformed model parameter values without crashing', () => {
+  const storage = new MemoryStorage();
+  storage.setItem(STORAGE_KEY, JSON.stringify({
+    version: 1,
+    savedAt: 1,
+    ...draft(),
+    modelParameters: { __proto__: 'blocked', parameters: { bad: true } },
+  }));
+  assert.equal(loadVideoStudioDraft(storage), null);
+  assert.equal(saveVideoStudioDraft(draft({ modelParameters: { camera_movement: { bad: true } } }), storage), false);
 });
 
 test('video studio draft reports storage failures and can clear the saved snapshot', () => {

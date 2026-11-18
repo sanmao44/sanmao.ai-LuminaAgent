@@ -7,6 +7,8 @@ type SidebarFooterActionsProps = {
   imageModelCount: number;
   chatModelCount: number;
   videoModelCount: number;
+  audioModelCount: number;
+  threeDModelCount: number;
   Icon: ComponentType<IconProps>;
   onOpenModels: () => void;
   onOpenSupport: () => void;
@@ -18,12 +20,14 @@ export default function SidebarFooterActions({
   imageModelCount,
   chatModelCount,
   videoModelCount,
+  audioModelCount,
+  threeDModelCount,
   Icon,
   onOpenModels,
   onOpenSupport,
 }: SidebarFooterActionsProps) {
-  const modelCount = imageModelCount + chatModelCount + videoModelCount;
-  const modelTitle = `${imageModelCount} 图片 · ${chatModelCount} 对话 · ${videoModelCount} 视频`;
+  const modelCount = imageModelCount + chatModelCount + videoModelCount + audioModelCount + threeDModelCount;
+  const modelTitle = `${imageModelCount} 图片 · ${chatModelCount} 对话 · ${videoModelCount} 视频 · ${audioModelCount} 音频 · ${threeDModelCount} 三维`;
   const supportButton = (
     <button className="sidebar-support-button" type="button" onClick={onOpenSupport} title="交流与支持" aria-label="打开交流与支持">
       <Icon name="support" size={15} /><span>支持</span>

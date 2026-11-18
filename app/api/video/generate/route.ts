@@ -3,6 +3,7 @@ import { runVideoGeneration } from '@/apps/worker/task-entry';
 import type { VideoGenerationInput } from '@/lib/types';
 import { normalizeGenerationSource } from '@/lib/generation-source';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
+import { parseVideoModelParameterValues } from '@/packages/contracts/video-generation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -37,6 +38,8 @@ export async function POST(request: Request) {
       referenceVideoStartSeconds: raw.referenceVideoStartSeconds ?? raw.start_seconds,
       referenceVideoEndSeconds: raw.referenceVideoEndSeconds ?? raw.end_seconds,
       requireAudio: raw.requireAudio ?? raw.require_audio,
+      generateAudio: raw.generateAudio ?? raw.generate_audio,
+      modelParameters: parseVideoModelParameterValues(raw.modelParameters ?? raw.model_parameters),
     };
     const key = request.headers.get('Idempotency-Key') || String(body.idempotencyKey || '');
     const task = await runVideoGeneration({ modelId: String(body.model || 'auto'), input, idempotencyKey: key, source: normalizeGenerationSource(body.source, 'workspace') });

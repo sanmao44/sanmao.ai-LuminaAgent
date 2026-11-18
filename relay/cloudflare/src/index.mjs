@@ -1,12 +1,17 @@
 const MEDIA_PATH = "/api/relay/media";
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
-const MAX_REQUEST_BYTES = MAX_IMAGE_BYTES + 128 * 1024;
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
+const MAX_REQUEST_BYTES = Math.max(MAX_IMAGE_BYTES, MAX_AUDIO_BYTES, MAX_VIDEO_BYTES) + 128 * 1024;
 const MAX_IMAGE_HEADER_BYTES = 256 * 1024;
 const MEDIA_TTL_MS = 30 * 60 * 1000;
 const MAX_IMAGE_PIXELS = 40_000_000;
 const MAX_IMAGE_DIMENSION = 16_384;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const ALLOWED_AUDIO_MIME_TYPES = new Set(["audio/mpeg", "audio/wav", "audio/ogg", "audio/flac", "audio/aac", "audio/mp4"]);
+const ALLOWED_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/quicktime", "video/webm"]);
+const ALLOWED_MEDIA_MIME_TYPES = new Set([...ALLOWED_MIME_TYPES, ...ALLOWED_AUDIO_MIME_TYPES, ...ALLOWED_VIDEO_MIME_TYPES]);
 
 class UploadValidationError extends Error {
   constructor(message, status) {
@@ -27,6 +32,38 @@ function ascii(bytes, offset, length) {
   let value = "";
   for (let index = offset; index < offset + length; index += 1) value += String.fromCharCode(bytes[index] || 0);
   return value;
+}
+
+function normalizeAudioMime(value) {
+  const mime = String(value || "").split(";", 1)[0].trim().toLowerCase();
+  if (mime === "audio/x-wav") return "audio/wav";
+  if (mime === "audio/x-m4a" || mime === "audio/m4a") return "audio/mp4";
+  if (mime === "audio/x-flac") return "audio/flac";
+  if (mime === "audio/oga") return "audio/ogg";
+  if (mime === "audio/x-aac") return "audio/aac";
+  return mime;
+}
+
+function normalizeVideoMime(value) {
+  const mime = String(value || "").split(";", 1)[0].trim().toLowerCase();
+  return mime === "video/x-m4v" ? "video/mp4" : mime;
+}
+
+function detectAudioMime(bytes) {
+  if (bytes.length >= 3 && ascii(bytes, 0, 3) === "ID3") return "audio/mpeg";
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0) return "audio/aac";
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return "audio/mpeg";
+  if (bytes.length >= 12 && ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WAVE") return "audio/wav";
+  if (bytes.length >= 4 && ascii(bytes, 0, 4) === "OggS") return "audio/ogg";
+  if (bytes.length >= 4 && ascii(bytes, 0, 4) === "fLaC") return "audio/flac";
+  if (bytes.length >= 8 && ascii(bytes, 4, 4) === "ftyp") return "audio/mp4";
+  return "";
+}
+
+function detectVideoMime(bytes) {
+  if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return "video/webm";
+  if (bytes.length >= 12 && ascii(bytes, 4, 4) === "ftyp") return ascii(bytes, 8, 4) === "qt  " ? "video/quicktime" : "video/mp4";
+  return "";
 }
 
 function dimensionsAllowed(width, height) {
@@ -146,7 +183,7 @@ function updateTail(tail, chunk) {
 async function prepareImageStream(request, contentType) {
   if (!request.body) throw new UploadValidationError("上传内容为空", 415);
   const contentLength = Number(request.headers.get("content-length") || 0);
-  if (contentLength > MAX_IMAGE_BYTES) throw new UploadValidationError("图片不能超过 4 MiB", 413);
+  if (contentLength > MAX_IMAGE_BYTES) throw new UploadValidationError("图片不能超过 30 MiB（本站上传限制）", 413);
 
   const reader = request.body.getReader();
   const initialChunks = [];
@@ -162,7 +199,7 @@ async function prepareImageStream(request, contentType) {
       if (result.done) break;
       const chunk = result.value;
       totalBytes += chunk.byteLength;
-      if (totalBytes > MAX_IMAGE_BYTES) throw new UploadValidationError("图片不能超过 4 MiB", 413);
+      if (totalBytes > MAX_IMAGE_BYTES) throw new UploadValidationError("图片不能超过 30 MiB（本站上传限制）", 413);
       initialChunks.push(chunk);
       tail = updateTail(tail, chunk);
       const inspectedLength = Math.min(chunk.byteLength, MAX_IMAGE_HEADER_BYTES - headerLength);
@@ -208,10 +245,84 @@ async function prepareImageStream(request, contentType) {
         totalBytes += result.value.byteLength;
         if (totalBytes > MAX_IMAGE_BYTES) {
           await reader.cancel();
-          controller.error(new UploadValidationError("图片不能超过 4 MiB", 413));
+          controller.error(new UploadValidationError("图片不能超过 30 MiB（本站上传限制）", 413));
           return;
         }
         tail = updateTail(tail, result.value);
+        controller.enqueue(result.value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+
+  return { body: stream, mime: detectedMime, byteLength: () => totalBytes };
+}
+
+async function prepareVideoStream(request, contentType) {
+  if (!request.body) throw new UploadValidationError("上传内容为空", 415);
+  const contentLength = Number(request.headers.get("content-length") || 0);
+  if (contentLength > MAX_VIDEO_BYTES) throw new UploadValidationError("视频不能超过 25 MiB（本站上传限制）", 413);
+
+  const reader = request.body.getReader();
+  const initialChunks = [];
+  const headerBuffer = new Uint8Array(12);
+  let headerLength = 0;
+  let totalBytes = 0;
+  let detectedMime = "";
+
+  try {
+    while (!detectedMime && headerLength < headerBuffer.byteLength) {
+      const result = await reader.read();
+      if (result.done) break;
+      const chunk = result.value;
+      totalBytes += chunk.byteLength;
+      if (totalBytes > MAX_VIDEO_BYTES) throw new UploadValidationError("视频不能超过 25 MiB（本站上传限制）", 413);
+      initialChunks.push(chunk);
+      const inspectedLength = Math.min(chunk.byteLength, headerBuffer.byteLength - headerLength);
+      if (inspectedLength) {
+        headerBuffer.set(chunk.subarray(0, inspectedLength), headerLength);
+        headerLength += inspectedLength;
+      }
+      detectedMime = detectVideoMime(headerBuffer.subarray(0, headerLength));
+      if (detectedMime && detectedMime !== contentType) {
+        throw new UploadValidationError("视频内容与声明格式不一致", 415);
+      }
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    if (error instanceof UploadValidationError) throw error;
+    throw new UploadValidationError("上传内容读取失败", 400);
+  }
+
+  if (!detectedMime) {
+    await reader.cancel().catch(() => {});
+    throw new UploadValidationError("只支持有效的 MP4、MOV 或 WebM 视频", 415);
+  }
+
+  let initialIndex = 0;
+  const stream = new ReadableStream({
+    async pull(controller) {
+      if (initialIndex < initialChunks.length) {
+        controller.enqueue(initialChunks[initialIndex]);
+        initialIndex += 1;
+        return;
+      }
+      try {
+        const result = await reader.read();
+        if (result.done) {
+          controller.close();
+          return;
+        }
+        totalBytes += result.value.byteLength;
+        if (totalBytes > MAX_VIDEO_BYTES) {
+          await reader.cancel();
+          controller.error(new UploadValidationError("视频不能超过 25 MiB（本站上传限制）", 413));
+          return;
+        }
         controller.enqueue(result.value);
       } catch (error) {
         controller.error(error);
@@ -248,6 +359,31 @@ async function readBoundedBody(stream, maximumBytes) {
     offset += chunk.byteLength;
   }
   return body;
+}
+
+async function storeMedia(env, requestUrl, body, mime, byteLength) {
+  const id = crypto.randomUUID();
+  const expiresAt = Date.now() + MEDIA_TTL_MS;
+  const key = mediaKey(id, expiresAt);
+  try {
+    await env.MEDIA_BUCKET.put(key, body, {
+      httpMetadata: { contentType: mime, cacheControl: "private, no-store" },
+    });
+  } catch (error) {
+    if (error instanceof UploadValidationError) return json({ error: error.message }, error.status);
+    console.error("media relay storage failed", error instanceof Error ? error.name : "UnknownError");
+    return json({ error: "媒体中转暂时不可用" }, 503);
+  }
+
+  const payload = id + "." + expiresAt;
+  const token = payload + "." + await sign(payload, signingSecret(env));
+  const origin = new URL(requestUrl).origin;
+  return json({
+    ok: true,
+    url: origin + MEDIA_PATH + "/" + encodeURIComponent(token),
+    expiresAt: new Date(expiresAt).toISOString(),
+    bytes: typeof byteLength === "function" ? byteLength() : byteLength,
+  });
 }
 
 function base64Url(bytes) {
@@ -317,28 +453,34 @@ async function handleUpload(request, env) {
       return json({ error: "上传内容读取失败" }, 400);
     }
 
-    const id = crypto.randomUUID();
-    const expiresAt = Date.now() + MEDIA_TTL_MS;
-    const key = mediaKey(id, expiresAt);
+    return storeMedia(env, request.url, upload.body, upload.mime, upload.byteLength);
+  }
+
+  const rawAudioMime = normalizeAudioMime(mediaType);
+  if (ALLOWED_AUDIO_MIME_TYPES.has(rawAudioMime)) {
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_AUDIO_BYTES) return json({ error: "音频不能超过 25 MiB（本站上传限制）" }, 413);
+    let bytes;
     try {
-      await env.MEDIA_BUCKET.put(key, upload.body, {
-        httpMetadata: { contentType: upload.mime, cacheControl: "private, no-store" },
-      });
+      bytes = await readBoundedBody(request.body, MAX_AUDIO_BYTES);
+    } catch {
+      return json({ error: "上传内容读取失败" }, 400);
+    }
+    if (!bytes) return json({ error: "音频不能超过 25 MiB（本站上传限制）" }, 413);
+    if (!bytes.length || detectAudioMime(bytes) !== rawAudioMime) return json({ error: "音频内容与声明格式不一致或格式不受支持" }, 415);
+    return storeMedia(env, request.url, bytes, rawAudioMime, bytes.byteLength);
+  }
+
+  const rawVideoMime = normalizeVideoMime(mediaType);
+  if (ALLOWED_VIDEO_MIME_TYPES.has(rawVideoMime)) {
+    let upload;
+    try {
+      upload = await prepareVideoStream(request, rawVideoMime);
     } catch (error) {
       if (error instanceof UploadValidationError) return json({ error: error.message }, error.status);
-      console.error("media relay storage failed", error instanceof Error ? error.name : "UnknownError");
-      return json({ error: "媒体中转暂时不可用" }, 503);
+      return json({ error: "上传内容读取失败" }, 400);
     }
-
-    const payload = id + "." + expiresAt;
-    const token = payload + "." + await sign(payload, signingSecret(env));
-    const origin = new URL(request.url).origin;
-    return json({
-      ok: true,
-      url: origin + MEDIA_PATH + "/" + encodeURIComponent(token),
-      expiresAt: new Date(expiresAt).toISOString(),
-      bytes: upload.byteLength(),
-    });
+    return storeMedia(env, request.url, upload.body, upload.mime, upload.byteLength);
   }
 
   if (!/^multipart\/form-data\s*;/iu.test(contentType)) {
@@ -347,7 +489,7 @@ async function handleUpload(request, env) {
 
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BYTES) {
-    return json({ error: "图片不能超过 4 MiB" }, 413);
+    return json({ error: "上传请求超过本站媒体上传限制" }, 413);
   }
 
   let body;
@@ -356,7 +498,7 @@ async function handleUpload(request, env) {
   } catch {
     return json({ error: "上传内容读取失败" }, 400);
   }
-  if (!body) return json({ error: "图片不能超过 4 MiB" }, 413);
+  if (!body) return json({ error: "上传请求超过本站媒体上传限制" }, 413);
 
   let form;
   try {
@@ -372,10 +514,13 @@ async function handleUpload(request, env) {
 
   const files = form.getAll("file");
   const file = files[0];
-  if (files.length !== 1 || !file || typeof file.arrayBuffer !== "function" || String(form.get("kind") || "image") !== "image") {
-    return json({ error: "当前中转服务只接收一张图片" }, 415);
+  const kind = String(form.get("kind") || "image");
+  if (files.length !== 1 || !file || typeof file.arrayBuffer !== "function" || (kind !== "image" && kind !== "audio" && kind !== "video")) {
+    return json({ error: "当前中转服务只接收一张图片或一个音频、视频文件" }, 415);
   }
-  if (file.size < 1 || file.size > MAX_IMAGE_BYTES) return json({ error: "图片不能超过 4 MiB" }, 413);
+  const maxBytes = kind === "audio" ? MAX_AUDIO_BYTES : kind === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+  const label = kind === "audio" ? "音频" : kind === "video" ? "视频" : "图片";
+  if (file.size < 1 || file.size > maxBytes) return json({ error: `${label}不能超过 ${Math.round(maxBytes / 1024 / 1024)} MiB（本站上传限制）` }, 413);
 
   let bytes;
   try {
@@ -383,30 +528,18 @@ async function handleUpload(request, env) {
   } catch {
     return json({ error: "上传内容读取失败" }, 400);
   }
-  const mime = detectImageMime(bytes);
-  if (!mime) return json({ error: "只支持有效的 JPG、PNG、WebP 或 GIF 图片" }, 415);
-
-  const id = crypto.randomUUID();
-  const expiresAt = Date.now() + MEDIA_TTL_MS;
-  const key = mediaKey(id, expiresAt);
-  try {
-    await env.MEDIA_BUCKET.put(key, bytes, {
-      httpMetadata: { contentType: mime, cacheControl: "private, no-store" },
-    });
-  } catch (error) {
-    console.error("media relay storage failed", error instanceof Error ? error.name : "UnknownError");
-    return json({ error: "媒体中转暂时不可用" }, 503);
+  const mime = kind === "audio" ? detectAudioMime(bytes)
+    : kind === "video" ? detectVideoMime(bytes)
+      : detectImageMime(bytes);
+  const declaredMime = kind === "audio" ? normalizeAudioMime(file.type)
+    : kind === "video" ? normalizeVideoMime(file.type)
+      : "";
+  if (!mime || kind !== "image" && mime !== declaredMime) {
+    return json({ error: kind === "audio" ? "音频内容与声明格式不一致或格式不受支持"
+      : kind === "video" ? "视频内容与声明格式不一致或格式不受支持"
+        : "只支持有效的 JPG、PNG、WebP 或 GIF 图片" }, 415);
   }
-
-  const payload = id + "." + expiresAt;
-  const token = payload + "." + await sign(payload, signingSecret(env));
-  const origin = new URL(request.url).origin;
-  return json({
-    ok: true,
-    url: origin + MEDIA_PATH + "/" + encodeURIComponent(token),
-    expiresAt: new Date(expiresAt).toISOString(),
-    bytes: bytes.byteLength,
-  });
+  return storeMedia(env, request.url, bytes, mime, bytes.byteLength);
 }
 
 async function handleRead(url, env) {
@@ -440,7 +573,7 @@ async function handleRead(url, env) {
   }
   if (!media) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
-  const contentType = ALLOWED_MIME_TYPES.has(String(media.httpMetadata?.contentType || ""))
+  const contentType = ALLOWED_MEDIA_MIME_TYPES.has(String(media.httpMetadata?.contentType || ""))
     ? media.httpMetadata.contentType
     : "application/octet-stream";
   return new Response(media.body, {

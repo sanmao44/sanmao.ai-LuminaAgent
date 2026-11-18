@@ -1,0 +1,8 @@
+.cangyuan-image-model-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0}
+.cangyuan-image-wide-field{grid-column:1/-1;min-width:0}
+.cangyuan-image-model-options textarea{box-sizing:border-box;width:100%;min-height:58px;resize:vertical;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--text);font:inherit;font-size:11px;line-height:1.45;outline:0}
+.cangyuan-image-model-options textarea:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 14%,transparent)}
+.cangyuan-image-model-options em{display:block;margin-top:4px;color:var(--muted);font-size:9px;font-style:normal;line-height:1.4}
+.cangyuan-image-nested-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.cangyuan-image-inline-warning{margin:5px 0 0;color:var(--danger,#c75151);font-size:10px;line-height:1.45}
+@media(max-width:520px){.cangyuan-image-nested-options{grid-template-columns:minmax(0,1fr)}}

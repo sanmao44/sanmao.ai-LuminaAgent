@@ -1,6 +1,6 @@
 # SANMAO.AI 临时媒体中转服务
 
-公共媒体中转让远程模型读取用户电脑上的参考图片。发行版在确有需要时会按需启动免费临时通道，不要求用户订阅、注册账号或配置域名。Cloudflare Worker + R2 是可选的稳定共享部署方案，不是发布或使用本应用的前置条件。
+公共媒体中转让远程模型读取用户电脑上的参考图片、音频和视频。发行版在确有需要时会按需启动免费临时通道，不要求用户订阅、注册账号或配置域名。Cloudflare Worker + R2 是可选的稳定共享部署方案，不是发布或使用本应用的前置条件。
 
 ## 面向普通用户
 
@@ -53,33 +53,33 @@ npx wrangler r2 bucket lifecycle add sanmao-media-relay expire-media-after-one-d
 npx wrangler r2 bucket lifecycle list sanmao-media-relay
 ```
 
-7. 检查 `https://<worker-host>/api/health` 返回 `200` 和 `"ok":true`，再用 SANMAO.AI 测试一张参考图的上传及回读。
+7. 检查 `https://<worker-host>/api/health` 返回 `200` 和 `"ok":true`，再用 SANMAO.AI 测试图片、音频、视频的上传及回读。
 
-8. 将 Worker 的稳定 HTTPS 根地址写入仓库根目录 `relay/default-config.json` 的 `defaultMediaRelayUrl` 字段。它是公开地址，不包含签名密钥。先确认 `/api/health`、上传和签名图片回读均成功，再从包含该配置的 `main` 构建 ZIP 和 DMG。
+8. 将 Worker 的稳定 HTTPS 根地址写入仓库根目录 `relay/default-config.json` 的 `defaultMediaRelayUrl` 字段。它是公开地址，不包含签名密钥。先确认 `/api/health`、上传和签名媒体回读均成功，再从包含该配置的 `main` 构建 ZIP 和 DMG。
 
 ## 费用、滥用与停用
 
-- 公开匿名上传入口限制图片为 4 MiB，并通过 Cloudflare Rate Limiting 按 IP 约束频率。该计数是按 Cloudflare 位置分布的近似值，可能超出阈值，也可能让共享出口 IP 的用户共同触发限流；它不是硬性的用量或费用封顶。
+- 公开匿名上传入口按本站产品策略限制图片为 30 MiB、音频和视频各为 25 MiB，并通过 Cloudflare Rate Limiting 按 IP 约束频率。这些是本站中转限制，不代表上游模型厂商的通用格式或大小限制。该计数是按 Cloudflare 位置分布的近似值，可能超出阈值，也可能让共享出口 IP 的用户共同触发限流；它不是硬性的用量或费用封顶。
 - 上线前启用 Cloudflare 账号的用量/账单通知，并定期查看 Worker 请求量、CPU 错误和 R2 存储与操作量。Worker 可观测性已开启。不要对外承诺服务永久免费或绝对可用。
-- 暂停新上传：在 Worker 的变量中将 `MEDIA_UPLOADS_ENABLED` 设为 `false` 并部署。健康检查和新上传会返回 `503`，已有签名图片仍可读到各自 30 分钟到期。完全停服可删除 Worker；R2 lifecycle 规则仍负责清理存量对象。
-- 图片会经过 Cloudflare Worker 并存入项目方的 R2 bucket。签名链接无需登录即可在有效期内读取，因此不要上传不应交给所选模型服务商处理的图片。
+- 暂停新上传：在 Worker 的变量中将 `MEDIA_UPLOADS_ENABLED` 设为 `false` 并部署。健康检查和新上传会返回 `503`，已有签名媒体仍可读到各自 30 分钟到期。完全停服可删除 Worker；R2 lifecycle 规则仍负责清理存量对象。
+- 图片、音频和视频会经过 Cloudflare Worker 并存入项目方的 R2 bucket。签名链接无需登录即可在有效期内读取，因此不要上传不应交给所选模型服务商处理的媒体。
 
 ## 高级用户自托管 Docker relay
 
 1. 准备一个域名，把 DNS A/AAAA 记录指向服务器，并确保服务器 `80/443` 端口可访问。
-2. 将 `relay/.env.example` 复制为 `relay/.env`，填写 `SANMAO_RELAY_DOMAIN`、`SANMAO_RELAY_PUBLIC_BASE_URL` 和随机的 `SANMAO_MASTER_KEY`。域名配置必须一致。
+2. 将 `relay/.env.example` 复制为 `relay/.env`，填写 `SANMAO_RELAY_DOMAIN`、`SANMAO_RELAY_PUBLIC_BASE_URL`、随机的 `SANMAO_MASTER_KEY` 和至少 32 字节随机值的 `SANMAO_MEDIA_RELAY_UPLOAD_TOKEN`。可用 `openssl rand -hex 32` 生成后者。域名配置必须一致。
 3. 在仓库根目录执行：
 
 ```bash
 docker compose -f relay/docker-compose.yml --env-file relay/.env up -d --build
 ```
 
-4. Caddy 会申请和续期 HTTPS。检查 `https://你的域名/api/health`，再将该地址配置为客户端的 `SANMAO_MEDIA_RELAY_URL`。
+4. Caddy 会申请和续期 HTTPS。检查 `https://你的域名/api/health`，再将该地址配置为 SANMAO.AI 服务端的 `SANMAO_MEDIA_RELAY_URL`，并在该服务端配置相同的 `SANMAO_MEDIA_RELAY_UPLOAD_TOKEN`。上传令牌只用于自托管 relay，不能放入浏览器端配置、仓库或公开配置文件；Cloudflare Worker 共享 relay 仍使用其单独的限流保护。
 
 ## 接口与兼容性
 
-- `POST /api/relay/media`：Worker 接受 `image/jpeg`、`image/png`、`image/webp` 或 `image/gif` 原始请求体；自托管服务仍兼容 `multipart/form-data`（`file` 和 `kind=image`）。
-- `GET /api/relay/media/<token>`：读取短期签名图片。
+- `POST /api/relay/media`：Worker 接受受限 MIME 的原始图片、音频或视频请求体；自托管服务支持 `multipart/form-data`（`file` 和 `kind=image|audio|video`）。本站限制图片 30 MiB、MP3/WAV/OGG/FLAC/AAC/M4A 音频 25 MiB、MP4/MOV/WebM 视频 25 MiB。
+- `GET /api/relay/media/<token>`：读取短期签名图片、音频或视频。
 - `GET /api/health`：健康检查。
 
-客户端只转发本地图片，不会转发已有公网图片 URL。Worker 的轻量格式/尺寸检查与客户端的完整图片解码校验配合使用；Worker 本身不承担图像转码。
+客户端只转发本地媒体，不会转发已有公网媒体 URL。Worker 对图片执行轻量格式/尺寸检查，对音频和视频检查容器签名及大小；Worker 本身不承担媒体转码。

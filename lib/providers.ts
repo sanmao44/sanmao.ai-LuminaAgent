@@ -1,19 +1,22 @@
 import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
 import type { ModelProviderFailure } from '@/packages/contracts/model';
 import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
-import type { ImageOutputFormat } from '@/packages/contracts/creative';
+import type { ImageModelParameters, ImageOutputFormat } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
 import { agnesModelCatalog } from './agnes';
 import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
-import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';
+import type { CangyuanImageAdvancedParameter, CangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
+import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';
+import { isIP } from 'node:net';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 
 export type RuntimeProvider = {
   id: string;
@@ -595,7 +598,7 @@ function isApimartProvider(provider: RuntimeProvider) {
   return provider.platform === 'apimart' || /(^|\.)api\.apimart\.ai$/i.test(new URL(runtimeBaseUrl(provider)).hostname);
 }
 
-const PROVIDER_IMAGE_INPUT_MAX_BYTES = 25 * 1024 * 1024;
+const PROVIDER_IMAGE_INPUT_MAX_BYTES = PROVIDER_IMAGE_REFERENCE_MAX_BYTES;
 
 /**
  * 65535/APIMart image_urls inputs are URL transports: the
@@ -629,13 +632,12 @@ function isPrivateImageReferenceUrl(value: string) {
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
-    const host = parsed.hostname.toLowerCase();
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    const family = isIP(host);
     return parsed.username.length > 0 || parsed.password.length > 0
-      || host === 'localhost' || host === '::1' || host === '0.0.0.0'
-      || host === '169.254.169.254' || /^127\./.test(host)
-      || /^10\./.test(host) || /^192\.168\./.test(host)
-      || /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
-      || host.endsWith('.local');
+      || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')
+      || host.endsWith('.internal') || host.endsWith('.home.arpa') || host.endsWith('.lan')
+      || Boolean(family && !isPublicImageAddress(host));
   } catch {
     return true;
   }
@@ -653,24 +655,14 @@ function providerMediaRelayUnavailableError(detail: string) {
 }
 
 async function fetchProviderImageDataUrl(value: string, signal?: AbortSignal) {
-  if (isPrivateImageReferenceUrl(value)) throw providerImageInputError('图片地址不是可安全读取的 HTTPS/HTTP 地址，请重新上传图片。');
-  let response: Response;
+  if (isPrivateImageReferenceUrl(value)) throw providerImageInputError('图片地址不是可安全读取的 HTTPS/HTTP 公网地址，请重新上传图片。');
+  let bytes: Buffer;
   try {
-    response = await fetch(value, {
-      cache: 'no-store',
-      redirect: 'error',
-      signal: combineSignals(signal, 30_000),
-    });
+    bytes = Buffer.from(await providerImageReferenceReader.read(value, signal));
   } catch (error) {
-    const detail = error instanceof Error && /timed out|timeout/i.test(error.message)
-      ? '读取图片地址超时，请重新上传图片或检查图片地址。'
-      : '读取图片地址失败，请重新上传图片或检查图片地址。';
-    throw providerImageInputError(detail);
+    if (signal?.aborted) throw signal.reason || error;
+    throw providerImageInputError(error instanceof Error ? error.message : '读取图片地址失败，请重新上传图片或检查地址。');
   }
-  if (!response.ok) throw providerImageInputError(`读取图片地址返回 HTTP ${response.status}，请重新上传图片。`);
-  const declaredLength = Number(response.headers.get('content-length') || 0);
-  if (declaredLength > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB，请先压缩后重试。');
-  const bytes = Buffer.from(await response.arrayBuffer());
   if (!bytes.length || bytes.length > PROVIDER_IMAGE_INPUT_MAX_BYTES) throw providerImageInputError('图片超过 25 MiB 或内容为空，请先压缩后重试。');
   const mime = imageMimeFromBytes(bytes);
   if (!mime) throw providerImageInputError('地址返回的内容不是有效的 PNG、JPEG、WebP、GIF 或 BMP 图片。');
@@ -732,7 +724,9 @@ async function prepareProviderImageInputs(provider: RuntimeProvider, values: str
 const CANGYUAN_IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 const CANGYUAN_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
-async function uploadCangyuanImage(provider: RuntimeProvider, value: string, signal?: AbortSignal) {
+type CangyuanImageUpload = { bytes: Buffer; mime: string };
+
+async function prepareCangyuanImageUpload(provider: RuntimeProvider, value: string, signal?: AbortSignal): Promise<CangyuanImageUpload> {
   const materialized = await materializeProviderImageInput(provider, value, signal);
   const dataUrl = /^https?:\/\//i.test(materialized)
     ? await fetchProviderImageDataUrl(materialized, signal)
@@ -744,14 +738,17 @@ async function uploadCangyuanImage(provider: RuntimeProvider, value: string, sig
   if (!parsed.bytes.length || parsed.bytes.length > CANGYUAN_IMAGE_MAX_BYTES) {
     throw providerImageInputError('沧元参考图不能超过 20 MB，请压缩后重新上传。');
   }
+  return { bytes: parsed.bytes, mime: parsed.mime };
+}
 
+async function uploadCangyuanImage(provider: RuntimeProvider, image: CangyuanImageUpload, signal?: AbortSignal) {
   const uploadResponse = await fetchJson(providerEndpoint(provider, undefined, '/images/uploads'), {
     method: 'POST',
     headers: { ...authHeaders(provider), 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      bytes: parsed.bytes.length,
-      content_type: parsed.mime,
-      content_md5: createHash('md5').update(parsed.bytes).digest('base64'),
+      bytes: image.bytes.length,
+      content_type: image.mime,
+      content_md5: createHash('md5').update(image.bytes).digest('base64'),
     }),
   }, 30000, signal);
   const uploadData = uploadResponse?.data && typeof uploadResponse.data === 'object'
@@ -778,7 +775,7 @@ async function uploadCangyuanImage(provider: RuntimeProvider, value: string, sig
     putResponse = await fetch(uploadUrl, {
       method: 'PUT',
       headers: uploadHeaders,
-      body: parsed.bytes,
+      body: image.bytes,
       cache: 'no-store',
       redirect: 'error',
       signal: combineSignals(signal, 30000),
@@ -1467,7 +1464,7 @@ async function waitForCangyuanImageTask(provider: RuntimeProvider, initial: any,
   throw acceptedProviderTaskError(new Error(`沧元图片任务 ${taskId} 等待超时，请稍后到服务商控制台查看任务状态`), taskId);
 }
 
-type CangyuanImageRequestInput = {
+type CangyuanImageRequestInput = ImageModelParameters & {
   prompt: string;
   references: string[];
   mask?: string;
@@ -1477,7 +1474,6 @@ type CangyuanImageRequestInput = {
   height?: number;
   sizeMode?: 'system' | 'custom';
   quality?: string;
-  resolution?: string;
   outputFormat?: ImageOutputFormat;
   responseFormat?: 'url' | 'b64_json';
   background?: 'transparent' | 'opaque' | 'auto';
@@ -1485,7 +1481,19 @@ type CangyuanImageRequestInput = {
 };
 
 function cangyuanParameterError(model: string, parameter: string, value: string) {
-  return new Error(`沧元模型 ${model} 的文档未确认参数 ${parameter}=${value}，请改用该模型支持的选项。`);
+  const labels: Record<string, string> = {
+    resolution: '输出清晰度', tier: '生成档位', series: '图片系列', seed: '随机种子',
+    enable_prompt_expansion: '提示词扩写', quality: '图片质量', output_format: '输出格式',
+    background: '背景方式', response_format: '响应格式', input_fidelity: '参考图保真度',
+    size: '图片尺寸', aspect_ratio: '图片比例', style: '风格偏好', negative_prompt: '不希望出现的内容',
+    no: '排除内容', layer_decomposition: '分层输出', layer_decomposition_options: '分层选项',
+    optimize_prompt_options: '提示词优化', watermark: '水印', safety_identifier: '安全追踪标识', markup: '透明标记图',
+    output_compression: '图片压缩', moderation: '内容审核', complexity: '构图规划',
+    frame_count: '动画帧数', frame_duration_ms: '单帧时长', chaos: '画面变化幅度', exp: '实验风格强度',
+    hd: '原生高清档', iw: '参考图影响力', raw: '原始风格', reference: '参考图用途',
+    reference_slots: '参考图槽位数', speed: '生成速度', stylize: '风格化强度', sw: '风格权重', weird: '奇异度',
+  };
+  return new Error(`沧元模型 ${model} 不支持${labels[parameter] || '参数'}“${value}”，请调整为该模型支持的设置。`);
 }
 
 function cangyuanAspectRatioMatchesDimensions(width: number, height: number, ratio: string) {
@@ -1517,6 +1525,23 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
     if (input.sizeMode === 'custom') throw cangyuanParameterError(rawModelId, 'size', 'custom');
     if (input.aspectRatio && !['1:1', 'auto', '自动'].includes(input.aspectRatio)) throw cangyuanParameterError(rawModelId, 'aspect_ratio/size', input.aspectRatio);
     if (input.resolution && !['1K', 'auto', '自动'].includes(input.resolution)) throw cangyuanParameterError(rawModelId, 'size', input.resolution);
+    if (input.tier) throw cangyuanParameterError(rawModelId, 'tier', input.tier);
+    if (input.series) throw cangyuanParameterError(rawModelId, 'series', input.series);
+    if (input.seed) throw cangyuanParameterError(rawModelId, 'seed', input.seed);
+    if (input.enablePromptExpansion !== undefined) throw cangyuanParameterError(rawModelId, 'enable_prompt_expansion', String(input.enablePromptExpansion));
+    const unverifiedParameters: ReadonlyArray<[unknown, string]> = [
+      [input.style, 'style'], [input.negativePrompt, 'negative_prompt'], [input.layerDecomposition, 'layer_decomposition'],
+      [input.layerMaxImages, 'layer_decomposition_options'], [input.layerTextRecognition, 'layer_decomposition_options'],
+      [input.optimizePrompt, 'optimize_prompt_options'], [input.watermark, 'watermark'], [input.safetyIdentifier, 'safety_identifier'],
+      [input.markupImage, 'markup'], [input.outputCompression, 'output_compression'], [input.moderation, 'moderation'],
+      [input.complexity, 'complexity'], [input.frameCount, 'frame_count'], [input.frameDurationMs, 'frame_duration_ms'],
+      [input.chaos, 'chaos'], [input.experimentalStyle, 'exp'], [input.hd, 'hd'], [input.referenceImageWeight, 'iw'],
+      [input.rawStyle, 'raw'], [input.referenceMode, 'reference'], [input.referenceSlots, 'reference_slots'],
+      [input.speed, 'speed'], [input.stylize, 'stylize'], [input.styleWeight, 'sw'], [input.weird, 'weird'],
+    ];
+    for (const [value, name] of unverifiedParameters) {
+      if (value !== undefined) throw cangyuanParameterError(rawModelId, name, String(value));
+    }
     if (input.quality && !['自动', 'auto'].includes(input.quality)) throw cangyuanParameterError(rawModelId, 'quality', input.quality);
     if (input.outputFormat && input.outputFormat !== 'png') throw cangyuanParameterError(rawModelId, 'output_format', input.outputFormat);
     if (input.background && input.background !== 'auto') throw cangyuanParameterError(rawModelId, 'background', input.background);
@@ -1534,8 +1559,160 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
       : `沧元模型 ${rawModelId} 的文档没有确认参考图输入，请移除参考图。`);
   }
   if (input.mask && !profile.supportsMask) throw new Error(`沧元模型 ${rawModelId} 的文档未声明支持蒙版，请移除蒙版或更换支持蒙版的模型。`);
+  if (profile.requiresReference && !input.references.length) throw new Error(`沧元模型 ${rawModelId} 至少需要一张参考图，请先添加图片。`);
+  if (input.markupImage && !profile.supportsMarkupImage) throw cangyuanParameterError(rawModelId, 'markup', '已上传');
+  if (input.style && !profile.supportsStyle) throw cangyuanParameterError(rawModelId, 'style', input.style);
+  if (input.negativePrompt && !profile.supportsNegativePrompt && !profile.supportsNoParameter) {
+    throw cangyuanParameterError(rawModelId, 'negative_prompt', input.negativePrompt);
+  }
 
   const parameters: Record<string, unknown> = {};
+  const resolutionOptions = profile.resolutionEnum || [];
+  if (resolutionOptions.length) {
+    const requestedResolution = input.resolution || profile.resolutionDefault;
+    if (requestedResolution && !['auto', '自动'].includes(requestedResolution.toLowerCase())) {
+      const resolution = resolutionOptions.find((candidate) => candidate.toLowerCase() === requestedResolution.toLowerCase());
+      if (!resolution) throw cangyuanParameterError(rawModelId, 'resolution', requestedResolution);
+      parameters.resolution = resolution;
+    }
+  } else if (
+    input.resolution
+    && !['1K', 'auto', '自动'].includes(input.resolution.toUpperCase())
+    && !isCangyuanImageSize(input.resolution, profile)
+  ) {
+    throw cangyuanParameterError(rawModelId, 'resolution', input.resolution);
+  }
+
+  const tierOptions = profile.tierEnum || [];
+  if (input.tier) {
+    const tier = tierOptions.find((candidate) => candidate.toLowerCase() === input.tier!.toLowerCase());
+    if (!tier) throw cangyuanParameterError(rawModelId, 'tier', input.tier);
+    parameters.tier = tier;
+  }
+
+  const seriesOptions = profile.seriesEnum || [];
+  const requestedSeries = input.series || profile.seriesDefault;
+  if (requestedSeries) {
+    const series = seriesOptions.find((candidate) => candidate.toLowerCase() === requestedSeries.toLowerCase());
+    if (!series) throw cangyuanParameterError(rawModelId, 'series', requestedSeries);
+    parameters.series = series;
+  } else if (profile.seriesRequired) {
+    throw new Error(`沧元模型 ${rawModelId} 必须选择系列；可选值：${seriesOptions.join('、')}。`);
+  }
+
+  if (input.seed) {
+    if (!profile.supportsSeed) throw cangyuanParameterError(rawModelId, 'seed', input.seed);
+    if (profile.seedInteger || profile.seedWireType === 'integer') {
+      const seed = Number(input.seed);
+      if (!/^-?\d+$/.test(input.seed) || !Number.isSafeInteger(seed)
+        || (profile.seedMinimum !== undefined && seed < profile.seedMinimum)
+        || (profile.seedMaximum !== undefined && seed > profile.seedMaximum)) {
+        throw cangyuanParameterError(rawModelId, 'seed', input.seed);
+      }
+      parameters.seed = seed;
+    } else {
+      parameters.seed = input.seed;
+    }
+  }
+  if (input.enablePromptExpansion !== undefined) {
+    if (!profile.supportsPromptExpansion) throw cangyuanParameterError(rawModelId, 'enable_prompt_expansion', String(input.enablePromptExpansion));
+    parameters.enable_prompt_expansion = input.enablePromptExpansion;
+  }
+  if (input.style) parameters.style = input.style;
+  if (input.negativePrompt) {
+    parameters[profile.supportsNoParameter ? 'no' : 'negative_prompt'] = input.negativePrompt;
+  }
+  if (input.layerDecomposition !== undefined) {
+    if (!profile.supportsLayerDecomposition) throw cangyuanParameterError(rawModelId, 'layer_decomposition', String(input.layerDecomposition));
+    parameters.layer_decomposition = input.layerDecomposition;
+  }
+  if (input.layerMaxImages !== undefined || input.layerTextRecognition !== undefined) {
+    if (!profile.supportsLayerDecomposition || input.layerDecomposition !== true) {
+      throw cangyuanParameterError(rawModelId, 'layer_decomposition_options', '普通图片模式');
+    }
+    if (input.layerMaxImages !== undefined && (!Number.isInteger(input.layerMaxImages) || input.layerMaxImages < 2 || input.layerMaxImages > 100)) {
+      throw cangyuanParameterError(rawModelId, 'layer_decomposition_options', String(input.layerMaxImages));
+    }
+    parameters.layer_decomposition_options = {
+      ...(input.layerMaxImages !== undefined ? { max_images: input.layerMaxImages } : {}),
+      ...(input.layerTextRecognition !== undefined ? { text_recognition: input.layerTextRecognition } : {}),
+    };
+  }
+  if (input.optimizePrompt !== undefined) {
+    if (!profile.supportsPromptOptimization) throw cangyuanParameterError(rawModelId, 'optimize_prompt_options', String(input.optimizePrompt));
+    if (input.optimizePrompt) parameters.optimize_prompt_options = { mode: 'standard' };
+  }
+  if (input.watermark !== undefined) {
+    if (!profile.supportsWatermarkSetting) throw cangyuanParameterError(rawModelId, 'watermark', String(input.watermark));
+    parameters.watermark = input.watermark;
+  }
+  if (input.safetyIdentifier) {
+    if (!profile.supportsSafetyIdentifier) throw cangyuanParameterError(rawModelId, 'safety_identifier', input.safetyIdentifier);
+    const maximumLength = profile.safetyIdentifierMaxLength ?? 128;
+    if (input.safetyIdentifier.length > maximumLength) throw cangyuanParameterError(rawModelId, 'safety_identifier', `最多 ${maximumLength} 个字符`);
+    parameters.safety_identifier = input.safetyIdentifier;
+  }
+
+  const supportsAdvanced = (name: CangyuanImageAdvancedParameter) => profile.advancedParameters?.includes(name) === true;
+  const addAdvancedNumber = (
+    name: CangyuanImageAdvancedParameter,
+    wireName: string,
+    label: string,
+    value: number | undefined,
+    minimum: number,
+    maximum: number,
+    step = 1,
+  ) => {
+    if (value === undefined) return;
+    if (!supportsAdvanced(name)) throw cangyuanParameterError(rawModelId, label, String(value));
+    const units = (value - minimum) / step;
+    if (!Number.isFinite(value) || value < minimum || value > maximum
+      || (step === 1 && !Number.isInteger(value))
+      || Math.abs(units - Math.round(units)) > 0.000001) {
+      throw cangyuanParameterError(rawModelId, label, String(value));
+    }
+    parameters[wireName] = value;
+  };
+  addAdvancedNumber('output_compression', 'output_compression', 'output_compression', input.outputCompression, 0, 100);
+  if (input.outputCompression !== undefined && input.outputFormat !== 'jpeg' && input.outputFormat !== 'webp') {
+    throw cangyuanParameterError(rawModelId, 'output_compression', String(input.outputCompression));
+  }
+  if (input.moderation !== undefined) {
+    if (!supportsAdvanced('moderation')) throw cangyuanParameterError(rawModelId, 'moderation', input.moderation);
+    parameters.moderation = input.moderation;
+  }
+  if (input.complexity !== undefined) {
+    if (!supportsAdvanced('complexity')) throw cangyuanParameterError(rawModelId, 'complexity', input.complexity);
+    parameters.complexity = input.complexity;
+  }
+  if (input.frameCount !== undefined && input.outputFormat !== 'gif') throw cangyuanParameterError(rawModelId, 'frame_count', String(input.frameCount));
+  if (input.frameDurationMs !== undefined && input.outputFormat !== 'gif') throw cangyuanParameterError(rawModelId, 'frame_duration_ms', String(input.frameDurationMs));
+  addAdvancedNumber('frame_count', 'frame_count', 'frame_count', input.frameCount, 2, 16);
+  addAdvancedNumber('frame_duration_ms', 'frame_duration_ms', 'frame_duration_ms', input.frameDurationMs, 20, 2000, 10);
+  addAdvancedNumber('chaos', 'chaos', 'chaos', input.chaos, 0, 100);
+  addAdvancedNumber('exp', 'exp', 'exp', input.experimentalStyle, 0, 100);
+  if (input.hd !== undefined) {
+    if (!supportsAdvanced('hd')) throw cangyuanParameterError(rawModelId, 'hd', String(input.hd));
+    parameters.hd = input.hd;
+  }
+  addAdvancedNumber('iw', 'iw', 'iw', input.referenceImageWeight, 0, 3, 0.1);
+  if (input.rawStyle !== undefined) {
+    if (!supportsAdvanced('raw')) throw cangyuanParameterError(rawModelId, 'raw', String(input.rawStyle));
+    parameters.raw = input.rawStyle;
+  }
+  if (input.referenceMode !== undefined) {
+    if (!supportsAdvanced('reference')) throw cangyuanParameterError(rawModelId, 'reference', input.referenceMode);
+    parameters.reference = input.referenceMode;
+  }
+  addAdvancedNumber('reference_slots', 'reference_slots', 'reference_slots', input.referenceSlots, 1, 8);
+  if (input.speed !== undefined) {
+    if (!supportsAdvanced('speed')) throw cangyuanParameterError(rawModelId, 'speed', input.speed);
+    parameters.speed = input.speed;
+  }
+  addAdvancedNumber('stylize', 'stylize', 'stylize', input.stylize, 0, 1000, 10);
+  addAdvancedNumber('sw', 'sw', 'sw', input.styleWeight, 0, 1000, 10);
+  addAdvancedNumber('weird', 'weird', 'weird', input.weird, 0, 3000, 50);
+
   const requestedRatio = !input.aspectRatio
     ? '1:1'
     : ['auto', '自动'].includes(input.aspectRatio)
@@ -1571,6 +1748,7 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
     const hasNonDefaultRatio = Boolean(requestedSize && /^\d+:\d+$/.test(requestedSize) && requestedSize !== '1:1');
     const hasExplicitSize = Boolean(requestedSize && !/^\d+:\d+$/.test(requestedSize));
     const resolution = input.resolution || '1K';
+    const hasSeparateResolution = resolutionOptions.length > 0;
     const hasNonDefaultResolution = !['1K', '自动'].includes(resolution);
     if (profile.supportsAspectRatio && requestedValue && requestedValue !== '1:1') {
       if (!isCangyuanAspectRatio(requestedValue, profile)) throw cangyuanParameterError(rawModelId, 'aspect_ratio', requestedValue);
@@ -1582,19 +1760,22 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
       parameters.size = requestedSize;
     } else if (hasExplicitSize && requestedSize) {
       parameters.size = requestedSize;
-    } else if (hasNonDefaultResolution) {
+    } else if (!hasSeparateResolution && hasNonDefaultResolution) {
       if (!isCangyuanImageSize(resolution, profile)) throw cangyuanParameterError(rawModelId, 'size', resolution);
       parameters.size = resolution;
     } else if (!input.aspectRatio && isCangyuanImageSize('1:1', profile) && !profile.supportsAspectRatio) {
       parameters.size = '1:1';
     } else if (input.aspectRatio === '1:1' && isCangyuanImageSize('1:1', profile) && !profile.supportsAspectRatio) {
       parameters.size = '1:1';
-    } else if (isCangyuanImageSize(resolution, profile)) {
-      parameters.size = '1K';
+    } else if (!hasSeparateResolution && isCangyuanImageSize(resolution, profile)) {
+      const defaultSize = profile.sizeRecommendations.find((value) => value.toLowerCase() === '1k')
+        || profile.sizeEnum.find((value) => value.toLowerCase() === '1k');
+      if (defaultSize) parameters.size = defaultSize;
+      else if (profile.sizeRecommendations.some((value) => /^\d+:\d+$/.test(value))) parameters.size = '1:1';
     }
   } else {
     if (requestedRatio && requestedRatio !== '1:1') throw cangyuanParameterError(rawModelId, 'aspect_ratio/size', requestedRatio);
-    if (input.resolution && !['1K', 'auto', '自动'].includes(input.resolution)) throw cangyuanParameterError(rawModelId, 'size', input.resolution);
+    if (input.resolution && !['1K', 'auto', '自动'].includes(input.resolution.toUpperCase())) throw cangyuanParameterError(rawModelId, 'resolution', input.resolution);
   }
 
   if (input.quality && input.quality !== '自动') {
@@ -1623,12 +1804,60 @@ async function generateCangyuanImage(
   signal?: AbortSignal,
 ) {
   const { count, parameters } = buildCangyuanImageParameters(rawModelId, input);
-  const references = await Promise.all(input.references.map((reference) => uploadCangyuanImage(provider, reference, signal)));
-  const mask = input.mask ? await uploadCangyuanImage(provider, input.mask, signal) : undefined;
+  if (input.markupImage && endpoint !== 'edits') throw cangyuanParameterError(rawModelId, 'markup', '仅支持改图');
+  if (input.markupImage && input.mask) throw cangyuanParameterError(rawModelId, 'markup', '不能与蒙版同时使用');
+  if (input.markupImage && !input.references.length) throw cangyuanParameterError(rawModelId, 'markup', '需要首张参考图');
+
+  let referenceUploads: Promise<string>[];
+  let markupUpload: Promise<string> | undefined;
+  if (input.markupImage) {
+    const [firstReference, markup] = await Promise.all([
+      prepareCangyuanImageUpload(provider, input.references[0], signal),
+      prepareCangyuanImageUpload(provider, input.markupImage, signal),
+    ]);
+    if (markup.mime !== 'image/png') throw providerImageInputError('透明标记图必须是 PNG 格式。');
+    let referenceMetadata: sharp.Metadata;
+    let markupMetadata: sharp.Metadata;
+    let markupStats: sharp.Stats;
+    try {
+      [referenceMetadata, markupMetadata, markupStats] = await Promise.all([
+        sharp(firstReference.bytes).metadata(),
+        sharp(markup.bytes).metadata(),
+        sharp(markup.bytes).stats(),
+      ]);
+    } catch {
+      throw providerImageInputError('透明标记图或第一张参考图无法解码，请重新上传有效图片。');
+    }
+    if (!markupMetadata.hasAlpha || markupStats.isOpaque) {
+      throw providerImageInputError('透明标记图必须包含实际透明像素。');
+    }
+    if (!referenceMetadata.width || !referenceMetadata.height || !markupMetadata.width || !markupMetadata.height
+      || referenceMetadata.width !== markupMetadata.width || referenceMetadata.height !== markupMetadata.height) {
+      throw providerImageInputError('透明标记图必须与第一张参考图的宽高完全一致。');
+    }
+    referenceUploads = [
+      uploadCangyuanImage(provider, firstReference, signal),
+      ...input.references.slice(1).map((reference) => prepareCangyuanImageUpload(provider, reference, signal)
+        .then((prepared) => uploadCangyuanImage(provider, prepared, signal))),
+    ];
+    markupUpload = uploadCangyuanImage(provider, markup, signal);
+  } else {
+    referenceUploads = input.references.map((reference) => prepareCangyuanImageUpload(provider, reference, signal)
+      .then((prepared) => uploadCangyuanImage(provider, prepared, signal)));
+  }
+  const [references, mask, markup] = await Promise.all([
+    Promise.all(referenceUploads),
+    input.mask
+      ? prepareCangyuanImageUpload(provider, input.mask, signal).then((prepared) => uploadCangyuanImage(provider, prepared, signal))
+      : Promise.resolve(undefined),
+    markupUpload || Promise.resolve(undefined),
+  ]);
+  if (markup) parameters.markup = markup;
   const body: Record<string, unknown> = {
     model: rawModelId,
     prompt: input.prompt,
     async: true,
+    ...(count > 1 ? { n: count } : {}),
     ...parameters,
     ...(references.length ? { images: references } : {}),
     ...(mask ? { mask } : {}),
@@ -1698,7 +1927,7 @@ async function waitForUpscaleTask(provider: RuntimeProvider, initial: any, signa
   throw new Error('图片超分任务等待超时，请稍后到服务商控制台查看任务状态');
 }
 
-export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; outputFormat?: 'png' | 'jpeg' | 'webp' | 'gif' | 'svg'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
+export async function generateImage(provider: RuntimeProvider, rawModelId: string, input: ImageModelParameters & { prompt: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; outputFormat?: ImageOutputFormat; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto'; references?: string[] }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   const rawReferences = input.references || [];
   if (rawReferences.some((reference) => typeof reference !== 'string' || !reference.trim())) throw new Error('参考图数据格式无效，请重新添加参考图后再提交。');
   const references = rawReferences.map(normalizeReference);
@@ -1715,6 +1944,10 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
     sizeMode: input.sizeMode,
     quality: input.quality,
     resolution: input.resolution,
+    tier: input.tier,
+    series: input.series,
+    seed: input.seed,
+    enablePromptExpansion: input.enablePromptExpansion,
     outputFormat: input.outputFormat,
     responseFormat: input.responseFormat,
     background: input.background,
@@ -1816,7 +2049,7 @@ async function refToBlob(ref: string, index: number) {
   throw new Error(`第 ${index + 1} 张参考图格式无效`);
 }
 
-export type ImageEditInput = { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; resolution?: string; fidelity?: 'high' | 'low'; outputFormat?: 'png' | 'jpeg' | 'webp' | 'gif' | 'svg'; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto' };
+export type ImageEditInput = ImageModelParameters & { prompt: string; references: string[]; mask?: string; aspectRatio?: string; count?: number; width?: number; height?: number; sizeMode?: 'system' | 'custom'; quality?: string; fidelity?: 'high' | 'low'; outputFormat?: ImageOutputFormat; responseFormat?: 'url' | 'b64_json'; background?: 'transparent' | 'opaque' | 'auto' };
 
 export function buildImageEditRequestBody(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, references: string[], count: number, size: string) {
   const jsonBody: Record<string, unknown> = {

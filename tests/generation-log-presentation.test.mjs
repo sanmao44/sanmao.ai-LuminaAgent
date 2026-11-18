@@ -15,6 +15,20 @@ test("generation log presentation keeps media and source labels stable", () => {
   assert.equal(presentation.generationLogTitle({ mode: "generate", prompt: "  ## scene **test**  " }), "scene test");
 });
 
+test("audio work history includes only saved successful outputs and honors search and source filters", () => {
+  const logs = [
+    { id: "speech-1", mode: "audio", mediaKind: "audio", status: "success", source: "workspace", prompt: "Narration for launch", modelName: "Gemini TTS", audioUrl: "/api/storage/audio?name=one.mp3" },
+    { id: "speech-2", mode: "audio", status: "success", source: "canvas", prompt: "Canvas voice", audioUrl: "/api/storage/audio?name=two.wav" },
+    { id: "speech-pending", mode: "audio", status: "pending", prompt: "Pending", audioUrl: "/api/storage/audio?name=pending.mp3" },
+    { id: "speech-unsaved", mode: "audio", status: "success", prompt: "Storage failed" },
+    { id: "image-1", mode: "generate", status: "success", prompt: "Still image", imageUrls: ["/image.png"] },
+  ];
+  assert.deepEqual(presentation.filterAudioGenerationLogs(logs).map((log) => log.id), ["speech-1", "speech-2"]);
+  assert.deepEqual(presentation.filterAudioGenerationLogs(logs, { query: "gemini" }).map((log) => log.id), ["speech-1"]);
+  assert.deepEqual(presentation.filterAudioGenerationLogs(logs, { source: "canvas" }).map((log) => log.id), ["speech-2"]);
+  assert.deepEqual(presentation.filterAudioGenerationLogs(logs, { media: "image" }), []);
+});
+
 test("ratio and output conversion remains independent from React", () => {
   assert.equal(presentation.exactRatioFromDimensions(1920, 1080), "16:9");
   assert.equal(presentation.ratioFromDimensions(1000, 500), "2:1");
@@ -29,6 +43,36 @@ test("generation log metadata fallbacks stay deterministic", () => {
   assert.equal(presentation.logAspectRatioLabel(imageLog, undefined), "2:1");
   assert.equal(presentation.logDurationTone(5000), "fast");
   assert.equal(presentation.logDurationTone(45000), "slow");
+});
+
+test("generation log details display localized image and speech options", () => {
+  assert.deepEqual(presentation.generationLogParameterRows({
+    id: "image-options",
+    mode: "generate",
+    status: "success",
+    prompt: "image",
+    tier: "4k",
+    series: "sunburst",
+    outputFormat: "webp",
+  }), [
+    { label: "输出档位", value: "4K" },
+    { label: "生成系列", value: "日芒系列" },
+    { label: "输出格式", value: "WEBP" },
+  ]);
+  assert.deepEqual(presentation.generationLogParameterRows({
+    id: "speech-options",
+    mode: "audio",
+    mediaKind: "audio",
+    status: "success",
+    prompt: "speech",
+    voice: "Ursa",
+    format: "wav",
+    speed: 1.25,
+  }), [
+    { label: "音色", value: "大熊" },
+    { label: "输出格式", value: "WAV" },
+    { label: "语速", value: "1.25 倍" },
+  ]);
 });
 
 test("generation log composer drafts restore only safe image-generation parameters", () => {

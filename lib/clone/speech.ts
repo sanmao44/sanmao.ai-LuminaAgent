@@ -10,14 +10,14 @@
  */
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
 import { isCangyuanProvider } from '../cangyuan-provider';
-import { getRuntimeModel } from '../store';
+import { getRuntimeModelCandidates } from '../store';
 import { getCangyuanSpeechModelProfile, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
-export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModel>>>;
+export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModelCandidates>>[number]>;
 
 export async function resolveSpeechRuntime(modelId: string | null = null) {
-  const runtime = await getRuntimeModel(modelId, 'audio');
-  return runtime ?? null;
+  const candidates = await getRuntimeModelCandidates(modelId, 'audio');
+  return candidates.find((runtime) => runtime.model.capabilities.includes('speech')) ?? null;
 }
 
 export function speechEndpoint(provider: RuntimeProvider) {

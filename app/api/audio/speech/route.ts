@@ -50,6 +50,8 @@ export async function POST(request: Request) {
       durationMs: Date.now() - startedAt,
       modelId: result.modelId,
       modelName: result.modelName,
+      audioUrl: result.storageUrl,
+      ...(result.storageError ? { storageError: result.storageError } : {}),
     }).catch(() => undefined);
     return new Response(Buffer.from(result.data), {
       headers: {
@@ -60,6 +62,10 @@ export async function POST(request: Request) {
         'X-Audio-Engine': result.engine,
         ...(result.modelName ? { 'X-Audio-Model': result.modelName } : {}),
         ...(result.modelId ? { 'X-Audio-Model-Id': result.modelId } : {}),
+        ...(result.storageUrl ? { 'X-Audio-Url': result.storageUrl } : {}),
+        // HTTP headers are ByteString values; encode the user-visible Chinese
+        // message and let the workspace decode it before displaying it.
+        ...(result.storageError ? { 'X-Audio-Storage-Error': encodeURIComponent(result.storageError) } : {}),
         ...(logId ? { 'X-Audio-Log-Id': logId } : {}),
       },
     });

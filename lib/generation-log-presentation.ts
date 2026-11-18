@@ -1,4 +1,5 @@
 import type { GenerationLog } from "@/lib/generation-log";
+import { cangyuanSpeechVoiceLabel } from "@/packages/contracts/audio-synthesis";
 import { normalizeReferenceRecords } from "@/lib/reference-images";
 import { IMAGE_RATIOS } from "@/lib/creation/settings";
 
@@ -82,6 +83,24 @@ export function generationMediaKind(log: GenerationLog): GenerationLogPresentati
     return 'image';
 }
 
+export function filterAudioGenerationLogs(
+    logs: readonly GenerationLog[],
+    options: { query?: string; source?: string; media?: string } = {},
+) {
+    if (options.media && options.media !== 'all' && options.media !== 'audio') return [];
+    const query = String(options.query || '').trim().toLowerCase();
+    const source = options.source || 'all';
+    return logs.filter((log) => {
+        if (generationMediaKind(log) !== 'audio' || log.status !== 'success' || !log.audioUrl) return false;
+        if (source === 'favorite' || source === 'edit' || source === 'upscale') return false;
+        if (source === 'generate' && (log.source || 'workspace') !== 'workspace') return false;
+        if (source === 'agent' && log.source !== 'agent') return false;
+        if (source === 'canvas' && log.source !== 'canvas') return false;
+        if (query && !`${log.prompt || ''} ${log.modelName || ''} ${log.providerName || ''}`.toLowerCase().includes(query)) return false;
+        return true;
+    });
+}
+
 /** The subset of a generation log that can be safely restored into the image composer. */
 export type GenerationLogComposerDraft = {
     prompt: string;
@@ -157,6 +176,30 @@ export function logOutputSizeLabel(log: GenerationLog, spec?: ImageSpec): string
 export function logAspectRatioLabel(log: GenerationLog, spec?: ImageSpec): string {
     return log.aspectRatio || spec?.ratio || '比例未记录';
 }
+
+export function generationLogParameterRows(log: GenerationLog): Array<{ label: string; value: string }> {
+    if (generationMediaKind(log) === 'audio') {
+        return [
+            { label: '音色', value: log.voice ? cangyuanSpeechVoiceLabel(log.voice) : '模型默认音色' },
+            { label: '输出格式', value: log.format ? log.format.toUpperCase() : '服务商默认' },
+            { label: '语速', value: log.speed === undefined ? '默认' : `${log.speed} 倍` },
+        ];
+    }
+    if (generationMediaKind(log) !== 'image') return [];
+
+    const rows: Array<{ label: string; value: string }> = [];
+    if (log.tier) {
+        const tier = log.tier.trim().toLowerCase();
+        rows.push({ label: '输出档位', value: tier === 'web' ? '网页档位' : /^\d+k$/.test(tier) ? tier.toUpperCase() : log.tier });
+    }
+    if (log.series) {
+        const series = log.series.trim().toLowerCase();
+        rows.push({ label: '生成系列', value: series === 'flare' ? '光耀系列' : series === 'sunburst' ? '日芒系列' : log.series });
+    }
+    if (log.outputFormat) rows.push({ label: '输出格式', value: log.outputFormat.toUpperCase() });
+    return rows;
+}
+
 export function logDurationTone(durationMs?: number): string {
     if (!durationMs) return 'unknown';
     return durationMs < 10000 ? 'fast' : durationMs < 30000 ? 'normal' : 'slow';

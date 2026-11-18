@@ -9,6 +9,7 @@ import { enforceLocalEditMask } from '@/lib/local-edit-composite';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { normalizeStarApiLandscapeImages, normalizeStarApiLandscapePrompt } from '@/lib/image-orientation';
 import { invokeMediaModelCandidates } from '@/packages/model-runtime/media';
+import { parseImageModelParameters } from '@/packages/contracts/creative';
 
 export const runtime = 'nodejs';
 export const maxDuration = 1800;
@@ -36,6 +37,8 @@ export async function POST(request: Request) {
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('image-edit');
     const body = await request.json();
+    const parsedImageParameters = parseImageModelParameters(body);
+    if (!parsedImageParameters.ok) return Response.json({ error: parsedImageParameters.error }, { status: 400 });
     const requestedTaskId = String(body.taskId || '').trim();
     clientTaskId = /^[a-zA-Z0-9_-]{1,100}$/.test(requestedTaskId) ? requestedTaskId : '';
     const prompt = String(body.prompt || '').trim();
@@ -58,6 +61,13 @@ export async function POST(request: Request) {
     let runtime = await getRuntimeImageModelForCapability(requestedModelId, 'edit');
     if (!runtime) return Response.json({ error: '没有支持图片修改的可用模型。' }, { status: 400 });
     runtimeProviderId = runtime.provider.id;
+    const isCangyuanImageProvider = runtime.provider.platform === 'cangyuan';
+    if (parsedImageParameters.value.markupImage && !isCangyuanImageProvider) {
+      return Response.json({ error: '透明标记图仅支持已确认兼容的沧元图片型号。' }, { status: 400 });
+    }
+    if (parsedImageParameters.value.markupImage && mask) {
+      return Response.json({ error: '透明标记图不能与蒙版同时使用。' }, { status: 400 });
+    }
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;
     const requestAspectRatio = String(body.aspectRatio || '自动');
     const requestWidth = Number(body.width || 0);
@@ -78,7 +88,9 @@ export async function POST(request: Request) {
       modelName: runtime.model.displayName,
       providerName: runtime.provider.name,
       aspectRatio: requestAspectRatio,
-      resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
+      resolution: isCangyuanImageProvider
+        ? typeof body.resolution === 'string' && body.resolution.trim() ? body.resolution.trim() : undefined
+        : ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
       outputSize: requestWidth && requestHeight ? `${requestWidth}×${requestHeight}` : undefined,
       count: Number(body.count || 1),
       references: referenceRecords.length ? referenceRecords : undefined,
@@ -98,7 +110,10 @@ export async function POST(request: Request) {
       width: requestWidth,
       height: requestHeight,
       sizeMode,
-      resolution: ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase()) ? String(body.resolution).toUpperCase() : undefined,
+      ...(isCangyuanImageProvider ? parsedImageParameters.value : {}),
+      ...(isCangyuanImageProvider === false && ['1K', '2K', '3K', '4K'].includes(String(body.resolution || '').toUpperCase())
+        ? { resolution: String(body.resolution).toUpperCase() }
+        : {}),
       quality: String(body.quality || '自动'),
       fidelity: body.fidelity === 'low' ? 'low' as const : 'high' as const,
       mask,

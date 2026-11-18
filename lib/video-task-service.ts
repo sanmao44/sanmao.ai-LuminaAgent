@@ -73,6 +73,8 @@ function cleanInput(
     ...(Number.isFinite(Number(input.referenceVideoStartSeconds)) ? { referenceVideoStartSeconds: Number(input.referenceVideoStartSeconds) } : {}),
     ...(Number.isFinite(Number(input.referenceVideoEndSeconds)) ? { referenceVideoEndSeconds: Number(input.referenceVideoEndSeconds) } : {}),
     ...(input.requireAudio !== undefined ? { requireAudio: Boolean(input.requireAudio) } : {}),
+    ...(typeof input.generateAudio === 'boolean' ? { generateAudio: input.generateAudio } : {}),
+    ...(input.modelParameters && Object.keys(input.modelParameters).length ? { modelParameters: { ...input.modelParameters } } : {}),
   };
 }
 
@@ -290,6 +292,8 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     // storage error so the UI can offer "再次保存".
     error: stored.storageError || '',
     costUsd: result.costUsd,
+    providerProgress: result.progress ?? task.providerProgress,
+    ...(result.usage || task.providerUsage ? { providerUsage: result.usage || task.providerUsage } : {}),
     completedAt,
     nextPollAt: undefined,
   });
@@ -303,6 +307,8 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     storageError: stored.storageError,
     providerTaskId: task.providerTaskId,
     costUsd: result.costUsd,
+    ...(result.usage?.completionTokens !== undefined ? { completionTokens: result.usage.completionTokens } : {}),
+    ...(result.usage?.totalTokens !== undefined ? { totalTokens: result.usage.totalTokens } : {}),
   }).catch(() => undefined);
   return updated;
 }
@@ -441,7 +447,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     }
     if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
     const pollInterval = isAgnesProvider(runtime.provider) ? 1500 : isCangyuanVideoProvider(runtime.provider) ? 5000 : 2000;
-    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + pollInterval, costUsd: result.costUsd });
+    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, ...(result.usage ? { providerUsage: result.usage } : {}), providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + pollInterval, costUsd: result.costUsd });
     return updated;
   } catch (error) {
     const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
@@ -467,6 +473,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
           providerModel: recovered.model || runtime.model.rawId,
           providerStatus: recovered.providerStatus,
           providerProgress: recovered.progress,
+          ...(recovered.usage ? { providerUsage: recovered.usage } : {}),
           providerResponse: recovered.raw,
           startedAt: new Date().toISOString(),
           nextPollAt: Date.now() + 2000,
@@ -549,6 +556,7 @@ async function refreshVideoTaskOnce(id: string) {
         providerModel: result.model || runtime.model.rawId,
         providerStatus: result.providerStatus,
         providerProgress: result.progress,
+        ...(result.usage ? { providerUsage: result.usage } : {}),
         providerResponse: result.raw,
         startedAt: task.startedAt || new Date().toISOString(),
         nextPollAt: Date.now() + 2000,
@@ -581,7 +589,7 @@ async function refreshVideoTaskOnce(id: string) {
     if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
     const pollCount = task.pollCount + 1;
     const interval = isCangyuanVideoProvider(provider) ? 5000 : isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
-    return applyProviderUpdate(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
+    return applyProviderUpdate(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, ...(result.usage ? { providerUsage: result.usage } : {}), providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
   } catch (error) {
     if (isRetryableVideoProviderError(error) || (isAgnesProvider(provider) && isRetryableAgnesPollError(error))) {
       const pollCount = task.pollCount + 1;
