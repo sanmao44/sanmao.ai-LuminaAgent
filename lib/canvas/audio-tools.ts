@@ -116,6 +116,17 @@ export function updateCanvasAudioMusicDraftDocument(document: CanvasDocument, no
   return changed ? { ...document, nodes } : document;
 }
 
+export function updateCanvasAudioSoundEffectDraftDocument(document: CanvasDocument, nodeId: string, draft: CanvasAudioMusicDraft) {
+  let changed = false;
+  const nodes = document.nodes.map((node) => {
+    if (node.id !== nodeId || node.type !== 'media' || node.data.kind !== 'audio') return node;
+    if (JSON.stringify(node.data.soundEffectDraft) === JSON.stringify(draft)) return node;
+    changed = true;
+    return { ...node, data: { ...node.data, soundEffectDraft: draft } };
+  });
+  return changed ? { ...document, nodes } : document;
+}
+
 export function updateCanvasAudioMusicTaskDocument(document: CanvasDocument, nodeId: string, task: CanvasAudioMusicTask) {
   let changed = false;
   const nodes = document.nodes.map((node) => {

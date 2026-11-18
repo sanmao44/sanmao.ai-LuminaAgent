@@ -4,6 +4,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(process.cwd());
 const tools = load('./lib/canvas/audio-tools');
+const polling = load('./lib/cangyuan-media-task-polling');
 
 function audioDocument() {
   return { version: 1, nodes: [{ id: 'audio-1', type: 'media', x: 0, y: 0, data: { kind: 'audio' } }], edges: [], groups: [] };
@@ -33,6 +34,21 @@ test('canvas speech model discovery excludes incompatible and transcription-only
   assert.deepEqual(tools.canvasAudioTranscriptionModels(models, providers).map((model) => model.id), ['asr-compatible', 'dual-compatible']);
 });
 
+test('canvas music and sound-effect model lists stay separate and submit through the matching model profile', () => {
+  const models = [
+    { id: 'music-lyria', providerId: 'cangyuan', rawId: 'lyria-3.5', kind: 'audio', enabled: true, published: true, capabilities: ['music-generate', 'sound-effect'] },
+    { id: 'sfx-elevenlabs', providerId: 'cangyuan', rawId: 'elevenlabs-sound-effects-v3', kind: 'audio', enabled: true, published: true, capabilities: ['music-generate', 'sound-effect'] },
+    { id: 'unknown-sfx', providerId: 'cangyuan', rawId: 'unknown-sfx', kind: 'audio', enabled: true, published: true, capabilities: ['sound-effect'] },
+  ];
+  const providers = [{ id: 'cangyuan', type: 'openai-compatible', creativeTaskProtocol: 'cangyuan-creative-v1', modelLibraryEnabled: true }];
+
+  assert.deepEqual(tools.canvasAudioMusicModels(models, providers).map((model) => model.id), ['music-lyria']);
+  assert.deepEqual(tools.canvasAudioSoundEffectModels(models, providers).map((model) => model.id), ['sfx-elevenlabs']);
+  assert.deepEqual(tools.buildCanvasMusicRequest('sfx-elevenlabs', 'elevenlabs-sound-effects-v3', '雨点敲击玻璃', {}), {
+    kind: 'music', modelId: 'sfx-elevenlabs', prompt: '雨点敲击玻璃', options: {},
+  });
+});
+
 test('canvas speech history migrates legacy single records before appending', () => {
   const previous = { text: '旧旁白', engine: 'provider', createdAt: 1 };
   const next = { text: '新旁白', engine: 'provider', createdAt: 2 };
@@ -47,6 +63,31 @@ test('canvas music tasks append by id and retain prior task records', () => {
   assert.equal(withSecond.nodes[0].data.musicTasks.length, 1);
   assert.equal(withSecond.nodes[0].data.musicTasks[0].status, 'succeeded');
   assert.equal(withSecond.nodes[0].data.status, 'completed');
+});
+
+test('canvas music and sound-effect drafts persist independently', () => {
+  const musicDraft = { modelId: 'music-1', prompt: '轻快的爵士乐', options: { duration: 30 } };
+  const soundEffectDraft = { modelId: 'sfx-1', prompt: '雨声敲击玻璃', options: { duration: 5 } };
+  const withMusic = tools.updateCanvasAudioMusicDraftDocument(audioDocument(), 'audio-1', musicDraft);
+  const withSoundEffect = tools.updateCanvasAudioSoundEffectDraftDocument(withMusic, 'audio-1', soundEffectDraft);
+  assert.deepEqual(withSoundEffect.nodes[0].data.musicDraft, musicDraft);
+  assert.deepEqual(withSoundEffect.nodes[0].data.soundEffectDraft, soundEffectDraft);
+});
+
+test('canvas audio polling rotates through every active task while task updates merge by id', () => {
+  const older = { id: 'older', modelId: 'sfx-1', providerModel: 'suno-sfx', modelName: '音效模型', status: 'running', outputs: [], createdAt: '2026-11-18T00:00:00.000Z' };
+  const newer = { id: 'newer', modelId: 'music-1', providerModel: 'lyria-3.5', modelName: '音乐模型', status: 'running', outputs: [], createdAt: '2026-11-18T00:01:00.000Z' };
+  const firstBatch = polling.nextCangyuanTaskPollBatch([newer, older], null, 1);
+  const secondBatch = polling.nextCangyuanTaskPollBatch([newer, older], firstBatch.lastTaskId, 1);
+  assert.deepEqual([firstBatch.tasks[0].id, secondBatch.tasks[0].id], ['newer', 'older']);
+
+  const withOlder = tools.updateCanvasAudioMusicTaskDocument(audioDocument(), 'audio-1', older);
+  const withBoth = tools.updateCanvasAudioMusicTaskDocument(withOlder, 'audio-1', newer);
+  const olderCompleted = { ...older, status: 'succeeded', outputs: [{ url: 'https://example.test/effect.mp3', artifactType: 'audio' }] };
+  const updated = tools.updateCanvasAudioMusicTaskDocument(withBoth, 'audio-1', olderCompleted);
+  assert.equal(updated.nodes[0].data.musicTasks.find((task) => task.id === 'older').status, 'succeeded');
+  assert.equal(updated.nodes[0].data.musicTasks.find((task) => task.id === 'newer').status, 'running');
+  assert.equal(updated.nodes[0].data.musicTasks.length, 2);
 });
 
 test('transcription results are appended as node history', () => {

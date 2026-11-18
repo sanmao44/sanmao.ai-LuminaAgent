@@ -169,7 +169,7 @@ export function classifyAudioModelPurpose(input: AudioModelClassificationInput):
 
 function cangyuanCatalogPurposes(modelId: string): AudioModelPurpose[] {
   const id = String(modelId || '').split('/').pop()?.split(':').pop()?.toLowerCase() || '';
-  if (getSpeechModelProfile(id)) return ['speech'];
+  if (getSpeechModelProfile(id, 'cangyuan')) return ['speech'];
   if (id === 'mu1-muse-asr') return ['transcription'];
   if (id === 'mu1-muse-audio') return ['conversation'];
   const musicProfile = getCangyuanMusicModelProfile(id);

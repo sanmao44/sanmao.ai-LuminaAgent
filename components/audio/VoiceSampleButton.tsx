@@ -16,29 +16,37 @@ type Props = {
 
 export default function VoiceSampleButton({ model, voice, providerKey, compact = false, optionAction = false }: Props) {
   const sample = getSpeechVoiceSample(model, voice, providerKey);
+  const sampleUrl = sample?.url || '';
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playRequestRef = useRef(0);
   const [playing, setPlaying] = useState(false);
 
-  useEffect(() => () => {
-    if (audioRef.current && activeAudio === audioRef.current) {
-      audioRef.current.pause();
-      activeAudio = null;
-      activeStop?.();
-      activeStop = null;
-    }
-  }, []);
+  useEffect(() => {
+    setPlaying(false);
+    return () => {
+      playRequestRef.current += 1;
+      const audio = audioRef.current;
+      if (audio && activeAudio === audio) {
+        audio.pause();
+        audio.currentTime = 0;
+        activeAudio = null;
+        activeStop = null;
+      }
+      audioRef.current = null;
+    };
+  }, [sampleUrl]);
 
   if (!sample) {
     return <span className="voice-sample-unavailable" title="当前模型与服务商暂无对应样音">暂无样音</span>;
   }
-  const sampleUrl = sample.url;
-
   function stopCurrent() {
-    activeAudio?.pause();
-    if (activeAudio) activeAudio.currentTime = 0;
-    activeStop?.();
+    const previousAudio = activeAudio;
+    const previousStop = activeStop;
     activeAudio = null;
     activeStop = null;
+    previousAudio?.pause();
+    if (previousAudio) previousAudio.currentTime = 0;
+    previousStop?.();
   }
 
   async function toggle(event?: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>) {
@@ -46,32 +54,44 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
     event?.stopPropagation();
     let audio = audioRef.current;
     if (!audio) {
-      audio = new Audio(sampleUrl);
-      audio.preload = 'metadata';
-      audio.addEventListener('ended', () => setPlaying(false));
-      audioRef.current = audio;
+      const createdAudio = new Audio(sampleUrl);
+      createdAudio.preload = 'metadata';
+      createdAudio.addEventListener('playing', () => {
+        if (activeAudio === createdAudio) setPlaying(true);
+      });
+      createdAudio.addEventListener('pause', () => {
+        if (activeAudio === createdAudio) setPlaying(false);
+      });
+      createdAudio.addEventListener('ended', () => {
+        if (activeAudio !== createdAudio) return;
+        activeAudio = null;
+        activeStop = null;
+        createdAudio.currentTime = 0;
+        setPlaying(false);
+      });
+      audio = createdAudio;
+      audioRef.current = createdAudio;
     }
-    if (playing) {
+    if (activeAudio === audio && !audio.paused) {
+      activeAudio = null;
+      activeStop = null;
       audio.pause();
       audio.currentTime = 0;
       setPlaying(false);
-      if (activeAudio === audio) {
-        activeAudio = null;
-        activeStop = null;
-      }
       return;
     }
     stopCurrent();
+    if (audio.ended) audio.currentTime = 0;
     activeAudio = audio;
     activeStop = () => setPlaying(false);
+    const playRequest = ++playRequestRef.current;
     try {
       await audio.play();
-      setPlaying(true);
     } catch {
-      setPlaying(false);
-      if (activeAudio === audio) {
+      if (playRequestRef.current === playRequest && activeAudio === audio) {
         activeAudio = null;
         activeStop = null;
+        setPlaying(false);
       }
     }
   }

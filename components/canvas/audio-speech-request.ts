@@ -11,6 +11,8 @@ export type CanvasSpeechRequestOptions = {
   text: string;
   voice: string;
   modelId: string;
+  profileModelId?: string;
+  providerKey?: string;
   format?: SpeechOutputFormat;
   speed?: number;
   applyTextNormalization?: 'auto' | 'on' | 'off';
@@ -31,13 +33,13 @@ export type CanvasSpeechRequestOptions = {
 };
 
 export function buildCanvasSpeechRequest(input: CanvasSpeechRequestOptions) {
-  const profile = getSpeechModelProfile(speechPublicModelId(input.modelId));
-  const formats = profile ? getSpeechModelResponseFormats(profile.publicModel, input.engine) : undefined;
-  const speedRange = profile ? getSpeechModelSpeedRange(profile.publicModel, input.engine) : undefined;
-  const advancedOptions = getSpeechModelAdvancedOptions(profile?.publicModel || '', input);
+  const profile = getSpeechModelProfile(input.profileModelId || speechPublicModelId(input.modelId), input.providerKey);
+  const formats = profile ? getSpeechModelResponseFormats(profile.publicModel, input.engine, input.providerKey) : undefined;
+  const speedRange = profile ? getSpeechModelSpeedRange(profile.publicModel, input.engine, input.providerKey) : undefined;
+  const advancedOptions = getSpeechModelAdvancedOptions(profile?.publicModel || '', input, input.providerKey);
   return {
     text: input.text,
-    ...(input.voice.trim() && !(profile?.supportsDialogue || profile?.requiresVoiceId) ? { voice: input.voice.trim() } : {}),
+    ...(input.voice.trim() && !input.voiceId?.trim() && !(profile?.supportsDialogue || profile?.requiresVoiceId) ? { voice: input.voice.trim() } : {}),
     ...(input.modelId && input.modelId !== 'auto' ? { modelId: input.modelId } : {}),
     ...(input.format && (!formats || formats.includes(input.format)) ? { format: input.format } : {}),
     ...(input.speed !== undefined && (!profile || speedRange) ? { speed: input.speed } : {}),

@@ -49,18 +49,20 @@ test('audio synthesis preserves model-specific format and speed options through 
 
 test('speech profiles distinguish official model limits from the platform input cap and resolve engine defaults', () => {
   assert.equal(speechContract.SPEECH_PLATFORM_TEXT_LIMIT, 5000);
-  assert.equal(speechContract.getSpeechModelProfile('gemini-tts').textMaxLength, undefined);
-  assert.equal(speechContract.getSpeechModelProfile('mu1-muse-tts').textMaxLength, undefined);
-  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts'), ['mp3', 'wav']);
-  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'minimax-speech-2.6-hd'), ['mp3', 'flac']);
-  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'elevenlabs-v4-turbo'), ['mp3', 'wav', 'opus', 'pcm']);
-  assert.deepEqual(speechContract.getSpeechModelSpeedRange('voice-clone-tts', 'elevenlabs-v4'), { min: 0.7, max: 1.2 });
-  assert.deepEqual(speechContract.getSpeechModelAdvancedOptions('gemini-tts', { engine: 'turbo', voiceId: 'stale' }), {});
-  assert.deepEqual(speechContract.getSpeechModelProfile('voice-clone-tts').languageCodes, ['auto', 'ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko']);
-  assert.ok(speechContract.getSpeechModelProfile('voice-clone-tts').emotionOptions.includes('disgusted'));
+  assert.equal(speechContract.getSpeechModelProfile('gemini-tts'), null);
+  assert.equal(speechContract.getSpeechModelProfile('gemini-tts', 'other-provider'), null);
+  assert.equal(speechContract.getSpeechModelProfile('gemini-tts', 'cangyuan').textMaxLength, undefined);
+  assert.equal(speechContract.getSpeechModelProfile('mu1-muse-tts', 'cangyuan').textMaxLength, undefined);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', undefined, 'cangyuan'), ['mp3', 'wav']);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'minimax-speech-2.6-hd', 'cangyuan'), ['mp3', 'flac']);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'elevenlabs-v4-turbo', 'cangyuan'), ['mp3', 'wav', 'opus', 'pcm']);
+  assert.deepEqual(speechContract.getSpeechModelSpeedRange('voice-clone-tts', 'elevenlabs-v4', 'cangyuan'), { min: 0.7, max: 1.2 });
+  assert.deepEqual(speechContract.getSpeechModelAdvancedOptions('gemini-tts', { engine: 'turbo', voiceId: 'stale' }, 'cangyuan'), {});
+  assert.deepEqual(speechContract.getSpeechModelProfile('voice-clone-tts', 'cangyuan').languageCodes, ['auto', 'ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko']);
+  assert.ok(speechContract.getSpeechModelProfile('voice-clone-tts', 'cangyuan').emotionOptions.includes('disgusted'));
 });
 
-test('audio synthesis validates voice-clone engine, format, language, emotion, and numeric bounds', async () => {
+test('audio application passes model-specific controls to the selected provider adapter', async () => {
   let received;
   const port = { synthesize: async (input) => {
     received = input;
@@ -74,27 +76,9 @@ test('audio synthesis validates voice-clone engine, format, language, emotion, a
   assert.equal(received.engine, 'minimax-speech-2.6-hd');
   assert.equal(received.emotion, 'disgusted');
   assert.equal(received.voiceId, 'registered-voice');
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', format: 'flac',
-  }, port), /引擎组合不支持 flac/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', engine: 'unknown-engine',
-  }, port), /引擎不在当前型号支持范围内/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', language: 'pl',
-  }, port), /声音语言不受当前型号支持/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', emotion: 'calm',
-  }, port), /情绪不受当前型号支持/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', speed: 2.1,
-  }, port), /语速需在 0.5–2/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', engine: 'qwen3',
-  }, port), /需要已登记的音色编号/);
 });
 
-test('dialogue synthesis keeps the required description and structured lines while enforcing documented limits', async () => {
+test('dialogue synthesis keeps structured lines and enforces common input shape limits', async () => {
   let received;
   const port = { synthesize: async (input) => {
     received = input;
@@ -111,10 +95,6 @@ test('dialogue synthesis keeps the required description and structured lines whi
   await assert.rejects(application.synthesizeAudioRequest({
     text: '两位角色在车站道别', modelId: 'provider:elevenlabs-dialogue', dialogue: 1,
   }, port), /1 到 50 句/);
-  await assert.rejects(application.synthesizeAudioRequest({
-    text: '对白说明', modelId: 'provider:elevenlabs-dialogue', dialogue: [{ voice: 'Rachel', text: '台词' }],
-    engine: 'turbo',
-  }, port), /不支持这些设置：语音引擎/);
 });
 
 test('audio generation log metadata preserves the requested voice and automatic model preference', () => {

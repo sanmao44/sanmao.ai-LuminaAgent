@@ -356,6 +356,7 @@ import type {
 import {
   updateCanvasAudioDraftDocument,
   updateCanvasAudioMusicDraftDocument,
+  updateCanvasAudioSoundEffectDraftDocument,
   updateCanvasAudioMusicTaskDocument,
   updateCanvasAudioTranscriptionDraftDocument,
 } from "@/lib/canvas/audio-tools";
@@ -1730,6 +1731,11 @@ export default function SuperCanvas() {
   const updateCanvasAudioMusicDraft = useCallback((nodeId: string, draft: CanvasAudioMusicDraft) => {
     const current = canvasCoreRef.current.document();
     const next = updateCanvasAudioMusicDraftDocument(current, nodeId, draft);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
+  const updateCanvasAudioSoundEffectDraft = useCallback((nodeId: string, draft: CanvasAudioMusicDraft) => {
+    const current = canvasCoreRef.current.document();
+    const next = updateCanvasAudioSoundEffectDraftDocument(current, nodeId, draft);
     if (next !== current) setDoc(next, { preserveHistory: true });
   }, [setDoc]);
   const updateCanvasAudioMusicTask = useCallback((nodeId: string, task: CanvasAudioMusicTask) => {
@@ -14553,6 +14559,7 @@ export default function SuperCanvas() {
               onTranscriptionDraftChange={updateCanvasAudioTranscriptionDraft}
               onTranscriptionChange={updateCanvasAudioTranscription}
               onMusicDraftChange={updateCanvasAudioMusicDraft}
+              onSoundEffectDraftChange={updateCanvasAudioSoundEffectDraft}
               onMusicTaskChange={updateCanvasAudioMusicTask}
               onThreeDDraftChange={updateCanvasThreeDDraft}
               onThreeDTaskChange={updateCanvasThreeDTask}

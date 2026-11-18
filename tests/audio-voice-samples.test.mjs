@@ -8,10 +8,10 @@ import { createTsRequire } from './ts-require.mjs';
 const contracts = createTsRequire(process.cwd())('./packages/contracts/audio-synthesis');
 const samples = createTsRequire(process.cwd())('./components/audio/voice-samples');
 
-test('verified speech voice samples map to local audio with exact model and voice provenance', () => {
+test('registered speech voice samples map to local audio and retain model and voice metadata', () => {
   const expectedCounts = { 'gemini-tts': 9, 'mu1-muse-tts': 9, 'elevenlabs-v4-tts': 21 };
   for (const model of ['gemini-tts', 'mu1-muse-tts', 'elevenlabs-v4-tts']) {
-    const profile = contracts.getSpeechModelProfile(model);
+    const profile = contracts.getSpeechModelProfile(model, 'cangyuan');
     let mappedCount = 0;
     for (const voice of profile.suggestedVoices) {
       const sample = samples.getSpeechVoiceSample(model, voice, 'cangyuan');
@@ -44,8 +44,8 @@ test('unknown, custom, and cross-provider voices do not fall back to another sam
   assert.equal(samples.getSpeechVoiceSample('gemini-tts', 'Capella', ''), null);
 });
 
-test('ElevenLabs preset samples cover every documented static voice', () => {
-  const profile = contracts.getSpeechModelProfile('elevenlabs-v4-tts');
+test('ElevenLabs sample mappings cover every documented static voice', () => {
+  const profile = contracts.getSpeechModelProfile('elevenlabs-v4-tts', 'cangyuan');
   for (const voice of profile.suggestedVoices) {
     const sample = samples.getSpeechVoiceSample('elevenlabs-v4-tts', voice, 'cangyuan');
     assert.ok(sample, `${voice} should have a local sample mapping`);

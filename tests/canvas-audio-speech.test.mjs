@@ -30,7 +30,7 @@ const load = createTsRequire(process.cwd(), {
 const panel = load('./components/canvas/CanvasAudioNodePanel');
 const speechRequest = load('./components/canvas/audio-speech-request');
 
-function render(model, data = { kind: 'audio', speechDraft: { text: '旁白' } }) {
+function render(model, data = { kind: 'audio', speechDraft: { text: '旁白' } }, provider = { id: 'provider-1', type: 'openai-compatible', platform: 'custom' }) {
   return renderToStaticMarkup(createElement(panel.default, {
     node: { id: 'audio-1', type: 'media', x: 0, y: 0, data },
     onReplaceAudio: async () => true,
@@ -38,7 +38,7 @@ function render(model, data = { kind: 'audio', speechDraft: { text: '旁白' } }
     onDurationChange: () => {},
     onNotify: () => {},
     models: [model],
-    providers: [{ id: 'provider-1', type: 'openai-compatible', platform: 'custom' }],
+    providers: [provider],
   }));
 }
 
@@ -46,7 +46,7 @@ test('canvas speech node offers model-directory voice, supported format, speed, 
   const markup = render({
     id: 'provider-1:gemini-tts', providerId: 'provider-1', providerName: '兼容服务商', rawId: 'gemini-tts',
     displayName: 'Gemini TTS', kind: 'audio', enabled: true, published: true, capabilities: ['speech'],
-  });
+  }, { kind: 'audio', speechDraft: { text: '旁白' } }, { id: 'provider-1', type: 'openai-compatible', platform: 'cangyuan' });
 
   assert.match(markup, /五车二/);
   assert.match(markup, /飞马座/);
@@ -109,5 +109,12 @@ test('canvas speech requests preserve selected controls and keep preview out of 
     text: '固定试听短句', voice: '', modelId: 'provider-1:gemini-tts', preview: true, nodeId: 'audio-1',
   }), {
     text: '固定试听短句', modelId: 'provider-1:gemini-tts', preview: true, source: 'canvas', nodeId: 'audio-1',
+  });
+  assert.deepEqual(speechRequest.buildCanvasSpeechRequest({
+    text: '自备音色', voice: 'Rachel', voiceId: 'registered-voice', modelId: 'provider-1:elevenlabs-v4-tts',
+    profileModelId: 'elevenlabs-v4-tts', providerKey: 'cangyuan', nodeId: 'audio-1',
+  }), {
+    text: '自备音色', voiceId: 'registered-voice', modelId: 'provider-1:elevenlabs-v4-tts',
+    source: 'canvas', nodeId: 'audio-1',
   });
 });

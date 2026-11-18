@@ -29,7 +29,7 @@ function runtime(baseUrl = 'https://ai.gitee.com/v1') {
 }
 
 function cangyuanRuntime(rawId = 'gemini-tts') {
-  return { model: { rawId }, provider: { type: 'openai-compatible', platform: 'custom', baseUrl: 'https://api.example.test/v1' } };
+  return { model: { rawId }, provider: { type: 'openai-compatible', platform: 'cangyuan', baseUrl: 'https://ai.cangyuansuanli.cn/v1' } };
 }
 
 function stubFetch(handler) {
@@ -92,17 +92,14 @@ test('留空音色时不发送 voice，避免 Gitee 这类没有该参数的服�
   } finally { stub.restore(); }
 });
 
-test('documented model settings work through another compatible provider', async () => {
+test('Cangyuan model identifiers do not leak Cangyuan-only settings to another compatible provider', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {
-    await speech.synthesizeSpeech(cangyuanRuntime('gemini-tts'), {
-      text: '跨服务商合成测试', voice: 'Ursa', format: 'flac', speed: 1.25,
-    });
-    assert.equal(stub.calls.length, 1);
-    assert.deepEqual(stub.calls[0].body, {
-      model: 'gemini-tts', input: '跨服务商合成测试', voice: 'Ursa', response_format: 'flac', speed: 1.25,
-    });
-    assert.equal(stub.calls[0].url, 'https://api.example.test/v1/audio/speech');
+    await assert.rejects(() => speech.synthesizeSpeech({
+      ...cangyuanRuntime('gemini-tts'),
+      provider: { type: 'openai-compatible', platform: 'custom', baseUrl: 'https://api.example.test/v1' },
+    }, { text: '跨服务商合成测试', voice: 'Ursa', format: 'flac' }), /仅支持 MP3 或 WAV/);
+    assert.equal(stub.calls.length, 0);
   } finally { stub.restore(); }
 });
 
@@ -117,6 +114,18 @@ test('model-specific speech fields are forwarded only when documented', async ()
     });
     await speech.synthesizeSpeech(cangyuanRuntime('mu1-muse-tts'), { text: '使用默认音色和格式' });
     assert.deepEqual(stub.calls[1].body, { model: 'mu1-muse-tts', input: '使用默认音色和格式' });
+  } finally { stub.restore(); }
+});
+
+test('registered ElevenLabs voice ids take precedence over preset voices in the provider request', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    await speech.synthesizeSpeech(cangyuanRuntime('elevenlabs-v4-tts'), {
+      text: '使用自备音色', voice: 'Rachel', voiceId: 'registered-voice',
+    });
+    assert.deepEqual(stub.calls[0].body, {
+      model: 'elevenlabs-v4-tts', input: '使用自备音色', voice_id: 'registered-voice',
+    });
   } finally { stub.restore(); }
 });
 
@@ -149,17 +158,12 @@ test('沧元 TTS accepts recommended-as-guidance voice values but rejects undocu
   } finally { stub.restore(); }
 });
 
-test('带了 voice 被服务商 400 拒绝时，去掉 voice 自动重试一次', async () => {
-  const stub = stubFetch((count) => (count === 1
-    ? { ok: false, status: 400, text: async () => 'unknown argument voice', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }
-    : audioResponse(wav, 'audio/wav')));
+test('服务商拒绝指定音色时不静默去掉音色重试', async () => {
+  const stub = stubFetch(() => ({ ok: false, status: 400, text: async () => 'unknown argument voice', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }));
   try {
-    const result = await speech.synthesizeSpeech(runtime(), { text: '再来一句', voice: 'alloy' });
-    assert.equal(stub.calls.length, 2);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime(), { text: '再来一句', voice: 'alloy' }), /HTTP 400/);
+    assert.equal(stub.calls.length, 1);
     assert.equal(stub.calls[0].body.voice, 'alloy');
-    assert.equal('voice' in stub.calls[1].body, false);
-    assert.equal(result.contentType, 'audio/wav');
-    assert.equal(result.buffer.length, wav.length);
   } finally { stub.restore(); }
 });
 
@@ -188,22 +192,20 @@ test('接口失败时抛出带状态码与详情的中文错误', async () => {
   } finally { stub.restore(); }
 });
 
-test('服务商要求 voice 必填时自动补默认音色重试，不会无限重试', async () => {
-  const required = { ok: false, status: 400, text: async () => '{"error":{"message":"voice is required","param":"voice"}}', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) };
-  const stub = stubFetch((count) => (count === 1 ? required : audioResponse(mp3, 'audio/mpeg')));
+test('服务商要求必填音色时不擅自替换成 alloy', async () => {
+  const stub = stubFetch(() => ({ ok: false, status: 400, text: async () => '{"error":{"message":"voice is required","param":"voice"}}', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }));
   try {
-    const result = await speech.synthesizeSpeech(runtime(), { text: '你好' });
-    assert.equal(stub.calls.length, 2);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime(), { text: '你好' }), /voice is required/);
+    assert.equal(stub.calls.length, 1);
     assert.equal('voice' in stub.calls[0].body, false);
-    assert.equal(stub.calls[1].body.voice, speech.DEFAULT_SPEECH_VOICE);
-    assert.equal(result.contentType, 'audio/mpeg');
   } finally { stub.restore(); }
 });
 
-test('与 voice 无关的 400 最多只重试一次', async () => {
+test('与 voice 无关的 400 也不会擅自改写请求重试', async () => {
   const stub = stubFetch(() => ({ ok: false, status: 400, text: async () => 'model not found', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }));
   try {
     await assert.rejects(() => speech.synthesizeSpeech(runtime(), { text: '你好', voice: 'alloy' }), /HTTP 400/);
-    assert.equal(stub.calls.length, 2);
+    assert.equal(stub.calls.length, 1);
+    assert.equal(stub.calls[0].body.voice, 'alloy');
   } finally { stub.restore(); }
 });

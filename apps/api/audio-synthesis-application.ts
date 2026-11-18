@@ -1,4 +1,4 @@
-import { getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, SPEECH_OUTPUT_FORMATS, SPEECH_PLATFORM_TEXT_LIMIT, speechPublicModelId, type AudioArtifactPersistencePort, type AudioSynthesisPort, type AudioSynthesisRequest, type AudioSynthesisResult, type SpeechAdvancedOptionKey, type SpeechDialogueLine, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { SPEECH_OUTPUT_FORMATS, SPEECH_PLATFORM_TEXT_LIMIT, type AudioArtifactPersistencePort, type AudioSynthesisPort, type AudioSynthesisRequest, type AudioSynthesisResult, type SpeechAdvancedOptionKey, type SpeechDialogueLine, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 const MAX_AUDIO_SYNTHESIS_TEXT_LENGTH = SPEECH_PLATFORM_TEXT_LIMIT;
 export const MAX_AUDIO_SYNTHESIS_BYTES = 50 * 1024 * 1024;
@@ -76,7 +76,6 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   }
   const modelId = typeof source.modelId === 'string' ? source.modelId.trim() : '';
   if (modelId.length > 160) throw new AudioSynthesisInputError('配音模型 ID 最多 160 个字符。');
-  const modelProfile = getSpeechModelProfile(speechPublicModelId(modelId));
   const enumValue = <T extends string>(key: string, values: readonly T[]) => {
     const value = source[key];
     if (value === undefined) return undefined;
@@ -88,7 +87,7 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
     const value = source[key];
     if (value === undefined) return undefined;
     if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || maximum !== undefined && value > maximum) {
-      throw new AudioSynthesisInputError(`${key} 参数超出允许范围。`);
+      throw new AudioSynthesisInputError(`${SPEECH_OPTION_LABELS[key as SpeechAdvancedOptionKey] || key}超出允许范围。`);
     }
     return value;
   };
@@ -99,14 +98,6 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
     if (typeof value !== 'string') throw new AudioSynthesisInputError(`${label}必须是文本。`);
     return value.trim() || undefined;
   };
-  const advancedKeys: readonly SpeechAdvancedOptionKey[] = [
-    'applyTextNormalization', 'engine', 'languageCode', 'language', 'seed', 'similarityBoost',
-    'stability', 'voiceId', 'emotion', 'instruct', 'dialogue',
-  ];
-  if (modelProfile) {
-    const unsupported = advancedKeys.filter((key) => source[key] !== undefined && !modelProfile.advancedOptionKeys?.includes(key));
-    if (unsupported.length) throw new AudioSynthesisInputError(`当前配音型号不支持这些设置：${unsupported.map((key) => SPEECH_OPTION_LABELS[key]).join('、')}。`);
-  }
   const applyTextNormalization = enumValue('applyTextNormalization', ['auto', 'on', 'off'] as const);
   const languageCode = optionalString('languageCode');
   const language = optionalString('language');
@@ -114,18 +105,6 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   const emotion = optionalString('emotion');
   const instruct = optionalString('instruct');
   const voiceId = optionalString('voiceId');
-  if (engine && modelProfile?.engineOptions && !modelProfile.engineOptions.includes(engine)) {
-    throw new AudioSynthesisInputError('所选语音引擎不在当前型号支持范围内。');
-  }
-  if (languageCode && modelProfile?.languageCodes && !modelProfile.languageCodes.includes(languageCode)) {
-    throw new AudioSynthesisInputError('所选朗读语言不受当前型号支持。');
-  }
-  if (language && modelProfile?.languageCodes && !modelProfile.languageCodes.includes(language)) {
-    throw new AudioSynthesisInputError('所选声音语言不受当前型号支持。');
-  }
-  if (emotion && modelProfile?.emotionOptions && !modelProfile.emotionOptions.includes(emotion)) {
-    throw new AudioSynthesisInputError('所选情绪不受当前型号支持。');
-  }
   const seed = boundedNumber('seed', 0);
   const similarityBoost = boundedNumber('similarityBoost', 0, 1);
   const stability = boundedNumber('stability', 0, 1);
@@ -142,25 +121,6 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
       if (!lineText || !lineVoice) throw new AudioSynthesisInputError(`第 ${index + 1} 句对白需要音色和文本。`);
       return { text: lineText, voice: lineVoice };
     });
-  }
-  if (modelProfile?.textMaxLength !== undefined && text.length > modelProfile.textMaxLength) {
-    throw new AudioSynthesisInputError(`当前配音模型的正文最多 ${modelProfile.textMaxLength} 个字符。`);
-  }
-  if (modelProfile?.requiresVoiceId && !voiceId) throw new AudioSynthesisInputError('声音克隆模型需要已登记的音色编号。');
-  if (modelProfile?.supportsDialogue && !dialogue?.length) throw new AudioSynthesisInputError('多人对白模型至少需要填写 1 句角色对白。');
-  const format = source.format as SpeechOutputFormat | undefined;
-  if (format && modelProfile && !getSpeechModelResponseFormats(modelProfile.publicModel, engine).includes(format)) {
-    throw new AudioSynthesisInputError(`当前配音模型与引擎组合不支持 ${format} 格式。`);
-  }
-  const speedRange = modelProfile ? getSpeechModelSpeedRange(modelProfile.publicModel, engine) : undefined;
-  if (typeof source.speed === 'number' && modelProfile && !speedRange) {
-    throw new AudioSynthesisInputError('当前配音型号不支持语速设置。');
-  }
-  if (typeof source.speed === 'number' && speedRange && (source.speed < speedRange.min || source.speed > speedRange.max)) {
-    throw new AudioSynthesisInputError(`当前配音型号的语速需在 ${speedRange.min}–${speedRange.max} 之间。`);
-  }
-  if (voice && modelProfile && (modelProfile.supportsDialogue || modelProfile.requiresVoiceId)) {
-    throw new AudioSynthesisInputError('当前配音型号使用对白音色或已登记的音色编号，不能再传预设音色。');
   }
   const sourceName = source.source === 'workspace' || source.source === 'agent' || source.source === 'canvas'
     ? source.source

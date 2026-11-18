@@ -128,6 +128,7 @@ export type CanvasNodeEditorPopoverProps = {
   onTranscriptionDraftChange: (nodeId: string, draft: CanvasAudioTranscriptionDraft) => void;
   onTranscriptionChange: (nodeId: string, result: CanvasAudioTranscriptionMeta) => void;
   onMusicDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
+  onSoundEffectDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
   onMusicTaskChange: (nodeId: string, task: CanvasAudioMusicTask) => void;
   onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
   onThreeDDraftChange: (nodeId: string, draft: CanvasThreeDDraft) => void;
@@ -207,6 +208,7 @@ function CanvasNodeEditorPopover({
   onTranscriptionDraftChange,
   onTranscriptionChange,
   onMusicDraftChange,
+  onSoundEffectDraftChange,
   onMusicTaskChange,
   onAudioDurationChange,
   onThreeDDraftChange,
@@ -878,6 +880,7 @@ function CanvasNodeEditorPopover({
              onTranscriptionDraftChange={onTranscriptionDraftChange}
              onTranscriptionChange={onTranscriptionChange}
              onMusicDraftChange={onMusicDraftChange}
+             onSoundEffectDraftChange={onSoundEffectDraftChange}
              onMusicTaskChange={onMusicTaskChange}
              onDurationChange={onAudioDurationChange}
              onNotify={onNotify}
