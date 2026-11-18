@@ -104,6 +104,37 @@ test('SRT serialization keeps ASR timings and emits stable cue numbering and tim
   ]), /准确率90%以上/u);
 });
 
+test('SRT punctuation uses spaces for commas and preserves only enumeration marks, double quotes, and semantic number separators', () => {
+  const srt = transcriptionModule.formatSrt([
+    { start: 0, end: 2, text: '你好，世界。屏幕里不要出现标点！保留、并列词和“引号”。版本SANMAO.AI是3.5万，时间10:30。' },
+  ]);
+
+  const subtitle = srt.split('\r\n')[2];
+  assert.equal(subtitle, '你好 世界 屏幕里不要出现标点 保留、并列词和“引号” 版本SANMAO.AI是3.5万 时间10:30');
+  assert.doesNotMatch(subtitle, /[，,。！？!?；;]/u);
+  assert.doesNotMatch(subtitle, /(?<!\p{N})[:：]|[:：](?!\p{N})/u);
+});
+
+test('SRT collapses repeated and mixed punctuation, trims cue-edge enumeration marks, and bridges compressed speech timing gaps', () => {
+  const srt = transcriptionModule.formatSrt([
+    { start: 66.446, end: 67, text: '、强化网络多智能体协同能力、、' },
+    { start: 72.58, end: 74.38, text: '构建智预智防、、' },
+    { start: 77.58, end: 78, text: '实现风险预警，、' },
+    { start: 79.18, end: 81.44, text: '资源调度、、保障处置、' },
+    { start: 82, end: 84, text: '他说，，、；。！！“方案”。' },
+  ]);
+  const cues = srt.trim().split('\r\n\r\n');
+
+  assert.match(cues[0], /00:01:06,446 --> 00:01:12,580/u);
+  assert.match(cues[0], /强化网络多智能体协同能力$/u);
+  assert.match(cues[1], /构建智预智防$/u);
+  assert.match(cues[2], /00:01:17,580 --> 00:01:19,180/u);
+  assert.match(cues[2], /实现风险预警$/u);
+  assert.match(cues[3], /资源调度、保障处置$/u);
+  assert.match(cues[4], /他说 “方案”$/u);
+  for (const cue of cues) assert.doesNotMatch(cue.split('\r\n')[2], /(?:、|[，,。！？!?；;：:])$/u);
+});
+
 test('reference text becomes an explicit Whisper decoder prefix', () => {
   const encodedCalls = [];
   const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds({
@@ -393,6 +424,27 @@ test('reference-guided correction fixes local technical terms and canonical casi
   }, 8, 'test-model', 'zh', distantOrderReference);
   const distantOrderText = compact(distantOrderCorrected.segments.map((segment) => segment.text).join(''));
   assert.match(distantOrderText, /今年方案先在广东试点.*然后部署到山东/u);
+});
+
+test('reference-guided correction fixes one extra letter in a unique Latin product term', () => {
+  const reference = '2026年依托Agentic AI、大模型和大数据创新技术。';
+  const recognized = '2026年依托Agenttic AI大模型和大数据创新技术。';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: recognized,
+    chunks: [{ text: recognized, timestamp: [0, 4] }],
+  }, 4, 'test-model', 'zh', reference);
+
+  assert.equal(normalized.segments.map((segment) => segment.text).join(''), '2026年依托Agentic AI、大模型和大数据创新技术。');
+});
+
+test('reference-guided correction leaves repeated Latin terms unchanged', () => {
+  const transcript = 'Agenttic AI supports Agenttic AI plans and keeps the project on track.';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: transcript,
+    chunks: [{ text: transcript, timestamp: [0, 5] }],
+  }, 5, 'test-model', 'en', 'Agentic AI supports Agentic AI plans and keeps the project on track.');
+
+  assert.equal(normalized.text, transcript);
 });
 
 test('overlapping near-identical ASR segments are stitched while later repeated speech remains', () => {

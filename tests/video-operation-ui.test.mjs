@@ -71,7 +71,7 @@ function renderVideoEditor({ provider, rawId, capabilities = ['video-generate'],
 test('video studio uses the shared model library picker', () => {
   assert.match(videoStudio, /import ModelPicker from '@\/components\/ModelPicker'/);
   assert.match(videoStudio, /const videoPickerModels =/);
-  assert.match(videoStudio, /<ModelPicker[\s\S]*?models=\{videoPickerModels\}[\s\S]*?capability="video-generate"/);
+  assert.match(videoStudio, /<ModelPicker\s+models=\{videoPickerModels\}[\s\S]*?capability="video-generate"/);
   assert.doesNotMatch(videoStudio, /const modelOptions = \[\{ value: 'auto'/);
 });
 

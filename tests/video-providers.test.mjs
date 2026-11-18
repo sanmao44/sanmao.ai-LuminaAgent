@@ -125,18 +125,18 @@ test('normalizes done results from common video URL fields', async () => {
   assert.equal(result.costUsd, 0.42);
 });
 
-test('Cangyuan video submission rejects models missing from the verified catalog', async () => {
+test('Cangyuan video submission rejects models outside the official catalog', async () => {
   let request;
   globalThis.fetch = async (url, init) => {
     request = { url: String(url), init };
     return new Response(JSON.stringify({ task_id: 'cangyuan-task-1', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
   };
-  await assert.rejects(() => video.submitRemoteVideo(provider({
+  await assert.rejects(video.submitRemoteVideo(provider({
     platform: 'custom',
     videoTransport: 'cangyuan-videos',
     videoBaseUrl: 'https://api.cangyuan.example/v1',
     videoGenerationPath: undefined,
-  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'cangyuan-idem-1'), /未出现在当前官方目录/);
+  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'cangyuan-idem-1'), /未出现在当前官方目录/u);
   assert.equal(request, undefined);
 });
 
@@ -152,11 +152,15 @@ test('recognizes an existing Cangyuan API hostname with a documented model when 
     videoTransport: undefined,
     videoBaseUrl: '',
     videoGenerationPath: undefined,
-  }), 'sd20-seedance-2.0-fast', { prompt: 'a paper boat', seconds: 5, aspectRatio: '16:9' }, 'legacy-cangyuan-idem');
+  }), 'sd20-seedance-2.0-fast', { prompt: 'a paper boat', seconds: 8, aspectRatio: '16:9' }, 'legacy-cangyuan-idem');
 
   assert.equal(request.url, 'https://ai.cangyuansuanli.cn/v1/videos');
   assert.deepEqual(JSON.parse(request.init.body), {
-    model: 'sd20-seedance-2.0-fast', prompt: 'a paper boat', aspect_ratio: '16:9', duration: 5, resolution: '480p',
+    model: 'sd20-seedance-2.0-fast',
+    prompt: 'a paper boat',
+    duration: 8,
+    aspect_ratio: '16:9',
+    resolution: '480p',
   });
   assert.equal(result.providerTaskId, 'legacy-cangyuan-task');
 });

@@ -604,6 +604,29 @@ export async function getProviderWithKey(id: string) {
   return { ...provider, apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined };
 }
 
+/** Return the configured Moark provider for audio recognition without exposing its credential publicly. */
+export async function getRuntimeMoarkAudioProvider() {
+  const state = await readState();
+  const candidates = state.providers
+    .filter((provider) => {
+      let hostname = '';
+      try { hostname = new URL(provider.baseUrl).hostname.toLowerCase(); } catch {}
+      return provider.platform === 'gitee' || hostname === 'moark.com' || hostname.endsWith('.moark.com');
+    })
+    .sort((left, right) => {
+      const moarkHost = (provider: StoredProvider) => {
+        try { return new URL(provider.baseUrl).hostname.toLowerCase().endsWith('.moark.com'); } catch { return false; }
+      };
+      return Number(moarkHost(right)) - Number(moarkHost(left));
+    });
+
+  for (const provider of candidates) {
+    const apiKey = await decryptSecret(provider.encryptedApiKey).catch(() => '');
+    if (apiKey.trim()) return { ...provider, apiKey, videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined };
+  }
+  return null;
+}
+
 export async function mergeProviderTransferConfiguration(bundle: Pick<ProviderTransferBundle, 'providers' | 'models'>) {
   return mutateState(async (state) => {
     const existingById = new Map(state.providers.map((provider) => [provider.id, provider]));

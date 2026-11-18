@@ -12,7 +12,7 @@ type SegmentRange = { start: number; end: number };
 type TextAlignment = { distance: number; replacements: Map<number, string> };
 type TranscriptPoint = { value: string; wordIndex: number; charIndex: number };
 
-const REFERENCE_PUNCTUATION = /^[，,、。.!?！？；;：:]$/u;
+const REFERENCE_PUNCTUATION = /^[\uFF0C,\u3001\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]$/u;
 
 function roundTimestamp(value: number) {
   return Math.round(value * 1_000) / 1_000;
@@ -286,6 +286,145 @@ function patchWords(words: readonly TimestampedTranscriptWord[] | undefined, sta
   });
 }
 
+type LatinTokenPosition = {
+  text: string;
+  normalized: string;
+  pointStart: number;
+  charStart: number;
+  charEnd: number;
+};
+
+function latinTokenPositions(value: string): LatinTokenPosition[] {
+  const tokens: LatinTokenPosition[] = [];
+  let textOffset = 0;
+  let pointOffset = 0;
+  let charOffset = 0;
+  for (const match of value.matchAll(/(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?![A-Za-z0-9])/gu)) {
+    const start = match.index ?? 0;
+    const gap = value.slice(textOffset, start);
+    pointOffset += matchPoints(gap).length;
+    charOffset += Array.from(gap).length;
+    const text = match[0];
+    const pointLength = matchPoints(text).length;
+    const charLength = Array.from(text).length;
+    tokens.push({
+      text,
+      normalized: text.toLowerCase(),
+      pointStart: pointOffset,
+      charStart: charOffset,
+      charEnd: charOffset + charLength,
+    });
+    textOffset = start + text.length;
+    pointOffset += pointLength;
+    charOffset += charLength;
+  }
+  return tokens;
+}
+
+function transcriptLatinTokenPositions(segments: readonly TimestampedTranscriptSegment[]) {
+  let pointOffset = 0;
+  return segments.flatMap((segment) => {
+    const tokens = latinTokenPositions(segment.text).map((token) => ({
+      ...token,
+      pointStart: token.pointStart + pointOffset,
+    }));
+    pointOffset += matchPoints(segment.text).length;
+    return tokens;
+  });
+}
+
+function hasOneExtraLetter(source: string, target: string) {
+  const sourceCharacters = Array.from(source.toLowerCase());
+  const targetText = target.toLowerCase();
+  if (sourceCharacters.length !== Array.from(targetText).length + 1) return false;
+  return sourceCharacters.some((_, index) => (
+    [...sourceCharacters.slice(0, index), ...sourceCharacters.slice(index + 1)].join('') === targetText
+  ));
+}
+
+function hasMatchingTokenContext(
+  source: readonly MatchPoint[],
+  sourceToken: LatinTokenPosition,
+  reference: readonly MatchPoint[],
+  referenceToken: LatinTokenPosition,
+) {
+  const leftLength = Math.min(4, sourceToken.pointStart, referenceToken.pointStart);
+  const sourceRightStart = sourceToken.pointStart + Array.from(sourceToken.text).length;
+  const referenceRightStart = referenceToken.pointStart + Array.from(referenceToken.text).length;
+  const rightLength = Math.min(4, source.length - sourceRightStart, reference.length - referenceRightStart);
+  if (leftLength + rightLength < 6 || leftLength === 0 || rightLength === 0) return false;
+  for (let offset = 1; offset <= leftLength; offset += 1) {
+    if (source[sourceToken.pointStart - offset]?.value !== reference[referenceToken.pointStart - offset]?.value) return false;
+  }
+  for (let offset = 0; offset < rightLength; offset += 1) {
+    if (source[sourceRightStart + offset]?.value !== reference[referenceRightStart + offset]?.value) return false;
+  }
+  return true;
+}
+
+function replaceLatinTokens(value: string, replacements: ReadonlyMap<string, string>) {
+  const characters = Array.from(value);
+  const edits = latinTokenPositions(value)
+    .filter((token) => replacements.has(token.normalized))
+    .sort((left, right) => right.charStart - left.charStart);
+  for (const token of edits) {
+    characters.splice(token.charStart, token.charEnd - token.charStart, ...Array.from(replacements.get(token.normalized) || token.text));
+  }
+  return characters.join('');
+}
+
+function correctUniqueLatinTermInsertions(result: LocalTranscriptionResult, referenceText: string) {
+  const sourceTokens = transcriptLatinTokenPositions(result.segments);
+  const sourcePoints = result.segments.flatMap((segment) => matchPoints(segment.text));
+  const sourceCounts = new Map<string, number>();
+  for (const token of sourceTokens) sourceCounts.set(token.normalized, (sourceCounts.get(token.normalized) || 0) + 1);
+
+  const documentText = referenceText.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/gmu, '');
+  const referenceTokens = latinTokenPositions(documentText);
+  const referenceCounts = new Map<string, number>();
+  for (const token of referenceTokens) referenceCounts.set(token.normalized, (referenceCounts.get(token.normalized) || 0) + 1);
+  const referencePointList = matchPoints(documentText);
+  const replacements = new Map<string, string>();
+
+  for (const sourceToken of sourceTokens) {
+    if (sourceCounts.get(sourceToken.normalized) !== 1) continue;
+    const targets = referenceTokens.filter((token) => (
+      Array.from(token.text).length >= 5
+      && referenceCounts.get(token.normalized) === 1
+      && hasOneExtraLetter(sourceToken.text, token.text)
+      && hasMatchingTokenContext(sourcePoints, sourceToken, referencePointList, token)
+    ));
+    const distinctTargets = new Map(targets.map((target) => [target.normalized, target.text]));
+    if (distinctTargets.size !== 1) continue;
+
+    const target = [...distinctTargets.values()][0];
+    const termCount = (value: string) => latinTokenPositions(value).filter((token) => token.normalized === sourceToken.normalized).length;
+    if (result.text && termCount(result.text) !== 1) continue;
+    if (result.words.length && termCount(result.words.map((word) => word.text).join(' ')) !== 1) continue;
+    const segmentWordText = result.segments.flatMap((segment) => segment.words || []).map((word) => word.text).join(' ');
+    if (segmentWordText && termCount(segmentWordText) !== 1) continue;
+    replacements.set(sourceToken.normalized, target);
+  }
+
+  if (!replacements.size) return result;
+  const segments = result.segments.map((segment) => {
+    const text = replaceLatinTokens(segment.text, replacements);
+    const words = segment.words?.map((word) => {
+      const wordText = replaceLatinTokens(word.text, replacements);
+      return wordText === word.text ? word : { ...word, text: wordText };
+    });
+    return text === segment.text && words === segment.words
+      ? segment
+      : { ...segment, text, ...(words ? { words } : {}) };
+  });
+  const words = result.words.map((word) => {
+    const text = replaceLatinTokens(word.text, replacements);
+    return text === word.text ? word : { ...word, text };
+  });
+  const text = replaceLatinTokens(result.text, replacements);
+  return { ...result, text, segments, words };
+}
+
 function referencePunctuationBoundaries(referenceText: string) {
   const documentText = referenceText.replace(/^\s*\[[^\]\r\n]{1,160}\]\s*/gmu, '');
   const characters = Array.from(documentText);
@@ -354,15 +493,15 @@ function splitTranscriptWordAtPunctuation(
   let cursor = 0;
   for (const offset of internalOffsets) {
     const source = characters.slice(cursor, offset).join('');
-    const text = (cursor > 0 ? source.replace(/^[，,。.!?！？；;：:]+/u, '') : source)
-      .replace(/[，,。.!?！？；;：:]+$/u, '');
+    const text = (cursor > 0 ? source.replace(/^[\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]+/u, '') : source)
+      .replace(/[\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]+$/u, '');
     const punctuation = marks.get(offset) || [];
     pieces.push(`${text.replace(/\s+$/u, '')}${punctuation.join('')}`);
     cursor = offset;
   }
   const sourceTail = characters.slice(cursor).join('');
-  const tail = (cursor > 0 ? sourceTail.replace(/^[，,。.!?！？；;：:]+/u, '') : sourceTail)
-    .replace(/[，,。.!?！？；;：:]+$/u, '');
+  const tail = (cursor > 0 ? sourceTail.replace(/^[\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]+/u, '') : sourceTail)
+    .replace(/[\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]+$/u, '');
   const endingMarks = marks.get(characters.length) || [];
   pieces.push(`${tail.replace(/\s+$/u, '')}${endingMarks.join('')}`);
   if (pieces.length === 1) return [{ ...word, text: pieces[0] }];
@@ -415,22 +554,23 @@ export function projectReferencePunctuation(words: readonly TimestampedTranscrip
   let changed = false;
   const normalized = projected.map((word, index) => {
     const original = words[index];
-    if (original && /[，,。.!?！？；;：:]$/u.test(original.text) && word.text === original.text) return word;
-    const text = word.text.replace(/([，,。.!?！？；;：:])\s+/gu, '$1').replace(/([，,。.!?！？；;：:])\1+/gu, '$1');
+    if (original && /[\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:]$/u.test(original.text) && word.text === original.text) return word;
+    const text = word.text.replace(/([\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:])\s+/gu, '$1').replace(/([\uFF0C,\u3002.!?\uFF01\uFF1F\uFF1B;\uFF1A:])\1+/gu, '$1');
     if (text !== word.text) changed = true;
     return text === word.text ? word : { ...word, text };
   });
   return changed ? normalized : projected;
 }
 
-/** Correct only same-length character substitutions supported by a strong local script match. */
+/** Correct same-length substitutions and unique extra Latin letters with strong local script anchors. */
 export function correctTranscriptWithReference(result: LocalTranscriptionResult, referenceText?: string): LocalTranscriptionResult {
   if (!referenceText?.trim() || !result.segments.length) return result;
-  const replacements = replacementProposals(result.segments, referenceText);
-  if (!replacements.size) return result;
+  const spellingCorrected = correctUniqueLatinTermInsertions(result, referenceText);
+  const replacements = replacementProposals(spellingCorrected.segments, referenceText);
+  if (!replacements.size) return spellingCorrected;
 
   let offset = 0;
-  const segments = result.segments.map((segment) => {
+  const segments = spellingCorrected.segments.map((segment) => {
     const start = offset;
     offset += matchPoints(segment.text).length;
     const text = patchText(segment.text, start, replacements);
@@ -440,9 +580,9 @@ export function correctTranscriptWithReference(result: LocalTranscriptionResult,
       : { ...segment, text, ...(words ? { words } : {}) };
   });
 
-  const words = patchWords(result.words, 0, replacements) || [];
-  const text = matchPoints(result.text).length === offset
-    ? patchText(result.text, 0, replacements)
-    : result.text;
-  return { ...result, text, segments, words };
+  const words = patchWords(spellingCorrected.words, 0, replacements) || [];
+  const text = matchPoints(spellingCorrected.text).length === offset
+    ? patchText(spellingCorrected.text, 0, replacements)
+    : spellingCorrected.text;
+  return { ...spellingCorrected, text, segments, words };
 }

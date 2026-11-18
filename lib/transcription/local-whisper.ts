@@ -715,13 +715,52 @@ function toSrtTime(seconds: number) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')},${String(fraction).padStart(3, '0')}`;
 }
 
+function formatSubtitleText(value: string) {
+  const text = cleanText(value)
+    .replace(/[，,]/gu, ' ')
+    .replace(/、{2,}/gu, '、')
+    .replace(/([“”＂"])(?:\s*\1)+/gu, '$1');
+  return text
+    .replace(/\p{P}/gu, (punctuation, offset: number, source: string) => {
+      if (['“', '”', '＂', '"', '%'].includes(punctuation)) return punctuation;
+      if (punctuation === '、') {
+        const before = source.slice(0, offset).replace(/[\s“＂"]+$/u, '');
+        const after = source.slice(offset + punctuation.length).replace(/^[\s”＂"]+/u, '');
+        if (!before || !after) return '';
+        if (/\p{P}$/u.test(before) || /^\p{P}/u.test(after)) return ' ';
+        return punctuation;
+      }
+      const previous = Array.from(source.slice(0, offset)).at(-1) || '';
+      const next = Array.from(source.slice(offset + punctuation.length))[0] || '';
+      if ((punctuation === '.' || punctuation === '．') && /[\p{L}\p{N}]/u.test(previous) && /[\p{L}\p{N}]/u.test(next)) return punctuation;
+      if ((punctuation === ':' || punctuation === '：' || punctuation === '-' || punctuation === '－') && /\p{N}/u.test(previous) && /\p{N}/u.test(next)) return punctuation;
+      return /[\p{L}\p{N}”＂"]/u.test(previous) && /[\p{L}\p{N}]/u.test(next) ? ' ' : '';
+    })
+    .replace(/(?:^|\s)、+|、+(?=\s|$)/gu, ' ')
+    .replace(/\s+°/gu, '°')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function holdCompressedCueThroughGap(segment: TimestampedTranscriptSegment, next: TimestampedTranscriptSegment | undefined) {
+  if (!next || /[。！？.!?]$/u.test(segment.text)) return segment;
+  const duration = segment.end - segment.start;
+  const gap = next.start - segment.end;
+  const cjkCharacters = Array.from(segment.text).filter((character) => /\p{Script=Han}/u.test(character)).length;
+  if (cjkCharacters < 6 || duration <= 0 || duration > 0.8 || gap < 0.75 || gap > 6) return segment;
+  return { ...segment, end: next.start };
+}
+
 /** Serialize timestamped segments without asking a language model to rewrite their timings. */
 export function formatSrt(segments: readonly TimestampedTranscriptSegment[]) {
-  const cues = segments
-    .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start && cleanText(segment.text))
-    .map((segment, index) => {
-      const text = cleanText(segment.text).replace(/(\d)\s+%/gu, '$1%');
-      return `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${text}`;
-    });
+  const captions = segments.flatMap((segment) => {
+    if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end) || segment.end <= segment.start || !cleanText(segment.text)) return [];
+    const text = formatSubtitleText(segment.text).replace(/(\d)\s+%/gu, '$1%');
+    return text ? [{ ...segment, text }] : [];
+  });
+  const stabilized = captions.map((segment, index) => holdCompressedCueThroughGap(segment, captions[index + 1]));
+  const cues = stabilized.map((segment, index) => (
+    `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${segment.text}`
+  ));
   return cues.length ? `${cues.join('\r\n\r\n')}\r\n` : '';
 }

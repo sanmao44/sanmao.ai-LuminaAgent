@@ -5,6 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
+import ModelLibraryProviderPicker from '@/components/ModelLibraryProviderPicker';
 import UpdateNotice from '@/components/UpdateNotice';
 import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
@@ -12452,15 +12453,15 @@ export default function Page() {
                                                     /*#__PURE__*/ _jsx("span", {
                                                         children: "默认助手模型"
                                                     }),
-                                                    /*#__PURE__*/ _jsx(Dropdown, {
-                                                        value: state.settings.agentModelId || '',
-                                                        options: availableChatModels.map((m)=>({
-                                                                value: m.id,
-                                                                label: m.displayName,
-                                                                meta: m.providerName
-                                                            })),
-                                                        onChange: (v)=>void patchSettings({
-                                                                agentModelId: v
+                                                    /*#__PURE__*/ _jsx(ModelPicker, {
+                                                        models: availableChatModels,
+                                                        value: state.settings.agentModelId || 'auto',
+                                                        capability: "chat",
+                                                        defaultProviderId: state.settings.defaultProviderId,
+                                                        defaultModelId: state.settings.agentModelId,
+                                                        triggerLabelMode: "model",
+                                                        onChange: (value)=>void patchSettings({
+                                                                agentModelId: value === 'auto' ? null : value
                                                             }),
                                                         placeholder: "选择对话模型"
                                                     })
@@ -12471,15 +12472,15 @@ export default function Page() {
                                                     /*#__PURE__*/ _jsx("span", {
                                                         children: "默认图片模型"
                                                     }),
-                                                    /*#__PURE__*/ _jsx(Dropdown, {
-                                                        value: state.settings.defaultImageModelId || '',
-                                                        options: availableGenerationModels.map((m)=>({
-                                                                value: m.id,
-                                                                label: m.displayName,
-                                                                meta: m.providerName
-                                                            })),
-                                                        onChange: (v)=>void patchSettings({
-                                                                defaultImageModelId: v
+                                                    /*#__PURE__*/ _jsx(ModelPicker, {
+                                                        models: availableGenerationModels,
+                                                        value: state.settings.defaultImageModelId || 'auto',
+                                                        capability: "generate",
+                                                        defaultProviderId: state.settings.defaultProviderId,
+                                                        defaultModelId: state.settings.defaultImageModelId,
+                                                        triggerLabelMode: "model",
+                                                        onChange: (value)=>void patchSettings({
+                                                                defaultImageModelId: value === 'auto' ? null : value
                                                             }),
                                                         placeholder: "选择生图模型"
                                                     })
@@ -12488,10 +12489,14 @@ export default function Page() {
                                             /*#__PURE__*/ _jsxs("div", {
                                                 children: [
                                                     /*#__PURE__*/ _jsx("span", { children: "默认视频模型" }),
-                                                    /*#__PURE__*/ _jsx(Dropdown, {
-                                                        value: state.settings.defaultVideoModelId || '',
-                                                        options: availableVideoModels.map((m)=>( { value: m.id, label: m.displayName, meta: m.providerName } )),
-                                                        onChange: (v)=>void patchSettings({ defaultVideoModelId: v }),
+                                                    /*#__PURE__*/ _jsx(ModelPicker, {
+                                                        models: availableVideoModels,
+                                                        value: state.settings.defaultVideoModelId || 'auto',
+                                                        capability: "video-generate",
+                                                        defaultProviderId: state.settings.defaultProviderId,
+                                                        defaultModelId: state.settings.defaultVideoModelId,
+                                                        triggerLabelMode: "model",
+                                                        onChange: (value)=>void patchSettings({ defaultVideoModelId: value === 'auto' ? null : value }),
                                                         placeholder: "选择视频模型"
                                                     })
                                                 ]
@@ -12504,24 +12509,14 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         children: [
-                                                            /*#__PURE__*/ _jsx(Dropdown, {
-                                                                value: state.settings.defaultProviderId || '',
-                                                                options: [
-                                                                    {
-                                                                        value: '',
-                                                                        label: '自动 · 不指定厂商',
-                                                                        meta: '按可用模型自动回退'
-                                                                    },
-...state.providers.filter((provider)=>isProviderModelLibraryEnabled(provider)).map((provider)=>({
-                                                                            value: provider.id,
-                                                                            label: provider.name,
-meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id && model.enabled && model.published).length} 个可用模型`
-                                                                        }))
-                                                                ],
-                                                                onChange: (value)=>void patchSettings({
-                                                                        defaultProviderId: value || null
-                                                                    }),
-                                                                placeholder: "自动 \xb7 不指定厂商"
+                                                            /*#__PURE__*/ _jsx(ModelLibraryProviderPicker, {
+                                                                value: state.settings.defaultProviderId,
+                                                                providers: state.providers.filter((provider)=>isProviderModelLibraryEnabled(provider)).sort((left, right)=>left.name.localeCompare(right.name, 'zh-CN')).map((provider)=>({
+                                                                    id: provider.id,
+                                                                    name: provider.name,
+                                                                    availableModelCount: activeProviderModels.filter((model)=>model.providerId === provider.id && model.enabled && model.published).length
+                                                                })),
+                                                                onChange: (value)=>void patchSettings({ defaultProviderId: value })
                                                             }),
                                                             /*#__PURE__*/ _jsx("small", {
                                                                 children: "自动模式优先使用这里指定的厂商；手动选择模型时不受影响。"
