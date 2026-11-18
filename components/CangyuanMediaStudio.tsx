@@ -71,7 +71,10 @@ function isSoundEffectTask(task: CangyuanMediaTask) {
 
 function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | 'sound-effect' | '3d-generate') {
   if (!state) return [];
-  const providers = state.providers.filter(isCangyuanProvider);
+  // The route implements the documented creative-task protocol. The UI must
+  // select every compatible provider, not only the vendor that introduced it.
+  const providers = state.providers.filter((provider) =>
+    provider.type === 'openai-compatible' && provider.creativeTaskProtocol === 'cangyuan-creative-v1');
   return filterModelsByActiveProviders(state.models, providers, { capability });
 }
 
