@@ -2,7 +2,7 @@ import type { AudioArtifactPersistencePort, AudioSynthesisPort } from '@/package
 import { offlineSpeechSupported, synthesizeOfflineSpeech } from '@/lib/clone/offline-speech';
 import { audioExtension, resolveSpeechRuntime, synthesizeSpeech } from '@/lib/clone/speech';
 import { persistAudioBuffer } from '@/lib/audio-storage';
-import { AudioSynthesisUnavailableError, synthesizeAndPersistAudio } from './audio-synthesis-application';
+import { AudioSynthesisUnavailableError, synthesizeAndPersistAudio, synthesizeAudioRequest } from './audio-synthesis-application';
 
 const audioSynthesisPort: AudioSynthesisPort = {
   async synthesize(input, signal) {
@@ -54,4 +54,8 @@ const audioArtifactPersistence: AudioArtifactPersistencePort = {
 
 export function synthesizeCanvasNarration(input: unknown, signal?: AbortSignal) {
   return synthesizeAndPersistAudio(input, audioSynthesisPort, audioArtifactPersistence, signal);
+}
+
+export function synthesizeSpeechPreview(input: unknown, signal?: AbortSignal) {
+  return synthesizeAudioRequest(input, audioSynthesisPort, signal);
 }

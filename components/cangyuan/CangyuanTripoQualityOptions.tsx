@@ -121,7 +121,7 @@ export default function CangyuanTripoQualityOptions({ profile, options, onChange
       </label>
         <label className="cangyuan-checkbox-field">
           <input type="checkbox" checked={options.pbr === true} disabled={options.generateParts === true} onChange={(event) => update({ pbr: event.target.checked })} />
-          <span>PBR 材质</span>
+          <span>PBR 材质（基于物理渲染）</span>
         </label>
         {profile.supportsGenerateParts && (
           <label className="cangyuan-checkbox-field">

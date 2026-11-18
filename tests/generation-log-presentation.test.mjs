@@ -65,6 +65,7 @@ test("generation log details display localized image and speech options", () => 
     mediaKind: "audio",
     status: "success",
     prompt: "speech",
+    modelId: "gemini-tts",
     voice: "Ursa",
     format: "wav",
     speed: 1.25,

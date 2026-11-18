@@ -12,7 +12,10 @@ function createRoute(result) {
       audioSynthesisFailureCode: () => undefined,
       audioSynthesisLogMetadata: (input) => ({ prompt: input.text, requestedModelId: input.modelId || 'auto' }),
     },
-    '@/apps/api/audio-synthesis-composition': { synthesizeCanvasNarration: async () => result },
+    '@/apps/api/audio-synthesis-composition': {
+      synthesizeCanvasNarration: async () => result,
+      synthesizeSpeechPreview: async () => result,
+    },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': {
       beginRuntimeRequest: async () => async () => {},
@@ -80,4 +83,36 @@ test('audio speech route percent-encodes storage failures for ByteString headers
   const encoded = response.headers.get('X-Audio-Storage-Error');
   assert.equal(encoded, encodeURIComponent(message));
   assert.equal(decodeURIComponent(encoded), message);
+});
+
+test('audio voice preview returns bytes without writing history or persistent media', async () => {
+  const route = createRoute({
+    data: new Uint8Array([7, 8]),
+    contentType: 'audio/mpeg',
+    extension: 'mp3',
+    engine: 'provider',
+  });
+  const response = await route.POST(new Request('http://localhost/api/audio/speech', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '你好，这是一段音色试听。', preview: true, modelId: 'speech-model', voice: 'voice-a' }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(Array.from(new Uint8Array(await response.arrayBuffer())), [7, 8]);
+  assert.deepEqual(route.started, []);
+  assert.deepEqual(route.finished, []);
+  assert.equal(response.headers.get('X-Audio-Url'), null);
+});
+
+test('audio voice preview rejects arbitrary text before invoking generation', async () => {
+  const route = createRoute({ data: new Uint8Array([1]), contentType: 'audio/mpeg', extension: 'mp3', engine: 'provider' });
+  const response = await route.POST(new Request('http://localhost/api/audio/speech', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: '用户任意正文', preview: true }),
+  }));
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(route.started, []);
 });

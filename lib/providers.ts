@@ -1,4 +1,4 @@
-import type { GeneratedImage, ModelCapability, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
+import type { GeneratedImage, ModelCapability, ProviderCreativeTaskProtocol, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
 import type { ModelProviderFailure } from '@/packages/contracts/model';
 import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
 import type { ImageModelParameters, ImageOutputFormat } from '@/packages/contracts/creative';
@@ -35,6 +35,7 @@ export type RuntimeProvider = {
   imageUpscaleStatusPath?: string;
   responsesPath?: string;
   textProtocol?: ProviderTextProtocol;
+  creativeTaskProtocol?: ProviderCreativeTaskProtocol;
   videoTransport?: VideoTransport;
   videoBaseUrl?: string;
   videoApiKey?: string;

@@ -20,6 +20,10 @@ import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/li
 import type {
   CanvasAudioGenerationMeta,
   CanvasAudioDraft,
+  CanvasAudioTranscriptionDraft,
+  CanvasAudioTranscriptionMeta,
+  CanvasAudioMusicDraft,
+  CanvasAudioMusicTask,
   CanvasDocument,
   CanvasGenerationParams,
   CanvasInputRole,
@@ -118,6 +122,10 @@ export type CanvasNodeEditorPopoverProps = {
   onUpscaleParamsChange?: (params: CanvasUpscaleParams) => void;
   onReplaceAudio: (nodeId: string, file: File, generation?: CanvasAudioGenerationMeta) => Promise<boolean>;
   onSpeechDraftChange: (nodeId: string, draft: CanvasAudioDraft) => void;
+  onTranscriptionDraftChange: (nodeId: string, draft: CanvasAudioTranscriptionDraft) => void;
+  onTranscriptionChange: (nodeId: string, result: CanvasAudioTranscriptionMeta) => void;
+  onMusicDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
+  onMusicTaskChange: (nodeId: string, task: CanvasAudioMusicTask) => void;
   onAudioDurationChange: (nodeId: string, durationSeconds: number) => void;
   projectId?: string;
   canvasId?: string;
@@ -191,6 +199,10 @@ function CanvasNodeEditorPopover({
   onUpscaleParamsChange,
   onReplaceAudio,
   onSpeechDraftChange,
+  onTranscriptionDraftChange,
+  onTranscriptionChange,
+  onMusicDraftChange,
+  onMusicTaskChange,
   onAudioDurationChange,
   projectId,
   canvasId,
@@ -845,6 +857,10 @@ function CanvasNodeEditorPopover({
              node={node}
              onReplaceAudio={onReplaceAudio}
              onSpeechDraftChange={onSpeechDraftChange}
+             onTranscriptionDraftChange={onTranscriptionDraftChange}
+             onTranscriptionChange={onTranscriptionChange}
+             onMusicDraftChange={onMusicDraftChange}
+             onMusicTaskChange={onMusicTaskChange}
              onDurationChange={onAudioDurationChange}
              onNotify={onNotify}
              models={runtime?.models || []}

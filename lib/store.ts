@@ -14,6 +14,7 @@ import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
 import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternalIntentModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
+import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 
@@ -142,7 +143,7 @@ async function readState(): Promise<StoreData> {
     }
     const parsedProviders = Array.isArray(parsed.providers) ? parsed.providers : [];
     const providers = parsedProviders.map((provider) =>
-      !provider.creativeTaskProtocol && provider.platform === 'cangyuan'
+      !provider.creativeTaskProtocol && isCangyuanProvider(provider)
         ? { ...provider, creativeTaskProtocol: 'cangyuan-creative-v1' as const }
         : provider,
     );
@@ -604,7 +605,7 @@ export async function mergeProviderTransferConfiguration(bundle: Pick<ProviderTr
         imageUpscaleStatusPath: provider.imageUpscaleStatusPath,
         responsesPath: provider.responsesPath,
         textProtocol: provider.textProtocol as ProviderTextProtocol,
-        creativeTaskProtocol: normalizeCreativeTaskProtocol(provider.creativeTaskProtocol ?? (provider.platform === 'cangyuan' ? 'cangyuan-creative-v1' : undefined)),
+        creativeTaskProtocol: normalizeCreativeTaskProtocol(provider.creativeTaskProtocol ?? (isCangyuanProvider(provider) ? 'cangyuan-creative-v1' : undefined)),
         videoTransport: provider.videoTransport as ProviderConnection['videoTransport'],
         videoBaseUrl: provider.videoBaseUrl.replace(/\/+$/, ''),
         videoTaskPath: provider.videoTaskPath,

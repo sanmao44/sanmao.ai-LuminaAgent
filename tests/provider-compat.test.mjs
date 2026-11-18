@@ -392,6 +392,24 @@ test('uses the OpenAI video task status default for a custom compatible provider
   assert.equal(config.videoTaskStatusPath, '/v1/videos/{id}');
 });
 
+test('creative task protocol defaults for its preset and is explicit for other providers', () => {
+  const cangyuan = presets.resolveProviderConfiguration({ platform: 'cangyuan' });
+  assert.equal(cangyuan.creativeTaskProtocol, 'cangyuan-creative-v1');
+
+  const custom = presets.resolveProviderConfiguration({ platform: 'custom', baseUrl: 'https://custom.example/v1' });
+  assert.equal(custom.creativeTaskProtocol, undefined);
+
+  const optedIn = presets.resolveProviderConfiguration({
+    platform: 'custom',
+    baseUrl: 'https://custom.example/v1',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
+  });
+  assert.equal(optedIn.creativeTaskProtocol, 'cangyuan-creative-v1');
+  assert.equal(presets.resolveProviderConfiguration({ platform: 'custom' }, optedIn).creativeTaskProtocol, 'cangyuan-creative-v1');
+  assert.equal(presets.resolveProviderConfiguration({ platform: 'custom', creativeTaskProtocol: '' }, optedIn).creativeTaskProtocol, undefined);
+  assert.throws(() => presets.resolveProviderConfiguration({ platform: 'custom', creativeTaskProtocol: 'unknown-protocol' }), /协议无效/);
+});
+
 test('keeps Agnes text and video gateways in the same selected region', () => {
   const international = presets.resolveProviderConfiguration({
     platform: 'agnes',
@@ -1229,7 +1247,7 @@ test('Cangyuan image generation and edits upload signed reference bytes and poll
     assert.deepEqual(JSON.parse(generationCall.init.body), {
       model: 'ax-gpt-image-2.6-flare', prompt: '雾中群山', async: true,
       size: '2K', aspect_ratio: '16:9', quality: 'xhigh', output_format: 'gif', background: 'transparent',
-      seed: 42, frame_count: 8, frame_duration_ms: 120,
+      seed: '42', frame_count: 8, frame_duration_ms: 120,
       images: ['https://cdn.example.test/reference-1.png'],
     });
     const editCall = calls.find((call) => call.url.endsWith('/v1/images/edits'));
@@ -1440,7 +1458,7 @@ test('Cangyuan image generation forwards independent resolution, tier, and requi
 
     await assert.rejects(() => providers.generateImage(provider, 'gpt-image-2.5-x', {
       prompt: '无效档位', tier: '8k',
-    }), /参数 tier=8k/);
+    }), /不支持生成档位“8k”/);
     await assert.rejects(() => providers.generateImage(provider, 'flux-3-image', {
       prompt: '不支持的选项', seed: 'seed-42',
     }), /参数 seed=seed-42/);
@@ -1499,7 +1517,7 @@ test('Cangyuan rejects unsupported profile parameters and masks before uploading
     );
     await assert.rejects(
       providers.generateImage(provider, 'mj2-midjourney-describe', { prompt: 'test', quality: 'high' }),
-      /未确认参数 quality=high/,
+      /不支持图片质量“high”/,
     );
     assert.equal(requests, 0);
   } finally {

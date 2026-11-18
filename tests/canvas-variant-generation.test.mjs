@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 async function loadImageReferenceRequest() {
   const intentClassifierUrl = new URL("../lib/intent-classifier.ts", import.meta.url);
@@ -44,7 +45,8 @@ const imageReferenceRequest = await loadImageReferenceRequest();
 globalThis.__prepareCanvasImageReferenceRequest = imageReferenceRequest.prepareCanvasImageReferenceRequest;
 globalThis.__canvasImageRequestOperation = imageReferenceRequest.canvasImageRequestOperation;
 const variantBatchUrl = new URL("../lib/canvas/variant-batch.ts", import.meta.url);
-const variantBatchSource = `const canvasImageRequestOperation = globalThis.__canvasImageRequestOperation;\n${(await readFile(variantBatchUrl, "utf8"))
+globalThis.__imageModelParametersFromSettings = createTsRequire(process.cwd())("./lib/creation/settings").imageModelParametersFromSettings;
+const variantBatchSource = `const canvasImageRequestOperation = globalThis.__canvasImageRequestOperation;\nconst imageModelParametersFromSettings = globalThis.__imageModelParametersFromSettings;\n${(await readFile(variantBatchUrl, "utf8"))
   .replace(/^import[\s\S]*?;\r?\n/gm, "")}`;
 const variantBatchCompiled = ts.transpileModule(variantBatchSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },

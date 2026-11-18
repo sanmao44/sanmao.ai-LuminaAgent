@@ -53,13 +53,27 @@ function createMemoryRepository() {
 
 function createHarness(overrides = {}) {
   const repository = createMemoryRepository();
-  const providerConfig = overrides.providerConfig || {
+  const providerConfig = {
+    type: 'openai-compatible',
+    ...overrides.providerConfig,
+    ...(overrides.providerConfig ? {} : {
     id: 'provider-1',
     platform: 'cangyuan',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
     baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
     apiKey: 'test-key',
+    }),
   };
-  const runtime = overrides.runtime || {
+  const runtime = overrides.runtime ? {
+    ...overrides.runtime,
+    provider: {
+      type: 'openai-compatible',
+      ...overrides.runtime.provider,
+      ...(overrides.runtime.provider.platform === 'cangyuan'
+        ? { creativeTaskProtocol: 'cangyuan-creative-v1' }
+        : {}),
+    },
+  } : {
     provider: providerConfig,
     model: { id: 'model-1', rawId: 'su2-suno-v6', displayName: 'Suno v6', capabilities: ['music-generate', '3d-generate'] },
   };
@@ -109,14 +123,14 @@ function createHarness(overrides = {}) {
   };
 }
 
-test('service resolves music and 3D only through matching enabled Cangyuan model capabilities', async () => {
+test('service requires the declared creative task protocol and matching model capabilities', async () => {
   const harness = createHarness({ resolveModel: (_id, kind, runtime) => kind === 'audio' ? runtime : null });
   const music = await harness.service.create({ kind: 'music', modelId: 'model-1', idempotencyKey: 'music-1', input: { prompt: 'ambient synth' } });
   assert.equal(music.kind, 'music');
   assert.deepEqual(harness.resolvedKinds[0], { modelId: 'model-1', kind: 'audio' });
   await assert.rejects(
     harness.service.create({ kind: '3d', modelId: 'model-1', idempotencyKey: '3d-1', input: { prompt: 'wooden boat' } }),
-    /请选择已启用的沧元三维模型/,
+    /请选择已启用的音乐或三维模型/,
   );
 
   const otherProvider = createHarness({ runtime: {
@@ -125,9 +139,17 @@ test('service resolves music and 3D only through matching enabled Cangyuan model
   } });
   await assert.rejects(
     otherProvider.service.create({ kind: 'music', modelId: 'image-model', idempotencyKey: 'wrong-provider', input: { prompt: 'ambient synth' } }),
-    /请选择已启用的沧元音乐模型/,
+    /请为服务商启用音乐与三维任务接口/,
   );
   assert.equal(otherProvider.repository.records.length, 0);
+
+  const optedInProvider = createHarness({ runtime: {
+    provider: { id: 'provider-opted-in', platform: 'custom', creativeTaskProtocol: 'cangyuan-creative-v1', baseUrl: 'https://provider.example.test', apiKey: 'key' },
+    model: { id: 'music-model', rawId: 'su2-suno-v6', displayName: 'Music model', capabilities: ['music-generate'] },
+  } });
+  const genericMusic = await optedInProvider.service.create({ kind: 'music', modelId: 'music-model', idempotencyKey: 'generic-music', input: { prompt: 'ambient synth' } });
+  assert.equal(genericMusic.kind, 'music');
+  assert.equal(genericMusic.providerId, 'provider-opted-in');
 
   const missingCapability = createHarness({ runtime: {
     provider: { id: 'provider-1', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key' },
@@ -144,6 +166,7 @@ test('accepts a saved generic provider with the official Cangyuan API hostname',
   const harness = createHarness({ providerConfig: {
     id: 'legacy-cangyuan',
     platform: 'custom',
+    creativeTaskProtocol: 'cangyuan-creative-v1',
     baseUrl: 'https://ai.cangyuansuanli.cn/v1',
     apiKey: 'test-key',
   } });

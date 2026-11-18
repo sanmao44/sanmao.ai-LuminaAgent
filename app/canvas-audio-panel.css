@@ -33,7 +33,20 @@
 .canvas-audio-speech textarea:focus-visible,.canvas-audio-advanced input:focus-visible{outline:2px solid color-mix(in srgb,#a98aff 62%,transparent);outline-offset:1px}
 .canvas-audio-advanced{display:grid;gap:7px;min-width:0;padding:0}
 .canvas-audio-advanced summary{width:max-content;max-width:100%;color:var(--text-2);font-size:9px;cursor:pointer}
+.canvas-audio-advanced>label,.canvas-audio-option-label{color:var(--text-2);font-size:10px;font-weight:850}
 .canvas-audio-advanced input{padding:8px 10px}
+.canvas-audio-option-select{width:100%;min-width:0}
+.canvas-audio-option-select .select-menu-trigger{box-sizing:border-box;width:100%;min-height:30px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--text);font:inherit;font-size:9px;text-align:left}
+.canvas-audio-option-menu{max-width:min(360px,calc(100vw - 16px))}
+.canvas-audio-advanced .canvas-audio-option-speed{display:grid;grid-template-columns:minmax(0,1fr) 64px;align-items:center;gap:5px 8px;min-width:0}
+.canvas-audio-option-speed label{grid-column:1/-1;color:var(--text-2);font-size:9px;font-weight:800}
+.canvas-audio-option-speed input[type=range]{width:100%;margin:0;accent-color:var(--accent)}
+.canvas-audio-advanced .canvas-audio-option-speed input[type=number]{width:64px;min-height:30px;padding:4px 6px;font-size:9px}
+.canvas-audio-voice-preview{width:max-content;min-height:28px;padding:0 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);color:var(--text-2);font:inherit;font-size:9px;font-weight:750;cursor:pointer}
+.canvas-audio-voice-preview:hover:not(:disabled){border-color:var(--accent);color:var(--accent-text)}
+.canvas-audio-voice-preview:disabled{cursor:not-allowed;opacity:.5}
+.canvas-audio-advanced>small{color:var(--muted);font-size:8px;line-height:1.45}
+.canvas-audio-advanced .canvas-audio-player{padding:6px 8px}
 .canvas-audio-generation{display:grid;gap:6px;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel-2)}
 .canvas-audio-generation summary{width:max-content;max-width:100%;color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer}
 .canvas-audio-generation p{margin:0;max-height:110px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);font-size:9px;line-height:1.5}

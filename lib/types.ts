@@ -3,6 +3,8 @@ import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import type { VideoModelParameterValues } from '@/packages/contracts/video-generation';
 import type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
 
+export type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
+
 export type ProviderType = 'openai-compatible' | 'google-gemini';
 export type ProviderPlatform = 'custom' | '65535' | '65535-claude-code' | 'apikl' | 'a6api' | 'openai' | 'new-api' | 'one-api' | 'openrouter' | 'siliconflow' | 'deepseek' | 'dashscope' | 'volcengine' | 'modelscope' | 'google-gemini' | 'apimart' | 'jimeng-cli' | 'agnes' | 'gitee' | 'cangyuan';
 export type ProviderStatus = 'healthy' | 'idle' | 'error';

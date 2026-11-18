@@ -223,7 +223,7 @@ export function resolveProviderConfiguration(
     videoTaskStatusPath: pick('videoTaskStatusPath', preset.videoTaskStatusPath || defaultVideoTaskStatusPath),
     videoGenerationPath: pick('videoGenerationPath', preset.videoGenerationPath || standardCompatibility.videoGenerationPath),
     textProtocol: input.textProtocol || (preserveExisting ? existing?.textProtocol : undefined) || preset.textProtocol || 'chat-completions',
-    ...(creativeTaskProtocol ? { creativeTaskProtocol } : {}),
+    creativeTaskProtocol,
     videoQueryPath: String(input.videoQueryPath || (preserveExisting ? existing?.videoQueryPath : '') || preset.videoQueryPath || '').trim(),
   };
 }

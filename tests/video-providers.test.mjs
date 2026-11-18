@@ -12,6 +12,7 @@ const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
 globalThis.__providerTestSharp = sharp;
 const signedCompiled = ts.transpileModule(signedSource
+  .replace("import { isSvgImageBytes } from './svg-image';", 'const isSvgImageBytes = () => false;')
   .replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerTestSharp;')
   .replace(/import \{ resolveStoredFileWithFallback \} from '\.\/image-storage';\r?\n/, 'const resolveStoredFileWithFallback = () => null;\n')
   .replace(/import \{ resolveStoredVideoFileWithFallback \} from '\.\/video-storage';\r?\n/, 'const resolveStoredVideoFileWithFallback = () => null;\n')

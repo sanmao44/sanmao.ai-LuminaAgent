@@ -10,6 +10,8 @@ export const SPEECH_OUTPUT_FORMATS = Object.freeze([
 
 export type SpeechOutputFormat = typeof SPEECH_OUTPUT_FORMATS[number];
 
+export const SPEECH_VOICE_PREVIEW_TEXT = '你好，这是一段音色试听。';
+
 export type SpeechModelProfile = {
   publicModel: string;
   suggestedVoices: readonly string[];
@@ -17,30 +19,19 @@ export type SpeechModelProfile = {
   speedRange?: { min: number; max: number };
 };
 
-const SPEECH_VOICE_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  Capella: '五车二',
-  Ursa: '大熊',
-  Vega: '织女星',
-  Eclipse: '日蚀',
-  Lyra: '天琴',
-  Orbit: '轨道',
-  Dipper: '北斗',
-  Nova: '新星',
-  nova: '新星',
-  Pegasus: '飞马',
-  alloy: '合金',
-  aria: '咏叹调',
-  coral: '珊瑚',
-  shimmer: '微光',
-  sage: '智者',
-  echo: '回声',
-  helio: '赫利俄斯',
-  onyx: '缟玛瑙',
-  fable: '寓言',
+const SPEECH_VOICE_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  'gemini-tts': Object.freeze({
+    Capella: '五车二', Ursa: '厄尔萨', Vega: '织女星', Eclipse: '伊克利普斯', Lyra: '天琴座',
+    Orbit: '奥比特', Dipper: '迪珀', Nova: '诺娃', Pegasus: '佩伽索斯',
+  }),
+  'mu1-muse-tts': Object.freeze({
+    alloy: '艾洛伊', aria: '阿丽娅', coral: '科拉尔', nova: '诺娃', shimmer: '希默',
+    sage: '赛奇', echo: '艾可', helio: '赫利欧', onyx: '奥尼克斯', fable: '费布尔',
+  }),
 });
 
-export function speechVoiceLabel(voice: string): string {
-  return SPEECH_VOICE_LABELS[voice] || voice;
+export function speechVoiceLabel(voice: string, publicModel: string): string {
+  return SPEECH_VOICE_LABELS[publicModel]?.[voice] || '未命名音色';
 }
 
 const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Object.freeze({

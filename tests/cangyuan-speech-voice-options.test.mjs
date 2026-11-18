@@ -10,7 +10,7 @@ test('Gemini TTS displays Chinese voice names while preserving documented reques
   const options = voiceOptions.speechVoiceOptions(profile);
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
-  assert.deepEqual(options.map(({ label }) => label), ['五车二', '大熊', '织女星', '日蚀', '天琴', '轨道', '北斗', '新星', '飞马']);
+  assert.deepEqual(options.map(({ label }) => label), ['五车二', '厄尔萨', '织女星', '伊克利普斯', '天琴座', '奥比特', '迪珀', '诺娃', '佩伽索斯']);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
 });
 
@@ -20,10 +20,10 @@ test('Muse TTS labels explain documented voice groups without changing request I
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [
-    '合金（清亮女声）', '咏叹调（清亮女声）', '珊瑚（清亮女声）',
-    '新星（温暖女声）', '微光（温暖女声）', '智者（温暖女声）',
-    '回声（沉稳男声）', '赫利俄斯（沉稳男声）', '缟玛瑙（沉稳男声）',
-    '寓言（叙事男声）',
+    '艾洛伊（清亮女声）', '阿丽娅（清亮女声）', '科拉尔（清亮女声）',
+    '诺娃（温暖女声）', '希默（温暖女声）', '赛奇（温暖女声）',
+    '艾可（沉稳男声）', '赫利欧（沉稳男声）', '奥尼克斯（沉稳男声）',
+    '费布尔（叙事男声）',
   ]);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
 });

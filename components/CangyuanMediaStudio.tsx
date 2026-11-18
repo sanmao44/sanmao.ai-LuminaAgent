@@ -1,9 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import ThreeDModelPreview from '@/components/ThreeDModelPreview';
 import ModelPicker from '@/components/ModelPicker';
 import SelectMenu from '@/components/SelectMenu';
 import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
@@ -114,140 +112,6 @@ function isPublicHttpsUrl(value: string) {
   } catch {
     return false;
   }
-}
-
-function disposeModel(root: THREE.Object3D) {
-  root.traverse((object) => {
-    const mesh = object as THREE.Mesh;
-    mesh.geometry?.dispose();
-    const materials = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-    for (const material of materials) {
-      for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) value.dispose();
-      }
-      material.dispose();
-    }
-  });
-}
-
-function GlbPreview({ url, label }: { url: string; label: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    setError('');
-    setLoading(true);
-    let disposed = false;
-    let modelRoot: THREE.Object3D | null = null;
-    let frame = 0;
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color('#171b20');
-    const camera = new THREE.PerspectiveCamera(36, 1, 0.01, 1000);
-    let renderer: THREE.WebGLRenderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
-    } catch {
-      setLoading(false);
-      setError('浏览器当前无法创建三维预览，可直接下载 GLB 文件。');
-      return;
-    }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
-    host.replaceChildren(renderer.domElement);
-
-    scene.add(new THREE.HemisphereLight(0xf0f5ff, 0x343c46, 2.1));
-    const keyLight = new THREE.DirectionalLight(0xfff0dc, 2.5);
-    keyLight.position.set(3, 5, 4);
-    scene.add(keyLight);
-    const fillLight = new THREE.DirectionalLight(0xc7e4ff, 1.15);
-    fillLight.position.set(-4, 2, -3);
-    scene.add(fillLight);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.screenSpacePanning = true;
-
-    const requestRender = () => {
-      if (disposed || frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        const moving = controls.update();
-        renderer.render(scene, camera);
-        if (moving) requestRender();
-      });
-    };
-    controls.addEventListener('change', requestRender);
-
-    const resize = () => {
-      const width = Math.max(1, host.clientWidth);
-      const height = Math.max(1, host.clientHeight);
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      requestRender();
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host);
-    resize();
-
-    const loader = new GLTFLoader();
-    loader.load(url, (gltf) => {
-      if (disposed) {
-        disposeModel(gltf.scene);
-        return;
-      }
-      modelRoot = gltf.scene;
-      const bounds = new THREE.Box3().setFromObject(modelRoot);
-      const center = bounds.getCenter(new THREE.Vector3());
-      const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-      modelRoot.position.sub(center);
-      scene.add(modelRoot);
-      const radius = Math.max(0.05, sphere.radius);
-      const distance = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.55;
-      camera.position.set(distance * 0.9, distance * 0.62, distance);
-      camera.near = Math.max(0.001, radius / 1000);
-      camera.far = Math.max(100, distance * 12);
-      camera.updateProjectionMatrix();
-      controls.target.set(0, 0, 0);
-      controls.minDistance = radius * 1.2;
-      controls.maxDistance = distance * 4;
-      controls.update();
-      setLoading(false);
-      requestRender();
-    }, undefined, () => {
-      if (!disposed) {
-        setLoading(false);
-        setError('模型无法在线预览，可直接下载 GLB 文件。');
-      }
-    });
-    requestRender();
-
-    return () => {
-      disposed = true;
-      window.cancelAnimationFrame(frame);
-      observer.disconnect();
-      controls.removeEventListener('change', requestRender);
-      controls.dispose();
-      if (modelRoot) disposeModel(modelRoot);
-      renderer.dispose();
-      renderer.domElement.remove();
-    };
-  }, [url]);
-
-  return (
-    <div className="cangyuan-glb-preview" aria-label={`${label} 三维模型预览`}>
-      <div className="cangyuan-glb-stage" ref={hostRef} />
-      {loading && <p className="cangyuan-glb-loading" role="status">正在加载模型预览…</p>}
-      {error && <p className="cangyuan-glb-error" role="status">{error}</p>}
-      <span className="cangyuan-glb-hint">拖动旋转 · 滚轮缩放</span>
-    </div>
-  );
 }
 
 export type CangyuanMediaStudioProps = {
@@ -904,7 +768,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                 )}
                 {isLegacyTripo && (
                   <div className="cangyuan-3d-options">
-                    <div className="cangyuan-select-field"><span>贴图</span><SelectMenu value={texture} ariaLabel="三维贴图质量" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: 'no', label: '无贴图' }, { value: 'standard', label: '标准' }, { value: 'HD', label: 'HD' }]} onChange={(value) => setTexture(value as typeof texture)} /></div>
+                    <div className="cangyuan-select-field"><span>贴图质量</span><SelectMenu value={texture} ariaLabel="三维贴图质量" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: 'no', label: '无贴图' }, { value: 'standard', label: '标准' }, { value: 'HD', label: '高清（HD）' }]} onChange={(value) => setTexture(value as typeof texture)} /></div>
                     <label className="cangyuan-checkbox-field"><input type="checkbox" checked={pbr} onChange={(event) => setPbr(event.target.checked)} /><span>PBR 材质</span></label>
                   </div>
                 )}
@@ -919,7 +783,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                     <details className="cangyuan-3d-advanced" open={trellisAdvancedOpen} onToggle={(event) => setTrellisAdvancedOpen(event.currentTarget.open)}>
                       <summary>质量与网格</summary>
                       <div className="cangyuan-trellis-grid">
-                      <label className="cangyuan-music-text-field"><span>随机种子</span><input type="text" inputMode="numeric" value={trellisSeed} onChange={(event) => setTrellisSeed(event.target.value)} placeholder="可选" /><small>填写同一个种子可复现接近的网格；提交时按文本保留。</small></label>
+                        <label className="cangyuan-music-text-field"><span>随机种子</span><input type="text" inputMode="numeric" value={trellisSeed} onChange={(event) => setTrellisSeed(event.target.value)} placeholder="可选" /><small>相同参考图搭配同一种子，通常会生成相近的模型。</small></label>
                         <label className="cangyuan-music-text-field"><span>网格简化 0.9–0.98</span><input type="number" min="0.9" max="0.98" step="0.01" value={trellisMeshSimplify} onChange={(event) => setTrellisMeshSimplify(event.target.value)} placeholder="模型默认" /><small>数值越大模型越轻，细节会减少。</small></label>
                         <label className="cangyuan-music-text-field"><span>结构引导 0–10</span><input type="number" min="0" max="10" step="0.1" value={trellisSsGuidance} onChange={(event) => setTrellisSsGuidance(event.target.value)} placeholder="模型默认" /><small>控制轮廓与体积贴合参考图的程度。</small></label>
                         <label className="cangyuan-music-text-field"><span>结构步数 1–50</span><input type="number" min="1" max="50" step="1" value={trellisSsSteps} onChange={(event) => setTrellisSsSteps(event.target.value)} placeholder="模型默认" /><small>步数增加会改善轮廓细节，也会变慢。</small></label>
@@ -1006,7 +870,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       {previewOutput && previewUrl && <div className="cangyuan-preview-modal" role="dialog" aria-modal="true" aria-label="三维模型预览" onClick={() => setPreviewOutput(null)}>
         <div className="cangyuan-preview-dialog" onClick={(event) => event.stopPropagation()}>
           <div className="cangyuan-preview-header"><div><strong>{previewOutput.modelName}</strong><span>GLB 三维预览</span></div><button type="button" aria-label="关闭预览" onClick={() => setPreviewOutput(null)}>关闭</button></div>
-          <GlbPreview url={previewUrl} label={previewOutput.modelName} />
+          <ThreeDModelPreview url={previewUrl} label={previewOutput.modelName} variant="dialog" />
           <div className="cangyuan-preview-footer"><span>任务 {previewOutput.taskId.slice(0, 8)}</span><a href={previewOutput.output.url} download target="_blank" rel="noreferrer">下载 GLB</a></div>
         </div>
       </div>}

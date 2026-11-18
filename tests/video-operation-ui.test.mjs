@@ -11,6 +11,7 @@ const [videoStudio, parameterEditor] = await Promise.all([
 ]);
 
 const loadEditor = createTsRequire(process.cwd(), {
+  '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: () => null },
   './ModelPicker': { __esModule: true, default: () => null },
   './SelectMenu': {
     __esModule: true,

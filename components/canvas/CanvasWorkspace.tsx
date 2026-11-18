@@ -323,6 +323,10 @@ import CanvasGroupComposeDialog, {
 import type {
   CanvasAudioGenerationMeta,
   CanvasAudioDraft,
+  CanvasAudioTranscriptionDraft,
+  CanvasAudioTranscriptionMeta,
+  CanvasAudioMusicDraft,
+  CanvasAudioMusicTask,
   CanvasCamera,
   CanvasAngleParams,
   CanvasConnectionStyle,
@@ -346,6 +350,12 @@ import type {
   CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
+import {
+  updateCanvasAudioDraftDocument,
+  updateCanvasAudioMusicDraftDocument,
+  updateCanvasAudioMusicTaskDocument,
+  updateCanvasAudioTranscriptionDraftDocument,
+} from "@/lib/canvas/audio-tools";
 import type { AngleGenerationInput } from "@/lib/angle-control";
 import type { CloneJob } from "@/lib/clone/types";
 import { normalizeVideoEditorState } from "@/lib/canvas/video-editor";
@@ -1692,20 +1702,33 @@ export default function SuperCanvas() {
   );
   const updateCanvasAudioDraft = useCallback((nodeId: string, draft: CanvasAudioDraft) => {
     const current = canvasCoreRef.current.document();
-    let changed = false;
-    const nodes = current.nodes.map((item) => {
-      if (item.id !== nodeId || item.type !== "media" || item.data.kind !== "audio") return item;
-      const previous = item.data.speechDraft;
-      if (previous?.text === draft.text && previous?.voice === draft.voice && previous?.modelId === draft.modelId) return item;
-      changed = true;
-      return { ...item, data: { ...item.data, speechDraft: draft } };
-    });
-    if (!changed) return;
+    const next = updateCanvasAudioDraftDocument(current, nodeId, draft);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
+  const updateCanvasAudioTranscriptionDraft = useCallback((nodeId: string, draft: CanvasAudioTranscriptionDraft) => {
+    const current = canvasCoreRef.current.document();
+    const next = updateCanvasAudioTranscriptionDraftDocument(current, nodeId, draft);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
+  const updateCanvasAudioMusicDraft = useCallback((nodeId: string, draft: CanvasAudioMusicDraft) => {
+    const current = canvasCoreRef.current.document();
+    const next = updateCanvasAudioMusicDraftDocument(current, nodeId, draft);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
+  const updateCanvasAudioMusicTask = useCallback((nodeId: string, task: CanvasAudioMusicTask) => {
+    const current = canvasCoreRef.current.document();
+    const next = updateCanvasAudioMusicTaskDocument(current, nodeId, task);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
+  const updateCanvasAudioTranscription = useCallback((nodeId: string, result: CanvasAudioTranscriptionMeta) => {
+    const current = canvasCoreRef.current.document();
     const next = {
       ...current,
-      nodes,
+      nodes: current.nodes.map((item) => item.id === nodeId && item.type === "media" && item.data.kind === "audio"
+        ? { ...item, data: { ...item.data, transcription: result } }
+        : item),
     };
-    setDoc(next, { preserveHistory: true });
+    if (next.nodes.some((item, index) => item !== current.nodes[index])) setDoc(next, { preserveHistory: true });
   }, [setDoc]);
   const commit = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) => {
@@ -14474,6 +14497,10 @@ export default function SuperCanvas() {
               onUpscaleParamsChange={(params) => updateUpscaleParams(editorNode, params)}
               onReplaceAudio={replaceAudioNode}
               onSpeechDraftChange={updateCanvasAudioDraft}
+              onTranscriptionDraftChange={updateCanvasAudioTranscriptionDraft}
+              onTranscriptionChange={updateCanvasAudioTranscription}
+              onMusicDraftChange={updateCanvasAudioMusicDraft}
+              onMusicTaskChange={updateCanvasAudioMusicTask}
               onAudioDurationChange={(nodeId, durationSeconds) => setMediaNaturalSize(
                 nodeId,
                 0,

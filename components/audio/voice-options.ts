@@ -14,7 +14,7 @@ export function speechVoiceOptions(profile: SpeechModelProfile) {
   return profile.suggestedVoices.map((voice) => ({
     value: voice,
     label: characteristics[voice]
-      ? `${speechVoiceLabel(voice)}（${characteristics[voice]}）`
-      : speechVoiceLabel(voice),
+      ? `${speechVoiceLabel(voice, profile.publicModel)}（${characteristics[voice]}）`
+      : speechVoiceLabel(voice, profile.publicModel),
   }));
 }

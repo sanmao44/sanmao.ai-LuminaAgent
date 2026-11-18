@@ -33,6 +33,8 @@ const providers = await importTypeScript(providersUrl, [
   modelKindSource,
   agnesSource.replace(/^import .+;\r?\n/gm, ''),
   providersSource
+    .replace("import { isSvgImageBytes } from './svg-image';", 'const isSvgImageBytes = () => false;')
+    .replace("await import('./image-storage')", "Promise.resolve({ resolveStoredImageReference: async (value) => value })")
     .replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", 'const getCangyuanImageModelProfile = () => null;')
     .replace("import { isCangyuanProvider } from './cangyuan-provider';", 'const isCangyuanProvider = () => false;')
     .replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;')

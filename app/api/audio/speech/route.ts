@@ -1,5 +1,6 @@
 import { AudioSynthesisInputError, AudioSynthesisUnavailableError, audioSynthesisFailureCode, audioSynthesisLogMetadata } from '@/apps/api/audio-synthesis-application';
-import { synthesizeCanvasNarration } from '@/apps/api/audio-synthesis-composition';
+import { synthesizeCanvasNarration, synthesizeSpeechPreview } from '@/apps/api/audio-synthesis-composition';
+import { SPEECH_VOICE_PREVIEW_TEXT } from '@/packages/contracts/audio-synthesis';
 import { isTrustedAppRequest } from '@/lib/auth';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 import { finishGenerationLog, startGenerationLog } from '@/lib/generation-log';
@@ -28,8 +29,12 @@ export async function POST(request: Request) {
       ? body as Record<string, unknown>
       : {};
     const prompt = typeof raw.text === 'string' ? raw.text.trim() : '';
+    const preview = raw.preview === true;
+    if (preview && prompt !== SPEECH_VOICE_PREVIEW_TEXT) {
+      return Response.json({ error: '音色试听只支持固定短句。' }, { status: 400 });
+    }
     const source = normalizeGenerationSource(raw.source, 'workspace');
-    if (prompt) {
+    if (prompt && !preview) {
       const speechMetadata = audioSynthesisLogMetadata(raw);
       logId = await startGenerationLog({
         mode: 'audio',
@@ -44,7 +49,9 @@ export async function POST(request: Request) {
     }
     const timeout = AbortSignal.timeout(120_000);
     const signal = AbortSignal.any([request.signal, timeout]);
-    const result = await synthesizeCanvasNarration(body, signal);
+    const result = preview
+      ? await synthesizeSpeechPreview(body, signal)
+      : await synthesizeCanvasNarration(body, signal);
     if (logId) await finishGenerationLog(logId, {
       status: 'success',
       durationMs: Date.now() - startedAt,

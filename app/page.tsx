@@ -239,6 +239,7 @@ function emptyProviderForm() {
         imageUpscalePath: '/images/edits',
         imageUpscaleStatusPath: '',
         responsesPath: '/responses',
+        creativeTaskProtocol: '',
         videoTransport: '',
         videoBaseUrl: '',
         videoTaskPath: '/v1/tasks',
@@ -5139,6 +5140,7 @@ export default function Page() {
             imageUpscalePath: provider.imageUpscalePath || provider.imageEditPath || '/images/edits',
             imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
             responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? '/beta/responses' : '/responses'),
+            creativeTaskProtocol: provider.creativeTaskProtocol || '',
             videoTransport: provider.videoTransport || '',
             videoBaseUrl: provider.videoBaseUrl || '',
             videoTaskPath: provider.videoTaskPath || '/v1/tasks',
@@ -5178,6 +5180,7 @@ export default function Page() {
                 platform,
                 baseUrl: preset.needsBaseUrl ? old.platform === platform ? old.baseUrl : '' : preset.baseUrl,
                 responsesPath: platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses',
+                creativeTaskProtocol: preset.creativeTaskProtocol || (platform === old.platform ? old.creativeTaskProtocol : ''),
                 videoTransport: preset.videoTransport || (platform === 'custom' ? old.videoTransport : ''),
                 videoBaseUrl: preset.videoBaseUrl || (platform === 'custom' ? old.videoBaseUrl : ''),
                 videoTaskPath: preset.videoTaskPath || old.videoTaskPath || '/v1/tasks',
@@ -12148,6 +12151,16 @@ export default function Page() {
                                                             setProviderForm((old)=>({ ...old, apiKey: value }));
                                                         },
                                                         onUseDomesticEndpoint: ()=>applyProviderPreset('agnes')
+                                                    }),
+                                                    /*#__PURE__*/ _jsxs("label", {
+                                                        className: "wide provider-creative-task-toggle",
+                                                        children: [
+                                                            /*#__PURE__*/ _jsx("input", { type: "checkbox", checked: providerForm.creativeTaskProtocol === 'cangyuan-creative-v1', onChange: (event)=>setProviderForm((old)=>({ ...old, creativeTaskProtocol: event.target.checked ? 'cangyuan-creative-v1' : '' })) }),
+                                                            /*#__PURE__*/ _jsxs("span", { children: [
+                                                                "音乐与三维任务接口",
+                                                                /*#__PURE__*/ _jsx("small", { children: "仅对实现兼容异步任务协议的服务商启用" })
+                                                            ] })
+                                                        ]
                                                     }),
                                                      false && /*#__PURE__*/ _jsxs("div", {
                                                         className: "wide provider-video-settings",

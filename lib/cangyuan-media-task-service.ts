@@ -39,9 +39,9 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
   async function create(options: CreateCangyuanCreativeTaskInput): Promise<CangyuanMediaTask> {
     const modelKind = options.kind === 'music' ? 'audio' : '3d';
     const runtime = await dependencies.resolveModel(options.modelId, modelKind);
-    if (!runtime || runtime.provider.type !== 'openai-compatible') {
-      throw new Error(`请选择已启用且使用兼容任务接口的${options.kind === 'music' ? '音乐' : '三维'}模型`);
-    }
+    if (!runtime) throw new Error('请选择已启用的音乐或三维模型');
+    if (runtime.provider.type !== 'openai-compatible') throw new Error('请选择兼容接口的服务商模型');
+    if (runtime.provider.creativeTaskProtocol !== 'cangyuan-creative-v1') throw new Error('请为服务商启用音乐与三维任务接口，再选择模型');
     const requiredCapability = options.kind === 'music' ? 'music-generate' : '3d-generate';
     if (!runtime.model.capabilities.includes(requiredCapability)) {
       throw new Error(`所选模型不支持${options.kind === 'music' ? '音乐' : '三维'}生成能力`);
@@ -134,8 +134,8 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
   async function refreshTask(task: CangyuanMediaTask): Promise<CangyuanMediaTask | null> {
     if (!task.providerTaskId) return task;
     const provider = await dependencies.resolveProvider(task.providerId);
-    if (!provider || provider.type !== 'openai-compatible') {
-      return updateActive(task.id, { status: 'failed', error: '任务对应的兼容服务商配置已删除或接口协议已变更', completedAt: new Date(now()).toISOString() });
+    if (!provider || provider.type !== 'openai-compatible' || provider.creativeTaskProtocol !== 'cangyuan-creative-v1') {
+      return updateActive(task.id, { status: 'failed', error: '任务对应的服务商配置已删除或音乐与三维任务接口已停用', completedAt: new Date(now()).toISOString() });
     }
     try {
       const result = await dependencies.provider.poll(dependencies.createClient(provider), task.kind, task.providerTaskId);
