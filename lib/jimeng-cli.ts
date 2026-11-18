@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import type { ModelCapability } from './types';
@@ -87,11 +87,9 @@ export function resolveJimengCliCommand(explicit?: string) {
 /** Resolve the separate official canvas CLI without replacing old dreamina discovery. */
 export function resolveJimengCanvasCliCommand(explicit?: string) {
   const list = canvasCandidates(explicit);
-  return list.find((value) => path.isAbsolute(value)
-    ? existsSync(value)
-    : value === explicit
-      || value === process.env.JIMENG_CANVAS_CLI_PATH
-      || /^(?:dreamina-canvas)(?:\.exe|\.cmd)?$/i.test(value))
+  const existing = list.find((value) => path.isAbsolute(value) && isJimengCanvasCommand(value) && existsSync(value));
+  if (existing) return existing;
+  return list.find((value) => !path.isAbsolute(value) && /^(?:dreamina-canvas)(?:\.exe|\.cmd)?$/i.test(value))
     || list[0]
     || (process.platform === 'win32' ? 'dreamina-canvas.exe' : 'dreamina-canvas');
 }
@@ -103,6 +101,22 @@ export function jimengCliShell(command: string) {
 export function isJimengCanvasCommand(command: string | undefined) {
   return /(?:^|[\\/])dreamina-canvas(?:\.exe|\.cmd)?$/i.test(String(command || ''))
     || /^dreamina-canvas(?:\.exe|\.cmd)?$/i.test(String(command || ''));
+}
+
+/** Return true only when the Canvas executable can actually be launched. */
+export function isJimengCanvasCliAvailable(command: string | undefined) {
+  const value = String(command || '').trim();
+  if (!isJimengCanvasCommand(value)) return false;
+  if (path.isAbsolute(value) || /[\\/]/.test(value)) return existsSync(value);
+  try {
+    execFileSync(process.platform === 'win32' ? 'where.exe' : 'which', [value], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function runJimengCli(commandOrPath: string | undefined, args: string[], timeoutMs = 30_000, signal?: AbortSignal): Promise<JimengCliResult> {
@@ -270,8 +284,23 @@ function collectCanvasModelRecords(value: unknown, output: JsonRecord[], seen: S
   if (!record || seen.has(record)) return;
   seen.add(record);
   const id = firstText(record, ['model', 'model_id', 'modelId', 'model_key', 'modelKey', 'slug', 'id']);
-  if (id && !/^(image|video|audio|model|models|list|data|result)$/i.test(id)) output.push(record);
+  const hasModelShape = Boolean(record.model || record.model_id || record.modelId || record.model_key || record.modelKey || record.displayName || record.display_name || record.name || record.title);
+  if (id && hasModelShape && !/^(image|video|audio|model|models|list|data|result)$/i.test(id)) output.push(record);
   Object.values(record).forEach((item) => collectCanvasModelRecords(item, output, seen, depth + 1));
+}
+
+function directCanvasModelRecords(value: unknown, type: JimengCanvasModelType) {
+  const root = asRecord(value);
+  const data = asRecord(root?.data);
+  const candidates = [root?.items, data?.items, root?.models, data?.models]
+    .filter(Array.isArray)
+    .flatMap((items) => items as unknown[])
+    .map(asRecord)
+    .filter((item): item is JsonRecord => Boolean(item));
+  return candidates.filter((item) => {
+    const resourceType = firstText(item, ['type', 'resourceType', 'resource_type']);
+    return !resourceType || resourceType.toLowerCase() === type;
+  });
 }
 
 function canvasModelCapabilities(record: JsonRecord, type: JimengCanvasModelType): ModelCapability[] {
@@ -300,7 +329,11 @@ function canvasModelCapabilities(record: JsonRecord, type: JimengCanvasModelType
 export function parseJimengCanvasModelList(output: string, type: JimengCanvasModelType): JimengCanvasModel[] {
   const records: JsonRecord[] = [];
   const seen = new Set<JsonRecord>();
-  parseJimengJsonLines(output).forEach((value) => collectCanvasModelRecords(value, records, seen));
+  parseJimengJsonLines(output).forEach((value) => {
+    const direct = directCanvasModelRecords(value, type);
+    if (direct.length) direct.forEach((record) => records.push(record));
+    else collectCanvasModelRecords(value, records, seen);
+  });
   const normalized = records.map((record) => {
     const id = firstText(record, ['model', 'model_id', 'modelId', 'model_key', 'modelKey', 'slug', 'id']);
     const name = firstText(record, ['display_name', 'displayName', 'name', 'title', 'model_name', 'modelName']) || id;
@@ -421,9 +454,9 @@ async function queryJimengCanvasAccount(commandOrPath: string | undefined, accou
     const account = result.code === 0 ? parseJimengAccountOutput(output) : null;
     const requiresAuth = /loggedIn\s*[:=]\s*false|authentication\s+is\s+required|login\s+required/i.test(output);
     if (result.code === 0 && !requiresAuth) return { authorized: true, account, accountCheckedAt, accountError: '' };
-    return { authorized: false, account: null, accountCheckedAt, accountError: requiresAuth ? 'Dreamina Canvas CLI is not logged in.' : jimengErrorMessage(output, 'Unable to read Dreamina Canvas account.') };
+    return { authorized: false, account: null, accountCheckedAt, accountError: requiresAuth ? '即梦画布 CLI 尚未登录，请先在设置中完成授权。' : jimengErrorMessage(output, '暂时无法读取即梦画布账户信息。') };
   } catch (error) {
-    return { authorized: false, account: null, accountCheckedAt, accountError: error instanceof Error ? error.message : 'Unable to read Dreamina Canvas account.' };
+    return { authorized: false, account: null, accountCheckedAt, accountError: error instanceof Error ? error.message : '读取即梦画布账户信息失败。' };
   }
 }
 
@@ -467,13 +500,14 @@ export function isJimengAuthenticatedOutput(output: string, parsed = parseJimeng
  * authorization. That is still a recoverable pending state, not a failure. */
 export function isJimengAuthorizationPendingOutput(output: string) {
   const lower = output.toLowerCase();
+  if (/device\s+authorization\s+has\s+not\s+completed|authorization\s+has\s+not\s+completed/.test(lower)) return true;
   return /等待登录超时|登录尚未完成|请稍后重试|authorization\s+(?:is\s+)?pending|login\s+(?:is\s+)?pending|timed?\s*out\s*while\s*waiting\s*for\s*(?:login|authorization)/.test(lower);
 }
 
 export function extractJimengAuthChallenge(output: string) {
   const parsed = parseJimengJsonLines(output);
   const jsonUserCode = cleanAuthValue(findJsonField(parsed, ['user_code', 'userCode']));
-  const jsonVerificationUri = cleanAuthValue(findJsonField(parsed, ['verification_uri', 'verificationUri', 'verification_url', 'verificationUrl']));
+  const jsonVerificationUri = cleanAuthValue(findJsonField(parsed, ['verification_uri_complete', 'verificationUriComplete', 'verification_uri', 'verificationUri', 'verification_url', 'verificationUrl']));
   const jsonDeviceCode = cleanAuthValue(findJsonField(parsed, ['device_code', 'deviceCode']));
   const normalized = output
     .replace(/\\\//g, '/')
@@ -508,7 +542,7 @@ export function extractJimengAuthChallenge(output: string) {
 
 export async function inspectJimengCli(provider: { jimengCliPath?: string }) {
   const canvasCommand = resolveJimengCanvasCliCommand(provider.jimengCliPath);
-  try {
+  if (isJimengCanvasCliAvailable(canvasCommand)) try {
     const result = await runJimengCanvasCli(canvasCommand, ['version', '--format', 'json', '--non-interactive'], 12_000);
     const output = `${result.stdout}\n${result.stderr}`.trim();
     if (result.code === 0 && output) {

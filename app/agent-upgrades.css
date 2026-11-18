@@ -32,14 +32,12 @@
 /* MCP 徽标只负责切换详情，详情固定停靠在输入框下方，避免遮挡输入区。 */
 .message-skill-badge,.message-mcp-badge{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:999px}
 .message-skill-badge{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));background:color-mix(in srgb,var(--accent) 10%,var(--panel))}
-.message-mcp-badge{border-color:color-mix(in srgb,var(--accent-2) 38%,var(--line));background:color-mix(in srgb,var(--accent-2) 14%,var(--panel))}
+.message-mcp-badge{border-radius:8px;border-color:color-mix(in srgb,var(--accent-2) 38%,var(--line));background:color-mix(in srgb,var(--accent-2) 14%,var(--panel))}
 .message-label .message-mcp-detail{position:relative;display:inline-flex;align-items:center;max-width:100%;flex:0 1 auto;min-width:0}
 .message-label .message-mcp-detail{padding:0;border:0;background:transparent;color:inherit;cursor:pointer}
 .message-label .message-mcp-detail:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 55%,transparent);outline-offset:2px}
-.message-label .message-mcp-detail .message-mcp-badge{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;line-height:1.5}
-/* 一轮里调用多次外部工具时，MCP 徽标会很长。flex 项默认不肯收缩到内容以下，
-   结果把左边那行说明压成了一字一行的竖排（实测截图就是这个）。所以：整行允许换行、
-   说明永远保持一整行，徽标自己按剩余宽度省略号截断。 */
+.message-label .message-mcp-detail .message-mcp-badge{box-sizing:border-box;min-width:0;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;line-height:1.5}
+/* Keep the message label readable while the MCP summary yields space on narrow rows. */
 .message-label{flex-wrap:wrap}
 .message-label>span{flex:none}
 .message-label>small{flex:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}

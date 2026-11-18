@@ -141,6 +141,147 @@ test('Agent execution boundary owns bounded skill and artifact follow-ups', asyn
   assert.equal(result.trace.length, 2);
 });
 
+test('a generated PPT image continues to the presentation tool with its returned ref', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  const imageRef = '/api/storage/file?name=ppt-visual.png';
+  const messages = [
+    { role: 'user', content: 'Create a PPT with an automatically generated visual.' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'image-1', function: { name: 'image_generate', arguments: '{}' } }] },
+    { role: 'tool', tool_call_id: 'image-1', content: JSON.stringify({ ok: true, images: [{ ref: imageRef }] }) },
+  ];
+  const executed = [];
+  const toolRuntime = {
+    async runLoop(options) {
+      const reply = await options.callModel({ step: 0, messages: options.messages });
+      const requested = Array.isArray(reply?.tool_calls) ? reply.tool_calls : [];
+      await options.runCalls(requested, { step: 0 });
+      executed.push(...requested);
+      return { text: 'PPT generated', trace: [{ step: 0, calls: requested.map((call) => call.function.name), durationMs: 1, continued: false }] };
+    },
+    async executeCalls(calls) { return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runCapabilityFollowups({
+    messages,
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    boundAgentContext: (items) => items,
+    boundToolResult: (content) => content,
+    callModel: async ({ messages: followupMessages, tools }) => {
+      assert.ok(JSON.stringify(followupMessages).includes(imageRef), 'the image ref must reach PPT planning');
+      assert.deepEqual(tools.map((tool) => tool.function.name), ['presentation_generate']);
+      return { tool_calls: [{ id: 'ppt-1', function: { name: 'presentation_generate', arguments: '{}' } }] };
+    },
+    skillTools: [],
+    artifactTools: [{ function: { name: 'presentation_generate' } }],
+    skillToolCalls: 0,
+    artifactRequested: true,
+    continueAfterImage: true,
+    initialToolCalls: [{ id: 'image-1', function: { name: 'image_generate' } }],
+    hasGenerated: true,
+    hasGeneratedFiles: false,
+    hasWebSearch: false,
+  });
+  assert.equal(result.artifactText, 'PPT generated');
+  assert.deepEqual(executed.map((call) => call.function.name), ['presentation_generate']);
+});
+
+test('an unavailable PPT image continues to the presentation tool without a generated file', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  let loops = 0;
+  const toolRuntime = {
+    async runLoop() {
+      loops += 1;
+      return { text: 'PPT generated without an image', trace: [] };
+    },
+    async executeCalls() { return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runCapabilityFollowups({
+    messages: [{ role: 'user', content: 'Create a PPT with an illustration.' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    callModel: async () => null,
+    skillTools: [],
+    artifactTools: [{ function: { name: 'presentation_generate' } }],
+    skillToolCalls: 0,
+    artifactRequested: true,
+    continueAfterImage: true,
+    imageAttemptUnavailable: true,
+    initialToolCalls: [{ id: 'image-failed', function: { name: 'image_generate' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: false,
+    hasWebSearch: false,
+  });
+
+  assert.equal(loops, 1);
+  assert.equal(result.artifactText, 'PPT generated without an image');
+});
+
+test('a completed artifact is not generated again by a capability follow-up', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  let loops = 0;
+  const toolRuntime = {
+    async runLoop() { loops += 1; return { text: 'duplicate', trace: [] }; },
+    async executeCalls() { return { results: [], deferredCalls: [], stalled: false }; },
+  };
+  const result = await runCapabilityFollowups({
+    messages: [{ role: 'user', content: 'Create a PPT.' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    callModel: async () => null,
+    skillTools: [],
+    artifactTools: [{ function: { name: 'presentation_generate' } }],
+    skillToolCalls: 0,
+    artifactRequested: true,
+    initialToolCalls: [{ id: 'ppt-done', function: { name: 'presentation_generate' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: true,
+    hasWebSearch: false,
+  });
+
+  assert.equal(loops, 0);
+  assert.equal(result.artifactText, '');
+});
+
+test('artifact follow-up stops after the generated file is returned', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  let canContinue;
+  const toolRuntime = {
+    async runLoop(options) {
+      const call = { id: 'ppt-delivered', function: { name: 'presentation_generate' } };
+      await options.runCalls([call], { step: 0 });
+      canContinue = options.shouldContinue({ step: 1, toolCallCount: 1, elapsedMs: 1 });
+      return { text: '', trace: [] };
+    },
+    async executeCalls(calls) {
+      return {
+        results: calls.map((call) => ({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: true, file: { name: 'deck.pptx' } }) })),
+        deferredCalls: [],
+        stalled: false,
+      };
+    },
+  };
+  await runCapabilityFollowups({
+    messages: [{ role: 'user', content: 'Create a PPT.' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime,
+    callModel: async () => null,
+    skillTools: [],
+    artifactTools: [{ function: { name: 'presentation_generate' } }],
+    skillToolCalls: 0,
+    artifactRequested: true,
+    initialToolCalls: [{ id: 'ppt-start', function: { name: 'presentation_generate' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: false,
+    hasWebSearch: false,
+  });
+
+  assert.equal(canContinue, false);
+});
+
 test('Skill follow-up rejects a tool that was not offered without executing it', async () => {
   const { runCapabilityFollowups } = load('./apps/api/agent-execution');
   const executed = [];

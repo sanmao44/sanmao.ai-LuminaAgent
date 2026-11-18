@@ -552,6 +552,16 @@ export async function updateProvider(id: string, input: ProviderInput) {
   });
 }
 
+export async function setProviderJimengCliPath(id: string, cliPath: string) {
+  const normalized = String(cliPath || '').trim();
+  if (!normalized) return;
+  await mutateState(async (state) => {
+    const provider = state.providers.find((item) => item.id === id);
+    if (!provider) throw new Error('Provider not found');
+    provider.jimengCliPath = normalized;
+  });
+}
+
 export async function removeProvider(id: string) {
   await mutateState((state) => {
     state.providers = state.providers.filter((p) => p.id !== id);
@@ -1052,9 +1062,10 @@ export async function getRuntimeImageGenerationModel(id: string | null | undefin
 
 /**
  * Return the automatic image-model order used by the runtime, with the
- * configured default first.  Callers use this only after a provider has
- * explicitly rejected a request; transport failures and ambiguous upstream
- * failures must not trigger a second paid generation request.
+ * configured default first. Callers try remaining candidates only when the
+ * current provider definitively rejected the request or confirmed task failure;
+ * transport failures and ambiguous upstream failures must not trigger another
+ * potentially billable generation request.
  */
 export async function getRuntimeImageModelCandidates(
   id: string | null | undefined,

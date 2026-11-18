@@ -107,6 +107,8 @@ test('有序列表写入真正的编号，而不是降级成圆点', async () =>
 
     const numbering = artifacts.readArchiveText(buffer, 'word/numbering.xml');
     assert.match(numbering, /w:numFmt w:val="decimal"/);
+    assert.match(numbering, /w:lvlJc w:val="left"/, '编号对齐值必须符合 OOXML');
+    assert.doesNotMatch(numbering, /w:lvlJc w:val="start"/);
   });
 });
 
@@ -180,12 +182,19 @@ test('toc=true 在标题后插入目录：缓存条目、书签与自动刷新�
     const buffer = await readFile((await store.read(result.artifact.id)).filePath);
     const xml = artifacts.readArchiveText(buffer, 'word/document.xml');
     const settings = artifacts.readArchiveText(buffer, 'word/settings.xml');
+    const styles = artifacts.readArchiveText(buffer, 'word/styles.xml');
 
     assert.ok(settings.includes('updateFields'), '应开启打开时刷新域');
     assert.match(xml, /<w:instrText[^>]*>TOC \\h \\o &quot;1-3&quot;<\/w:instrText>/, '应写入 TOC 域');
     assert.ok(xml.includes('w:anchor="sanmao-h-1"'), '目录条目应指向书签');
     assert.ok(xml.includes('w:name="sanmao-h-2"'), '正文标题应写入书签');
     assert.ok(xml.includes('第一章 概述') && xml.includes('明细'), '缓存条目应包含各级标题');
+    const bookmarkStarts = [...xml.matchAll(/<w:bookmarkStart\b[^>]*w:id="(\d+)"/g)].map((match) => match[1]);
+    const bookmarkEnds = [...xml.matchAll(/<w:bookmarkEnd\b[^>]*w:id="(\d+)"/g)].map((match) => match[1]);
+    assert.equal(new Set(bookmarkStarts).size, bookmarkStarts.length, '目录书签 ID 必须唯一');
+    assert.deepEqual([...bookmarkStarts].sort(), [...bookmarkEnds].sort(), '每个书签开始和结束必须成对');
+    assert.match(styles, /<w:style w:type="paragraph"[^>]*w:styleId="Normal"/, '必须定义 Normal 段落样式');
+    assert.match(styles, /<w:style w:type="character"[^>]*w:styleId="DefaultParagraphFont"/, '必须定义 DefaultParagraphFont 字符样式');
     assert.ok(xml.indexOf('<w:sdt>') > xml.indexOf('季度报告'), '目录必须排在标题之后');
     assert.ok(xml.indexOf('<w:sdt>') < xml.indexOf('正文一。'), '目录必须排在正文之前');
     assert.deepEqual(result.warnings, []);

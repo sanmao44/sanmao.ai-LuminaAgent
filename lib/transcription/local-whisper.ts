@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { AutomaticSpeechRecognitionOutput, ProgressInfo } from '@huggingface/transformers';
 import type { LocalTranscriptionResult, TimestampedTranscriptSegment, TimestampedTranscriptWord } from '@/packages/contracts/transcription';
 import { resolveLocalDataDir } from '@/lib/data-paths';
+import { correctTranscriptWithReference, projectReferencePunctuation } from './reference-script-correction';
 import { decodeAudioToPcmWav } from './ffmpeg-decoder';
 
 export const DEFAULT_LOCAL_ASR_MODEL = 'Xenova/whisper-small';
@@ -46,6 +47,7 @@ const promptedTranscriberQueues = new WeakMap<LocalTranscriber, Promise<void>>()
 const MAX_PROMPT_TOKENS = 64;
 const MAX_REFERENCE_PROMPT_CHARS = 160;
 const MAX_UNSPACED_CUE_CHARS = 20;
+const SOFT_UNSPACED_CUE_CHARS = 24;
 const MODEL_TEMP_FILE_PATTERN = /\.tmp\.[^/\\]+$/u;
 const MODEL_TEMP_MAX_AGE_MS = 60 * 60 * 1_000;
 const LOCAL_MODEL_LOAD_ERROR = '本地语音识别模型下载或加载失败，请检查网络连接后重试。首次使用会自动下载并缓存模型。';
@@ -161,6 +163,24 @@ function cleanText(value: unknown) {
   return String(value ?? '').replace(/\s+/gu, ' ').trim();
 }
 
+function buildReferencePrompt(referenceText?: string) {
+  const text = cleanText(referenceText);
+  if (!text) return '';
+  if (Array.from(text).length <= MAX_REFERENCE_PROMPT_CHARS && !/[。！？!?；;，,]/u.test(text)) return text;
+
+  const terms = new Set<string>();
+  for (const match of text.matchAll(/[《「『“【]([^》」』”】\r\n]{2,20})[》」』”】]/gu)) {
+    const term = cleanText(match[1]);
+    if (term && !/[。！？!?；;，,]/u.test(term)) terms.add(term);
+  }
+  for (const match of text.matchAll(/[A-Za-z][A-Za-z0-9]*(?:[._+-][A-Za-z0-9]+)*/gu)) {
+    const term = match[0];
+    const uppercaseCount = Array.from(term).filter((character) => /[A-Z]/u.test(character)).length;
+    if (/[0-9._+-]/u.test(term) || uppercaseCount >= 2) terms.add(term);
+  }
+  return Array.from(terms).join(' ').slice(0, MAX_REFERENCE_PROMPT_CHARS);
+}
+
 function finiteTokenId(value: unknown) {
   const id = Number(value);
   return Number.isInteger(id) && id >= 0 ? id : undefined;
@@ -180,7 +200,7 @@ function specialTokenId(tokenizer: WhisperTokenizer, token: string) {
  * Whisper's generation path. Build the equivalent decoder prefix explicitly.
  */
 export function buildWhisperDecoderInputIds(transcriber: LocalTranscriber, referenceText?: string, language?: string) {
-  const text = cleanText(referenceText);
+  const text = buildReferencePrompt(referenceText);
   if (!text || Array.from(text).length > MAX_REFERENCE_PROMPT_CHARS || /[。！？!?；;，,]/u.test(text)) return undefined;
   const tokenizer = transcriber.tokenizer;
   const encode = tokenizer?.encode;
@@ -247,6 +267,46 @@ function isUnspacedScript(text: string) {
   return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(text);
 }
 
+function startsChineseClause(value: string) {
+  return /^(?:依托|针对|构建|实现|在(?!上)|并|同时|进一步|强化|推动|提升|释放|让|灾害|事件|全链路|中国移动|随后|然后)/u.test(value);
+}
+
+function endsChinesePhrase(value: string) {
+  return /(?:协作|保障|处置|闭环|能力|目标|体系|经营|体验|方向|步伐|未来|以上|以内|三省)$/u.test(value);
+}
+
+function softBoundaryScore(characters: readonly string[], cut: number, targetSize: number) {
+  if (cut <= 0 || cut >= characters.length) return Number.NEGATIVE_INFINITY;
+  const left = characters.slice(0, cut).join('');
+  const right = characters.slice(cut).join('');
+  if ((/\d$/u.test(left) && /^[.,]\d/u.test(right)) || (/\d[.,]$/u.test(left) && /^\d/u.test(right))) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  let score = -Math.abs(cut - targetSize) * 2;
+  if (/[，。！？；：,.!?;:]$/u.test(left)) score += 100;
+  if (startsChineseClause(right)) score += 42;
+  if (endsChinesePhrase(left)) score += 18;
+  if (/^[，。！？；：,.!?;:、）】》」』]/u.test(right)) score -= 100;
+  if (/(?:的|和|与|及|等|了|着|地|得|在|于|向|为)$/u.test(left)) score -= 18;
+  if (/^(?:的|和|与|及|等|了|着|地|得|于|向|为)/u.test(right)) score -= 18;
+  return score;
+}
+
+function chooseUnspacedCut(characters: readonly string[], targetSize: number, allowSoftExpansion: boolean) {
+  const lowerBound = Math.max(1, Math.floor(targetSize * 0.65));
+  const upperBound = Math.min(characters.length - 1, targetSize + (allowSoftExpansion ? 4 : 0));
+  let bestCut = Math.min(targetSize, characters.length - 1);
+  let bestScore = softBoundaryScore(characters, bestCut, targetSize);
+  for (let cut = lowerBound; cut <= upperBound; cut += 1) {
+    const score = softBoundaryScore(characters, cut, targetSize);
+    if (score > bestScore) {
+      bestScore = score;
+      bestCut = cut;
+    }
+  }
+  return bestCut;
+}
+
 function splitUnspacedChunk(text: string, start: number, end: number): TimestampedTranscriptWord[] {
   const characters = Array.from(text);
   const duration = Math.max(0, end - start);
@@ -257,15 +317,9 @@ function splitUnspacedChunk(text: string, start: number, end: number): Timestamp
   const targetSize = Math.max(1, Math.ceil(characters.length / pieceCount));
   const pieces: string[] = [];
   let remaining = characters;
+  const allowSoftExpansion = duration <= 6;
   while (remaining.length > targetSize) {
-    let cut = Math.min(targetSize, remaining.length);
-    const earliestPunctuationCut = Math.ceil(targetSize / 2);
-    for (let index = cut - 1; index >= earliestPunctuationCut; index -= 1) {
-      if (/[，。！？；：,.!?;:]/u.test(remaining[index])) {
-        cut = index + 1;
-        break;
-      }
-    }
+    const cut = chooseUnspacedCut(remaining, targetSize, allowSoftExpansion);
     pieces.push(remaining.slice(0, cut).join(''));
     remaining = remaining.slice(cut);
   }
@@ -341,15 +395,47 @@ function normalizeWords(chunks: readonly RawChunk[], durationSeconds: number): T
       words.push({ start, end, text });
     }
   }
-  return words;
+  return stitchDecimalContinuations(words);
+}
+
+function stitchDecimalContinuations(words: readonly TimestampedTranscriptWord[]) {
+  const stitched: TimestampedTranscriptWord[] = [];
+  for (const word of words) {
+    const previous = stitched.at(-1);
+    const gap = previous ? word.start - previous.end : Infinity;
+    const decimalContinuation = previous && (
+      (/\d$/u.test(previous.text) && /^[.,]\d/u.test(word.text))
+      || (/\d[.,]$/u.test(previous.text) && /^\d/u.test(word.text))
+    );
+    if (!previous || !decimalContinuation || gap > 0.35) {
+      stitched.push(word);
+      continue;
+    }
+
+    stitched.pop();
+    const text = `${previous.text}${word.text}`;
+    const start = previous.start;
+    const end = Math.max(previous.end, word.end);
+    if (isUnspacedScript(text) && (Array.from(text).length > MAX_UNSPACED_CUE_CHARS || end - start > 5)) {
+      stitched.push(...splitUnspacedChunk(text, start, end));
+    } else {
+      stitched.push({ start, end, text });
+    }
+  }
+  return stitched;
 }
 
 function endsSentence(text: string) {
   return /[。！？.!?;；]$/u.test(text);
 }
 
+function endsSubtitleClause(text: string) {
+  return /[，、：,]$/u.test(text) && Array.from(text).length >= 8;
+}
+
 function needsWordSpace(previous: string, next: string) {
   if (/^[，。！？；：,.!?;:、）】》」』]/u.test(next)) return false;
+  if (/[，。！？；：,.!?;:、]$/u.test(previous)) return false;
   if (/[（【《「『]$/u.test(previous)) return false;
   return !isUnspacedScript(previous.slice(-1)) && !isUnspacedScript(next.slice(0, 1));
 }
@@ -368,7 +454,7 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
     const unspacedTextTooLong = isUnspacedScript(current.text) &&
       isUnspacedScript(word.text) &&
       Array.from(`${current.text}${word.text}`).length > MAX_UNSPACED_CUE_CHARS;
-    if (endsSentence(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
+    if (endsSentence(current.text) || endsSubtitleClause(current.text) || gap > 1.2 || longEnough || unspacedTextTooLong) {
       segments.push(current);
       current = { start: word.start, end: word.end, text: word.text, words: [word] };
       continue;
@@ -386,12 +472,100 @@ export function groupTranscriptWords(words: readonly TimestampedTranscriptWord[]
   }));
 }
 
-export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string): LocalTranscriptionResult {
+function transcriptionCharacters(value: string) {
+  return Array.from(value.normalize('NFKC').toLowerCase()).filter((character) => /[\p{L}\p{N}\p{S}]/u.test(character));
+}
+
+function transcriptionTextSimilarity(left: string, right: string) {
+  const source = transcriptionCharacters(left);
+  const target = transcriptionCharacters(right);
+  const maxLength = Math.max(source.length, target.length);
+  if (Math.min(source.length, target.length) < 8 || !maxLength) return 0;
+
+  let previous = Array.from({ length: target.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= source.length; row += 1) {
+    const current = new Array<number>(target.length + 1);
+    current[0] = row;
+    for (let column = 1; column <= target.length; column += 1) {
+      current[column] = Math.min(
+        previous[column] + 1,
+        current[column - 1] + 1,
+        previous[column - 1] + (source[row - 1] === target[column - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return 1 - previous[target.length] / maxLength;
+}
+
+function areOverlappingDuplicateSegments(left: TimestampedTranscriptSegment, right: TimestampedTranscriptSegment) {
+  const shortestDuration = Math.min(left.end - left.start, right.end - right.start);
+  if (shortestDuration <= 0) return false;
+  if (Math.abs(left.start - right.start) > 0.25) return false;
+  const overlap = Math.max(0, Math.min(left.end, right.end) - Math.max(left.start, right.start));
+  return overlap / shortestDuration >= 0.75 && transcriptionTextSimilarity(left.text, right.text) >= 0.84;
+}
+
+function stitchOverlappingDuplicateSegments(segments: readonly TimestampedTranscriptSegment[]) {
+  const stitched: TimestampedTranscriptSegment[] = [];
+  let removedDuplicate = false;
+
+  for (const segment of segments) {
+    let duplicateIndex = -1;
+    for (let index = stitched.length - 1; index >= 0; index -= 1) {
+      const previous = stitched[index];
+      if (segment.start >= previous.end) break;
+      if (areOverlappingDuplicateSegments(previous, segment)) {
+        duplicateIndex = index;
+        break;
+      }
+    }
+
+    if (duplicateIndex < 0) {
+      stitched.push(segment);
+      continue;
+    }
+
+    const previous = stitched[duplicateIndex];
+    const previousLength = transcriptionCharacters(previous.text).length;
+    const segmentLength = transcriptionCharacters(segment.text).length;
+    const preferred = segmentLength > previousLength ? segment : previous;
+    stitched[duplicateIndex] = {
+      ...preferred,
+      start: Math.min(previous.start, segment.start),
+      end: Math.max(previous.end, segment.end),
+    };
+    removedDuplicate = true;
+  }
+
+  return { segments: stitched, removedDuplicate };
+}
+
+export function normalizeLocalAsrResult(raw: AutomaticSpeechRecognitionOutput, durationSeconds: number, model: string, language?: string, referenceText?: string): LocalTranscriptionResult {
   const chunks = Array.isArray(raw.chunks) ? raw.chunks as RawChunk[] : [];
   const words = normalizeWords(chunks, Math.max(0, durationSeconds));
-  const segments = groupTranscriptWords(words);
-  const text = cleanText(raw.text || segments.map((segment) => segment.text).join(' '));
-  return { text, segments, words, model, ...(language ? { language } : {}) };
+  const grouped = groupTranscriptWords(words);
+  const stitched = stitchOverlappingDuplicateSegments(grouped);
+  const segments = stitched.segments;
+  const normalizedWords = segments.flatMap((segment) => segment.words || []);
+  const segmentText = segments.map((segment) => segment.text).join(' ');
+  const text = cleanText(stitched.removedDuplicate ? segmentText : raw.text || segmentText);
+  const result = { text, segments, words: normalizedWords, model, ...(language ? { language } : {}) };
+  if (!referenceText) return result;
+
+  const corrected = correctTranscriptWithReference(result, referenceText);
+  const punctuatedWords = projectReferencePunctuation(corrected.words, referenceText);
+  if (punctuatedWords === corrected.words) return corrected;
+  const punctuatedSegments = stitchOverlappingDuplicateSegments(groupTranscriptWords(punctuatedWords)).segments;
+  const punctuatedText = cleanText(punctuatedWords.reduce((value, word) => (
+    `${value}${needsWordSpace(value, word.text) ? ' ' : ''}${word.text}`
+  ), ''));
+  return {
+    ...corrected,
+    text: punctuatedText,
+    segments: punctuatedSegments,
+    words: punctuatedSegments.flatMap((segment) => segment.words || []),
+  };
 }
 
 function hasDominantRepeatedPhrase(text: string) {
@@ -513,7 +687,7 @@ export async function transcribeLocalPcmWav(filePath: string, durationSeconds: n
   const result = decoderInputIds
     ? await runPromptedLocalTranscriber(transcriber, audio, transcribeOptions)
     : await transcriber(audio, transcribeOptions);
-  const transcript = normalizeLocalAsrResult(result, duration, resolved.model, resolved.language);
+  const transcript = normalizeLocalAsrResult(result, duration, resolved.model, resolved.language, options.referenceText);
   assertLocalTranscriptionQuality(transcript);
   return transcript;
 }
@@ -545,6 +719,9 @@ function toSrtTime(seconds: number) {
 export function formatSrt(segments: readonly TimestampedTranscriptSegment[]) {
   const cues = segments
     .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start && cleanText(segment.text))
-    .map((segment, index) => `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${cleanText(segment.text)}`);
+    .map((segment, index) => {
+      const text = cleanText(segment.text).replace(/(\d)\s+%/gu, '$1%');
+      return `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${text}`;
+    });
   return cues.length ? `${cues.join('\r\n\r\n')}\r\n` : '';
 }

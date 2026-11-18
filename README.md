@@ -132,7 +132,7 @@ Python、设置 PATH 或输入命令行。下载器保存在当前安装的数�
 - macOS：双击 `一键安装即梦 CLI - macOS.command`
 - Linux：运行 `bash ./scripts/install-jimeng.sh`
 
-安装器会从即梦官方地址下载对应架构的 CLI，写入当前用户 PATH，并用 `dreamina --version` 完成验证。不需要管理员权限。安装完成后回到“接口服务商”中的即梦卡片，点击“重新检测”，再点击“连接即梦”。如果 macOS 阻止脚本运行，请先在终端执行 `chmod +x '一键安装即梦 CLI - macOS.command'`。
+安装器会从即梦官方地址下载对应架构的 Canvas CLI，写入当前用户 PATH，并用 `dreamina-canvas --format json version` 完成验证。不需要管理员权限。安装完成后回到“接口服务商”中的即梦卡片，点击“重新检测”，再点击“连接即梦”。如果 macOS 阻止脚本运行，请先在终端执行 `chmod +x '一键安装即梦 CLI - macOS.command'`。
 
 ## API 兼容说明
 

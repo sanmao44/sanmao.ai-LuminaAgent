@@ -24,7 +24,8 @@ const signedCompiled = ts.transpileModule(signedSource
 }).outputText;
 const signedModuleUrl = `data:text/javascript;base64,${Buffer.from(signedCompiled).toString('base64')}`;
 const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanCapabilitiesSource}\n${cangyuanProviderSource}\n${source
-  .replace("import { is65535Provider, isAgnesProvider, requiresPublicMediaRelay } from './video-platform';", '')
+  .replace(/import \{[^}]+\} from '\.\/video-platform';\r?\n/, '')
+  .replace("import { isJimengCanvasCliAvailable, resolveJimengCanvasCliCommand } from './jimeng-cli';", "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';")
   .replace("import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';", '')
   .replace("import { isCangyuanProvider } from './cangyuan-provider';", '')
   .replace("(await import('./signed-media')).preparePublicMediaUrl", '__signedMedia.preparePublicMediaUrl')}`;
@@ -536,5 +537,6 @@ test('keeps an unfinished Dreamina device flow pending after a polling timeout',
   assert.equal(jimengCli.isJimengAuthorizationPendingOutput('等待登录超时，请重试'), true);
   assert.equal(jimengCli.isJimengAuthorizationPendingOutput('登录尚未完成，请稍后重试'), true);
   assert.equal(jimengCli.isJimengAuthorizationPendingOutput('invalid device code'), false);
+  assert.equal(jimengCli.isJimengAuthorizationPendingOutput('Device authorization has not completed.'), true);
   assert.equal(jimengCli.isJimengAuthenticatedOutput('登录成功'), true);
 });

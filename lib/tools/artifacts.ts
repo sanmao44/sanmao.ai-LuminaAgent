@@ -116,7 +116,7 @@ export const presentationGenerateTool = defineTool({
   id: nativeToolId('presentation_generate'),
   risk: 'write',
   name: 'presentation_generate',
-  description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。需要图表时用 layout=chart，在 chart 里给数值数据；需要配图时用 layout=image 并传 image.ref（来自图片工具返回的 ref），subtitle 作为图注。不要用 file_generate 生成 .pptx。',
+  description: '用户要生成、导出 PPT / 演示文稿 / 幻灯片（.pptx、PPT、deck）时调用。经营汇报中有 2-4 个明确数字时优先用 layout=metrics 与 metrics 数组；不要从文字猜测数字或趋势。图文同页使用 layout=image-content，image.ref 必须来自图片工具，subtitle 放一段简短引导语，bullets 放 2-4 条要点；主视觉独立页使用 layout=image。需要图表时用 layout=chart，在 chart 里给数值数据。不要用 file_generate 生成 .pptx。',
   permissions: ['artifact:write'],
   tags: ['artifact'],
   source: 'native',
@@ -134,10 +134,10 @@ export const presentationGenerateTool = defineTool({
         items: {
           type: 'object',
           properties: {
-            layout: { type: 'string', enum: ['title', 'section', 'bullets', 'two-column', 'table', 'chart', 'image'] },
+            layout: { type: 'string', enum: ['title', 'section', 'bullets', 'two-column', 'table', 'chart', 'image', 'image-content', 'metrics'] },
             title: { type: 'string' },
             subtitle: { type: 'string' },
-            bullets: { type: 'array', items: { type: 'string' }, description: '每页建议不超过 6 条，超出会自动续页。' },
+            bullets: { type: 'array', items: { type: 'string' }, description: '普通页建议不超过 6 条；layout=image-content 限 2-4 条简短要点。' },
             leftTitle: { type: 'string' },
             leftBullets: { type: 'array', items: { type: 'string' } },
             rightTitle: { type: 'string' },
@@ -165,9 +165,22 @@ export const presentationGenerateTool = defineTool({
               },
               required: ['series'],
             },
+            metrics: {
+              type: 'array',
+              description: 'layout=metrics 时使用；每页 2-4 个真实指标，只放明确提供的标签、数值与说明。',
+              items: {
+                type: 'object',
+                properties: {
+                  label: { type: 'string' },
+                  value: { type: ['string', 'number'] },
+                  context: { type: 'string', description: '可选的口径或目标说明，不推断好坏。' },
+                },
+                required: ['label', 'value'],
+              },
+            },
             image: {
               type: 'object',
-              description: 'layout=image 时的插图；ref 必须来自图片工具返回的 ref。',
+              description: 'layout=image 或 image-content 时的插图；ref 必须来自图片工具返回的 ref。',
               properties: {
                 ref: { type: 'string', description: '图片工具返回的 ref，例如 /api/storage/file?name=xxx.png。' },
               },

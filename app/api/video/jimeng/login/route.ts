@@ -1,6 +1,7 @@
 import { isAdminRequest } from '@/lib/auth';
 import { getProviderWithKey } from '@/lib/store';
-import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, parseJimengJsonLines, queryJimengAccount, resolveJimengCliCommand, runJimengCli } from '@/lib/jimeng-cli';
+import { extractJimengAuthChallenge, inspectJimengCli, isJimengAuthenticatedOutput, isJimengAuthorizationPendingOutput, isJimengCanvasCliAvailable, parseJimengJsonLines, queryJimengAccount, runJimengCanvasCli, runJimengCli } from '@/lib/jimeng-cli';
+import { setProviderJimengCliPath } from '@/lib/store';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
@@ -9,10 +10,6 @@ const OFFICIAL_CLI_URL = 'https://bytedance.larkoffice.com/wiki/QO66wGahSiakEHkJ
 const INSTALL_COMMAND = process.platform === 'win32'
   ? 'irm https://jimeng.jianying.com/canvas-cli/install.ps1 | iex'
   : 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash';
-
-function commandFor(provider: { jimengCliPath?: string }) {
-  return resolveJimengCliCommand(provider.jimengCliPath);
-}
 
 function statusFrom(output: string, parsed: any[]) {
   const text = output.toLowerCase();
@@ -43,16 +40,18 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, officialUrl: OFFICIAL_CLI_URL, command: INSTALL_COMMAND });
     }
     const provider = await providerFromRequest(body);
-    const command = commandFor(provider);
+    const inspected = await inspectJimengCli(provider);
+    if (inspected.canvas && isJimengCanvasCliAvailable(inspected.command)) await setProviderJimengCliPath(provider.id, inspected.command);
+    const command = inspected.command;
+    const run = inspected.canvas ? runJimengCanvasCli : runJimengCli;
 
     if (action === 'account' || action === 'refresh-account') {
-      const inspected = await inspectJimengCli(provider);
       return Response.json({ ok: inspected.installed, installed: inspected.installed, version: inspected.version, officialUrl: OFFICIAL_CLI_URL, ...await queryJimengAccount(inspected.command, inspected.installed) });
     }
 
     if (action === 'inspect') {
       try {
-        const result = await runJimengCli(command, ['--version'], 12_000);
+        const result = await run(command, inspected.canvas ? ['version', '--format', 'json', '--non-interactive'] : ['--version'], 12_000);
         const output = `${result.stdout}\n${result.stderr}`.trim();
         if (result.code !== 0 || !output) return Response.json({ ok: false, installed: false, error: '未检测到即梦 CLI，请先按官方说明安装。', officialUrl: OFFICIAL_CLI_URL }, { status: 200 });
         return Response.json({ ok: true, installed: true, version: output.split(/\r?\n/).find(Boolean) || output, officialUrl: OFFICIAL_CLI_URL });
@@ -60,10 +59,12 @@ export async function POST(request: Request) {
     }
 
     if (action === 'start') {
-      const result = await runJimengCli(command, ['login', '--headless'], 25_000);
+      const result = await run(command, inspected.canvas
+        ? ['auth', 'login', '--format', 'json', '--non-interactive']
+        : ['login', '--headless'], 25_000);
       const output = `${result.stdout}\n${result.stderr}`.trim();
       const challenge = extractJimengAuthChallenge(output);
-      if (result.code === 0 && isJimengAuthenticatedOutput(output)) {
+      if (result.code === 0 && (isJimengAuthenticatedOutput(output) || statusFrom(output, parseJimengJsonLines(output)) === 'authorized')) {
         return Response.json({ ok: true, status: 'authorized', officialUrl: OFFICIAL_CLI_URL, message: '即梦已有有效登录，可以直接生成视频。', ...await queryJimengAccount(command) });
       }
       if (result.code !== 0 && !challenge.deviceCode) throw new Error(output || '即梦 CLI 登录初始化失败');
@@ -74,7 +75,9 @@ export async function POST(request: Request) {
     if (action === 'check') {
       const deviceCode = String(body.deviceCode || '').trim();
       if (!deviceCode) return Response.json({ error: '缺少 device_code。' }, { status: 400 });
-      const result = await runJimengCli(command, ['login', 'checklogin', `--device_code=${deviceCode}`, '--poll=30'], 45_000);
+      const result = await run(command, inspected.canvas
+        ? ['auth', 'wait', '--device-code', deviceCode, '--timeout', '45s', '--format', 'json', '--non-interactive']
+        : ['login', 'checklogin', `--device_code=${deviceCode}`, '--poll=30'], 45_000);
       const output = `${result.stdout}\n${result.stderr}`.trim();
       const parsed = parseJimengJsonLines(output);
       const status: string = isJimengAuthenticatedOutput(output, parsed) ? 'authorized' : statusFrom(output, parsed);

@@ -1,9 +1,9 @@
 import { isAdminRequest } from '@/lib/auth';
-import { discoverJimengCanvasModels, resolveJimengCanvasCliCommand } from '@/lib/jimeng-cli';
+import { discoverJimengCanvasModels, isJimengCanvasCliAvailable, resolveJimengCanvasCliCommand } from '@/lib/jimeng-cli';
 import { jimengImageModels } from '@/lib/jimeng-image';
 import { jimengVideoModels } from '@/lib/jimeng-video';
 import { discoverModels } from '@/lib/providers';
-import { enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderStatus, updateProvider } from '@/lib/store';
+import { enableProviderModels, getProviderWithKey, getPublicState, replaceProviderModels, setProviderJimengCliPath, setProviderStatus, updateProvider } from '@/lib/store';
 import { beginRuntimeRequest, RuntimeDrainingError } from '@/lib/runtime-operation';
 
 export const runtime = 'nodejs';
@@ -27,9 +27,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     releaseRuntimeRequest = await beginRuntimeRequest('provider-sync');
     const originalBaseUrl = provider.baseUrl;
     const originalVideoTransport = provider.videoTransport;
-    const models = provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli'
-      ? await discoverJimengModels(provider)
-      : await discoverModels(provider);
+    const isJimeng = provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli';
+    const jimengCommand = isJimeng ? resolveJimengCanvasCliCommand(provider.jimengCliPath) : '';
+    const models = isJimeng ? await discoverJimengModels(provider) : await discoverModels(provider);
+    if (isJimeng && isJimengCanvasCliAvailable(jimengCommand)) await setProviderJimengCliPath(provider.id, jimengCommand);
     if (provider.baseUrl !== originalBaseUrl || provider.videoTransport !== originalVideoTransport) {
       await updateProvider(provider.id, {
         name: provider.name,

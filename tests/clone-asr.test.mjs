@@ -98,6 +98,10 @@ test('SRT serialization keeps ASR timings and emits stable cue numbering and tim
     'Second line',
     '',
   ].join('\r\n'));
+
+  assert.match(transcriptionModule.formatSrt([
+    { start: 0, end: 1, text: '准确率90 %以上' },
+  ]), /准确率90%以上/u);
 });
 
 test('reference text becomes an explicit Whisper decoder prefix', () => {
@@ -143,12 +147,40 @@ test('long reference prose is not sent as a Whisper decoder prompt', () => {
 
   const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds(
     transcriber,
-    `产品介绍。${'当 AI 融入千行百业，网络建设持续推进。'.repeat(20)}`,
+    `产品介绍。${'当智能技术融入千行百业，网络建设持续推进。'.repeat(20)}`,
     'zh',
   );
 
   assert.equal(decoderInputIds, undefined);
   assert.equal(encoded, false);
+});
+
+test('long reference documents contribute bounded named-term decoder hints', () => {
+  const encodedCalls = [];
+  const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds({
+    tokenizer: {
+      encode(text) {
+        encodedCalls.push(text);
+        return [40];
+      },
+      convert_tokens_to_ids(token) {
+        return { '<|startoftranscript|>': 1, '<|zh|>': 2, '<|transcribe|>': 3 }[token];
+      },
+    },
+    model: { generation_config: {
+      decoder_start_token_id: 1,
+      is_multilingual: true,
+      lang_to_id: { '<|zh|>': 2 },
+      task_to_id: { transcribe: 3 },
+    } },
+  }, `产品文档中提到《天穹平台》和 SANMAO.AI。${'这段普通说明文字不会进入识别提示。'.repeat(20)}`, 'zh');
+
+  assert.deepEqual(decoderInputIds, [40, 1, 2, 3]);
+  assert.equal(encodedCalls.length, 1);
+  assert.match(encodedCalls[0], /天穹平台/);
+  assert.match(encodedCalls[0], /SANMAO\.AI/);
+  assert.doesNotMatch(encodedCalls[0], /普通说明文字/);
+  assert.ok(Array.from(encodedCalls[0]).length <= 180);
 });
 
 test('prompted transcriber calls are serialized without sharing decoder prompts', async () => {
@@ -233,6 +265,180 @@ test('normalization splits long unspaced Chinese ASR chunks into readable timed 
   }, 20, 'test-model', 'zh');
   assert.equal(sparseWords.segments.length, 4);
   assert.ok(sparseWords.segments.every((segment) => segment.end - segment.start <= 5));
+});
+
+test('unspaced Chinese chunks prefer clause boundaries over splitting a phrase', () => {
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: '中国移动与中兴通讯持续深化协作依托Agentic AI大模型',
+    chunks: [{ text: '中国移动与中兴通讯持续深化协作依托Agentic AI大模型', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(normalized.segments.some((segment) => /协作$/u.test(segment.text)));
+  assert.ok(normalized.segments.every((segment) => !/依托$/u.test(segment.text)));
+
+  const emergency = transcriptionModule.normalizeLocalAsrResult({
+    text: '在广东广东移动针对汛期网络应急保障强化网络多智能体协同能力',
+    chunks: [{ text: '在广东广东移动针对汛期网络应急保障强化网络多智能体协同能力', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(emergency.segments.some((segment) => segment.text.includes('应急保障')));
+  assert.ok(emergency.segments.every((segment) => !/应急保$/u.test(segment.text)));
+
+  const closedLoop = transcriptionModule.normalizeLocalAsrResult({
+    text: '实现风险预警资源调度保障处置全链路闭环灾害场景下',
+    chunks: [{ text: '实现风险预警资源调度保障处置全链路闭环灾害场景下', timestamp: [0, 5.5] }],
+  }, 5.5, 'test-model', 'zh');
+  assert.ok(closedLoop.segments.some((segment) => segment.text.includes('全链路闭环')));
+  assert.ok(closedLoop.segments.every((segment) => !/闭环灾害$/u.test(segment.text)));
+});
+
+test('reference punctuation restores matching clause boundaries without reordering audio', () => {
+  const reference = '中国移动与中兴通讯持续深化协作，依托Agentic AI、大模型等创新技术，锚定商业闭环目标。在山东开展业务试点，随后在广东推广。';
+  const recognized = '中国移动与中兴通讯持续深化协作依托Agentic AI大模型等创新技术锚定商业闭环目标在广东开展业务试点随后在山东推广';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: recognized,
+    chunks: [{ text: recognized, timestamp: [0, 12] }],
+  }, 12, 'test-model', 'zh', reference);
+  const lines = normalized.segments.map((segment) => segment.text);
+
+  assert.ok(lines.some((line) => /协作，$/u.test(line)));
+  assert.ok(lines.some((line) => /目标。$/u.test(line)));
+  assert.match(lines.join(''), /在广东开展业务试点[，、]/u);
+  assert.ok(lines.every((line) => !/依托$/u.test(line)));
+
+  const numericReference = '事件定界准确率90%，试点覆盖率达到95%，平均时长为8.6小时。';
+  const numericAsr = '事件定界准确率90%试点覆盖率达到95%平均时长为8.6小时';
+  const numeric = transcriptionModule.normalizeLocalAsrResult({
+    text: numericAsr,
+    chunks: [{ text: numericAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', numericReference);
+  const numericText = numeric.segments.map((segment) => segment.text).join('');
+  assert.match(numericText, /90%，试点/u);
+  assert.match(numericText, /95%，平均/u);
+  assert.match(numericText, /8\.6小时。$/u);
+});
+
+test('decimal values split across ASR chunks remain intact inside one subtitle cue', () => {
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: '试点范围内覆盖问题处理时长由8.6小时降至5小时以内',
+    chunks: [
+      { text: '试点范围内覆盖问题处理时长由8', timestamp: [0, 3.78] },
+      { text: '.6小时降至5小时以内', timestamp: [3.78, 8.2] },
+    ],
+  }, 8.2, 'test-model', 'zh');
+
+  const cues = normalized.segments;
+  assert.equal(cues.map((segment) => segment.text).join(''), '试点范围内覆盖问题处理时长由8.6小时降至5小时以内');
+  assert.ok(cues.some((segment) => segment.text.includes('8.6小时')));
+  assert.ok(cues.every((segment) => segment.end - segment.start <= 5));
+
+  const sentenceBoundary = transcriptionModule.normalizeLocalAsrResult({
+    text: '产品。2倍',
+    chunks: [
+      { text: '产品。', timestamp: [0, 1] },
+      { text: '2倍', timestamp: [1, 2] },
+    ],
+  }, 2, 'test-model', 'zh');
+  assert.deepEqual(sentenceBoundary.segments.map((segment) => segment.text), ['产品。', '2倍']);
+});
+
+test('reference-guided correction fixes high-confidence substitutions and keeps ASR timestamps', () => {
+  const reference = '今天我们使用本地语音识别模型，根据参考文档校正产品名称和常见错字，同时保留原始字幕时间戳，方便用户检查识别结果。';
+  const recognized = '今天我们使用本地语音识别模型，根据参考文档校正产品名称和常见错子，同时保留原始字幕时间戳，放便用户检查识别结果。';
+  const input = {
+    text: recognized,
+    chunks: [{ text: recognized, timestamp: [0.5, 8.5] }],
+  };
+  const original = transcriptionModule.normalizeLocalAsrResult(input, 10, 'test-model', 'zh');
+  const corrected = transcriptionModule.normalizeLocalAsrResult(input, 10, 'test-model', 'zh', reference);
+
+  assert.equal(corrected.segments.map((segment) => segment.text).join(''), reference);
+  assert.deepEqual(corrected.segments.map(({ start, end }) => ({ start, end })), original.segments.map(({ start, end }) => ({ start, end })));
+  assert.deepEqual(corrected.words.map(({ start, end }) => ({ start, end })), original.words.map(({ start, end }) => ({ start, end })));
+  assert.equal(corrected.text, reference);
+});
+
+test('reference-guided correction fixes local technical terms and canonical casing', () => {
+  const reference = '依托Agentic AI、大模型与大数据创新技术，进一步锚定网络和业务目标。';
+  const recognized = '依托AgenTik AI大模型与大数据创新技术进一步锚定网络和业务目标。';
+  const input = { text: recognized, chunks: [{ text: recognized, timestamp: [0, 8] }] };
+  const original = transcriptionModule.normalizeLocalAsrResult(input, 8, 'test-model', 'zh');
+  const corrected = transcriptionModule.normalizeLocalAsrResult(input, 8, 'test-model', 'zh', reference);
+  const compact = (value) => value.replace(/[\s\p{P}]/gu, '');
+
+  assert.equal(compact(corrected.segments.map((segment) => segment.text).join('')), compact(reference));
+  assert.equal(corrected.segments[0].start, original.segments[0].start);
+  assert.equal(corrected.segments.at(-1).end, original.segments.at(-1).end);
+
+  const dataReference = '以数智手段深挖O域数据价值，构建360°用户视图支撑经营，持续提升业务体验。';
+  const dataAsr = '以数字手段深挖欧域数据价值，构建360度用户视图支撑经营，持续提升业务体验。';
+  const dataCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: dataAsr,
+    chunks: [{ text: dataAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', dataReference);
+  assert.equal(compact(dataCorrected.segments.map((segment) => segment.text).join('')), compact(dataReference));
+
+  const orderReference = '今年方案先在山东、广东、河南三省开展高阶自智试点，随后总结经验并提升业务体验。';
+  const orderAsr = '今年方案先在广东、山东、河南三省开展高阶自智试点，随后总结经验并提升业务体验。';
+  const orderCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: orderAsr,
+    chunks: [{ text: orderAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', orderReference);
+  const orderText = compact(orderCorrected.segments.map((segment) => segment.text).join(''));
+  assert.match(orderText, /今年方案先在广东山东河南三省/u);
+
+  const distantOrderReference = '今年方案先在山东试点，经过两个月的测试，然后部署到广东，并持续优化业务体验。';
+  const distantOrderAsr = '今年方案先在广东试点，经过两个月的测试，然后部署到山东，并持续优化业务体验。';
+  const distantOrderCorrected = transcriptionModule.normalizeLocalAsrResult({
+    text: distantOrderAsr,
+    chunks: [{ text: distantOrderAsr, timestamp: [0, 8] }],
+  }, 8, 'test-model', 'zh', distantOrderReference);
+  const distantOrderText = compact(distantOrderCorrected.segments.map((segment) => segment.text).join(''));
+  assert.match(distantOrderText, /今年方案先在广东试点.*然后部署到山东/u);
+});
+
+test('overlapping near-identical ASR segments are stitched while later repeated speech remains', () => {
+  const clipped = '可实现应急事件识别分析时长小于3分';
+  const complete = '可实现应急事件识别分析时长小于三分钟';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: `${clipped} ${complete} ${complete}`,
+    chunks: [
+      { text: clipped, timestamp: [10, 14.34] },
+      { text: complete, timestamp: [10.04, 14.62] },
+      { text: complete, timestamp: [20, 24.58] },
+    ],
+  }, 30, 'test-model', 'zh');
+
+  assert.deepEqual(normalized.segments.map((segment) => segment.text), [complete, complete]);
+  assert.deepEqual(normalized.segments.map(({ start, end }) => ({ start, end })), [
+    { start: 10, end: 14.62 },
+    { start: 20, end: 24.58 },
+  ]);
+  assert.equal(normalized.text, `${complete} ${complete}`);
+
+  const repeatedSpeech = transcriptionModule.normalizeLocalAsrResult({
+    text: `${complete} ${complete}`,
+    chunks: [
+      { text: complete, timestamp: [10, 14.5] },
+      { text: complete, timestamp: [11, 15.5] },
+    ],
+  }, 20, 'test-model', 'zh');
+  assert.deepEqual(repeatedSpeech.segments.map((segment) => segment.text), [complete, complete]);
+});
+
+test('reference correction preserves ambiguous wording and never inserts omitted words', () => {
+  const reference = '经过多轮评估，我们最终选择了蓝色方案并提交项目结果给审核小组。经过多轮评估，我们最终选择了绿色方案并提交项目结果给审核小组。';
+  const ambiguous = '经过多轮评估，我们最终选择了红色方案并提交项目结果给审核小组。';
+  const normalized = transcriptionModule.normalizeLocalAsrResult({
+    text: ambiguous,
+    chunks: [{ text: ambiguous, timestamp: [0, 6] }],
+  }, 8, 'test-model', 'zh', reference);
+  assert.equal(normalized.segments.map((segment) => segment.text).join(''), ambiguous);
+
+  const omitted = '经过多轮评估，我们最终选择了蓝色方案并提交结果给审核小组。';
+  const withoutInsertion = transcriptionModule.normalizeLocalAsrResult({
+    text: omitted,
+    chunks: [{ text: omitted, timestamp: [0, 6] }],
+  }, 8, 'test-model', 'zh', '经过多轮评估，我们最终选择了蓝色方案并提交项目结果给审核小组。');
+  assert.equal(withoutInsertion.segments.map((segment) => segment.text).join(''), omitted);
 });
 
 test('transcription quality gate rejects dominant repetition and abnormally long cues', () => {

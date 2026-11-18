@@ -5,8 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import sharp from 'sharp';
 import { buildArtifactsModule } from './artifacts-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const artifacts = await buildArtifactsModule();
+const { presentationGenerateTool } = createTsRequire(process.cwd())('./lib/tools/artifacts');
 
 async function withStore(run) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sanmao-artifacts-ppt-'));
@@ -124,6 +126,52 @@ test('layout=image 把本地图片放进幻灯片，subtitle 作为图注', asyn
   });
 });
 
+test('layout=image-content 在同页将本地配图与短要点分栏排布', async () => {
+  await withImageRoot(async (images) => {
+    await withStore(async (store) => {
+      const result = await artifacts.generatePresentationArtifact({
+        filename: '图文同页',
+        theme: 'sanmao-light',
+        slides: [{
+          layout: 'image-content',
+          title: '城市更新带来的变化',
+          subtitle: '围绕公共空间、日常服务与社区活力展开。',
+          bullets: ['步行环境更安全，慢行出行更便捷。', '公共空间连接社区服务和文化活动。', '分阶段实施，减少施工对居民生活的影响。'],
+          image: { ref: images.ref },
+        }],
+      }, store, { imageRoots: [images.root] });
+
+      const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+      const entries = artifacts.readArchiveEntries(buffer);
+      const slide = artifacts.readArchiveText(buffer, 'ppt/slides/slide1.xml');
+      const media = Object.keys(entries).filter((name) => /^ppt\/media\/.+\.(png|jpe?g)$/.test(name));
+      assert.equal(media.length, 1, '图文页应嵌入已生成的图片');
+      assert.match(slide, /<p:pic>/, '图文页应包含图片');
+      for (const text of ['城市更新带来的变化', '围绕公共空间', '步行环境更安全', '公共空间连接社区服务', '分阶段实施']) {
+        assert.ok(slide.includes(text), `图文页应保留「${text}」`);
+      }
+
+      const picture = slide.match(/<p:pic>[\s\S]*?<\/p:pic>/)?.[0] || '';
+      const pictureX = Number(picture.match(/<a:off x="(\d+)"/)?.[1]) / 914400;
+      const pictureWidth = Number(picture.match(/<a:ext cx="(\d+)"/)?.[1]) / 914400;
+      const bulletShape = [...slide.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((match) => match[0]).find((shape) => shape.includes('步行环境更安全')) || '';
+      const bulletX = Number(bulletShape.match(/<a:off x="(\d+)"/)?.[1]) / 914400;
+      assert.ok(Number.isFinite(pictureX) && Number.isFinite(bulletX));
+      assert.ok(bulletX > pictureX + pictureWidth, '正文列应从图片右侧开始，不能覆盖图片');
+
+      for (const match of slide.matchAll(/<p:(?:sp|pic)>[\s\S]*?<\/p:(?:sp|pic)>/g)) {
+        const element = match[0];
+        const x = Number(element.match(/<a:off x="(\d+)"/)?.[1]) / 914400;
+        const y = Number(element.match(/<a:off[^>]* y="(\d+)"/)?.[1]) / 914400;
+        const width = Number(element.match(/<a:ext cx="(\d+)"/)?.[1]) / 914400;
+        const height = Number(element.match(/<a:ext[^>]* cy="(\d+)"/)?.[1]) / 914400;
+        assert.ok(x >= 0 && y >= 0 && x + width <= 13.34 && y + height <= 7.5, '图文页元素必须位于幻灯片画布内');
+      }
+      assert.deepEqual(result.warnings, []);
+    });
+  });
+});
+
 test('插图 ref 无效时降级提示，不阻断整份 PPT', async () => {
   await withStore(async (store) => {
     const result = await artifacts.generatePresentationArtifact({
@@ -174,6 +222,109 @@ test('chart 版面生成原生图表部件，数据与主题配色一起写入',
     const rels = artifacts.readArchiveText(buffer, 'ppt/slides/_rels/slide1.xml.rels');
     assert.ok(rels.includes('charts/chart1.xml'), '幻灯片应引用图表部件');
     assert.ok(!result.warnings.some((warning) => warning.includes('图表缺少有效数据')));
+  });
+});
+
+test('PPT 指标卡把明确数值排成可读的原生卡片，工具 schema 会将它提供给模型', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: '经营指标.pptx',
+      theme: 'sanmao-light',
+      slides: [{
+        layout: 'metrics',
+        title: '经营指标',
+        metrics: [
+          { label: '全年收入增长', value: '28%', context: '目标 22%' },
+          { label: '客户续费率', value: '91%', context: '目标 93%' },
+          { label: '获客成本', value: '-14%', context: '同比变化' },
+        ],
+      }],
+    }, store);
+    const buffer = await readFile((await store.read(result.artifact.id)).filePath);
+    const slide = artifacts.readArchiveText(buffer, 'ppt/slides/slide1.xml');
+    assert.ok(slide.includes('全年收入增长') && slide.includes('28%') && slide.includes('目标 22%'));
+    assert.ok((slide.match(/<p:sp>[\s\S]*?<\/p:sp>/g) || []).length >= 8, '指标页应含标签、数值、说明和卡片形状');
+    assert.deepEqual(result.warnings, []);
+    const preview = await artifacts.buildArtifactPreviewHtml({
+      kind: 'presentation', name: '经营指标.pptx', data: buffer,
+    });
+    assert.ok(preview.includes('<div class="slide-title">经营指标</div>'), '预览必须保留真正的页面标题');
+    assert.ok(!preview.includes('<div class="slide-title">28%</div>'), '较大的指标值不能成为页面标题');
+
+    const schema = presentationGenerateTool.schema;
+    const slides = schema.properties.slides;
+    assert.ok(slides.items.properties.layout.enum.includes('metrics'), '指标版式应暴露给模型工具调用');
+    assert.ok(slides.items.properties.layout.enum.includes('image-content'), '图文同页版式应暴露给模型工具调用');
+    assert.equal(slides.items.properties.metrics.items.required.includes('label'), true);
+    assert.equal(slides.items.properties.metrics.items.required.includes('value'), true);
+  });
+});
+
+test('PPT 四指标卡的长金额和中文名称保持完整，并放得进文本框', async () => {
+  const metricInputs = [
+    { label: '季度回款金额', value: '1,234,567,890.00 元', context: '本季度累计' },
+    { label: '海外业务收入', value: 'USD 123,456,789.00', context: '按美元计价' },
+    { label: '关键业务指标'.repeat(5).slice(0, 32), value: '12345678901234567890123456789012' },
+    { label: '计量口径', value: '全角指标'.repeat(8), context: '这是完整保留在指标数据中的长说明文字'.repeat(3) },
+  ];
+  for (const theme of ['sanmao-light', 'sanmao-dark']) {
+    const result = await artifacts.buildPresentation({
+      theme, slides: [{ layout: 'metrics', title: '经营指标', metrics: metricInputs }],
+    });
+    const xml = artifacts.readArchiveText(result.buffer, 'ppt/slides/slide1.xml');
+    const shapes = [...xml.matchAll(/<p:sp>[\s\S]*?<\/p:sp>/g)].map((match) => match[0]);
+    const textShapes = shapes.filter((shape) => shape.includes('<a:t>'));
+    const texts = textShapes.map((shape) => [...shape.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match) => match[1]).join('').replace(/\s/g, ''));
+    for (const metric of metricInputs) {
+      assert.ok(texts.includes(metric.label.replace(/\s/g, '')), theme + ' 指标名称必须完整');
+      assert.ok(texts.includes(metric.value.replace(/\s/g, '')), theme + ' 指标值必须完整');
+    }
+    for (const shape of textShapes) {
+      const width = Number(shape.match(/<a:ext cx="(\d+)"/)?.[1]) / 914400;
+      const height = Number(shape.match(/<a:ext[^>]*cy="(\d+)"/)?.[1]) / 914400;
+      const lines = [...shape.matchAll(/<a:p>[\s\S]*?<\/a:p>/g)].filter((match) => match[0].includes('<a:t>'));
+      let neededHeight = 0;
+      for (const [paragraph] of lines) {
+        const text = [...paragraph.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((match) => match[1]).join('');
+        const size = Number(paragraph.match(/<a:rPr[^>]*sz="(\d+)"/)?.[1]) / 100;
+        const lineSpacing = Number(paragraph.match(/<a:lnSpc><a:spcPts val="(\d+)"/)?.[1] || size * 134) / 100;
+        assert.ok(artifacts.textWidthEm(text) * size / 72 <= width + 0.001, theme + ' 文字不得横向溢出');
+        neededHeight += lineSpacing / 72;
+      }
+      assert.ok(neededHeight <= height + 0.001, theme + ' 文字高度不得超出文本框');
+    }
+    assert.ok(result.warnings.some((warning) => warning.includes('说明超出卡片容量')));
+    assert.ok(xml.includes('…'), '说明过长时必须显示省略标记');
+  }
+});
+
+test('PPT 输出修复孤立母版声明、notes 顺序和图表子元素顺序', async () => {
+  await withStore(async (store) => {
+    const result = await artifacts.generatePresentationArtifact({
+      filename: 'OOXML-结构.pptx',
+      slides: [{
+        layout: 'chart',
+        title: '季度收入',
+        notes: '按季度统计',
+        chart: { type: 'bar', categories: ['Q1', 'Q2', 'Q3'], series: [{ name: '收入', values: [12, 15, 19] }] },
+      }],
+    }, store);
+    const entries = artifacts.readArchiveEntries(await readFile((await store.read(result.artifact.id)).filePath));
+    const contentTypes = Buffer.from(entries['[Content_Types].xml']).toString('utf8');
+    for (const [, masterNumber] of contentTypes.matchAll(/PartName="\/ppt\/slideMasters\/slideMaster(\d+)\.xml"/g)) {
+      assert.ok(entries[`ppt/slideMasters/slideMaster${masterNumber}.xml`], `声明的 slideMaster${masterNumber} 必须存在`);
+    }
+
+    const presentation = Buffer.from(entries['ppt/presentation.xml']).toString('utf8');
+    assert.ok(presentation.indexOf('<p:notesMasterIdLst') < presentation.indexOf('<p:sldIdLst'), 'notesMasterIdLst 必须在 sldIdLst 前');
+    const chartPart = Object.keys(entries).find((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name));
+    assert.ok(chartPart, `应生成图表部件：${Object.keys(entries).filter((name) => name.includes('chart')).join(', ')}`);
+    const chartXml = Buffer.from(entries[chartPart]).toString('utf8');
+    const series = chartXml.match(/<c:ser>[\s\S]*?<\/c:ser>/)?.[0] || '';
+    assert.ok(series.indexOf('<c:dPt') < series.indexOf('<c:dLbls'), '数据点格式必须排在数据标签前');
+    const barChart = chartXml.match(/<c:barChart>[\s\S]*?<\/c:barChart>/)?.[0] || '';
+    const chartAxisIds = [...barChart.matchAll(/<c:axId\b[^>]*val="(\d+)"/g)].map((match) => match[1]);
+    assert.equal(chartAxisIds.length, 2, '柱状图应引用两个坐标轴');
   });
 });
 

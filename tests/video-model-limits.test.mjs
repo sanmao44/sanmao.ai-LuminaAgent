@@ -131,7 +131,7 @@ test('Cangyuan limits expose per-model controls and only documented total input 
 });
 
 test('applies official multiframe CLI limits from the actual input shape', () => {
-  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli' };
+  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli', jimengCliPath: 'dreamina.exe' };
   const twoImages = limits.getVideoModelLimitsForInput(
     { rawId: 'seedance2.0fast' },
     provider,
@@ -178,4 +178,16 @@ test('applies official multiframe CLI limits from the actual input shape', () =>
   );
   assert.equal(allAround.minSeconds, 4);
   assert.equal(allAround.maxSeconds, 15);
+});
+
+test('does not apply legacy multiframe limits to the official Canvas CLI', () => {
+  const provider = { platform: 'jimeng-cli', videoTransport: 'jimeng-cli', jimengCliPath: 'dreamina-canvas.exe' };
+  const canvasM2v = limits.getVideoModelLimitsForInput(
+    { rawId: 'seedance2.0' },
+    provider,
+    { referenceImageCount: 3, referenceMode: 'multiframe' },
+  );
+  assert.equal(canvasM2v.minSeconds, 4);
+  assert.equal(canvasM2v.maxSeconds, 15);
+  assert.equal(canvasM2v.durationScope, undefined);
 });

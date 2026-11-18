@@ -6,6 +6,7 @@ import type { ImageDownloadAuth } from './image-storage';
 import { inferNativeSearch } from './native-search-detection';
 import { inferModelKind } from './model-kind';
 import { agnesModelCatalog } from './agnes';
+import { inspectJimengCli } from './jimeng-cli';
 import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import type { CangyuanImageAdvancedParameter, CangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
@@ -170,12 +171,6 @@ function normalizeProviderToolCalls<T extends { content: unknown }>(message: T):
     };
   });
   return { ...message, tool_calls: toolCalls } as T;
-}
-
-function jimengCommand(explicit?: string) {
-  const profile = process.env.USERPROFILE || os.homedir();
-  const candidates = [explicit, process.env.JIMENG_CLI_PATH, path.join(profile, 'bin', 'dreamina.exe'), path.join(profile, 'bin', 'dreamina.cmd'), path.join(profile, '.local', 'bin', 'dreamina.exe'), path.join(profile, '.local', 'bin', 'dreamina.cmd'), process.platform === 'win32' ? 'dreamina.exe' : 'dreamina', process.platform === 'win32' ? 'dreamina.cmd' : 'dreamina'].map((value) => String(value || '').trim()).filter(Boolean);
-  return candidates.find((value) => path.isAbsolute(value) ? existsSync(value) : value === explicit || value === process.env.JIMENG_CLI_PATH || /^(dreamina)(\.exe|\.cmd)?$/i.test(value)) || candidates[0] || 'dreamina';
 }
 
 function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id = ''): ModelCapability[] {
@@ -1080,17 +1075,18 @@ export async function testProviderConnection(provider: RuntimeProvider) {
     };
   }
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') {
-    const command = jimengCommand(provider.jimengCliPath);
-    const cli = await new Promise<{ installed: boolean; version: string; loginHint: string }>((resolve) => {
-      const child = spawn(command, ['--version'], { windowsHide: true, shell: command.toLowerCase().endsWith('.cmd') });
-      let output = '';
-      child.stdout.on('data', (chunk) => { output += String(chunk); });
-      child.stderr.on('data', (chunk) => { output += String(chunk); });
-      child.on('error', () => resolve({ installed: false, version: '', loginHint: '未检测到即梦 CLI，请按官方安装说明安装后重试' }));
-      child.on('close', (code) => resolve({ installed: code === 0, version: output.trim().split(/\r?\n/)[0] || '', loginHint: '请完成一次即梦网页授权后即可生成图片和视频' }));
-    });
-    if (!cli.installed) throw new Error(`${cli.loginHint}。官方安装命令：curl -fsSL https://jimeng.jianying.com/cli | bash`);
-    return { mode: 'cli' as const, count: 0, message: `即梦 CLI 已检测：${cli.version || '版本信息不可用'}；${cli.loginHint}` };
+    const inspected = await inspectJimengCli(provider);
+    if (inspected.installed) {
+      return {
+        mode: 'cli' as const,
+        count: 0,
+        message: `即梦 CLI 已检测：${inspected.version || '版本信息不可用'}；${inspected.loginHint}`,
+      };
+    }
+    const installCommand = process.platform === 'win32'
+      ? 'irm https://jimeng.jianying.com/canvas-cli/install.ps1 | iex'
+      : 'curl -fsSL https://jimeng.jianying.com/canvas-cli/install.sh | bash';
+    throw new Error(`${inspected.loginHint}。官方安装命令：${installCommand}`);
   }
   if (isApimartProvider(provider)) {
     const data = await fetchJson(providerEndpoint(provider, '/balance', '/balance'), { method: 'GET', headers: authHeaders(provider) }, 20000);

@@ -16,7 +16,7 @@ const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.ur
 const detection = await readFile(detectionUrl, 'utf8');
 globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
 globalThis.__providerCompatSharp = sharp;
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${svgImage.replace('export function isSvgImageBytes', 'function isSvgImageBytes')}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isSvgImageBytes } from './svg-image';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;').replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerCompatSharp;')}`;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${svgImage.replace('export function isSvgImageBytes', 'function isSvgImageBytes')}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { inspectJimengCli } from './jimeng-cli';", "const inspectJimengCli = async () => ({ installed: false, version: '', loginHint: 'stub' });").replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import type { CangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isSvgImageBytes } from './svg-image';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;').replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerCompatSharp;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -30,7 +30,10 @@ delete globalThis.__providerCompatSharp;
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
-const presetCompiled = ts.transpileModule(presetSource, {
+const presetCompiled = ts.transpileModule(presetSource.replace(
+  "import { isProviderCreativeTaskProtocol, type ProviderCreativeTaskProtocol } from '../packages/contracts/provider-creative-task';",
+  "const isProviderCreativeTaskProtocol = (value) => value === 'cangyuan-creative-v1';",
+), {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: new URL('../lib/provider-presets.ts', import.meta.url).pathname,
 }).outputText;
@@ -38,13 +41,27 @@ const presets = await import(`data:text/javascript;base64,${Buffer.from(presetCo
 
 test('provider picker uses real local logos for visible providers', async () => {
   const visiblePresets = presets.providerPresets.filter((preset) => preset.showInPicker !== false && preset.value !== 'custom');
-  assert.equal(visiblePresets.length, 16);
-  const presetsWithLogo = visiblePresets.filter((preset) => preset.value !== 'cangyuan');
+  assert.equal(visiblePresets.length, 15);
+  assert.equal(visiblePresets.some((preset) => preset.value === '65535-claude-code'), false);
+  const presetsWithLogo = visiblePresets;
   const a6api = presets.providerPresets.find((preset) => preset.value === 'a6api');
   assert.deepEqual({ baseUrl: a6api.baseUrl, apiKeyUrl: a6api.apiKeyUrl, type: a6api.type }, {
     baseUrl: 'https://api.a6api.vip/v1',
     apiKeyUrl: 'https://a6api.ai/?auth=register&aff=XIcW',
     type: 'openai-compatible',
+  });
+  const moark = presets.providerPresets.find((preset) => preset.value === 'gitee');
+  assert.deepEqual({ baseUrl: moark.baseUrl, apiKeyUrl: moark.apiKeyUrl, type: moark.type }, {
+    baseUrl: 'https://api.moark.com/v1',
+    apiKeyUrl: 'https://moark.com/serverless-api',
+    type: 'openai-compatible',
+  });
+  assert.equal(moark.notice, '免费体验令牌每日 100 次；常规 API 令牌需资源包授权');
+  const moarkConfig = presets.resolveProviderConfiguration({ platform: 'gitee' });
+  assert.deepEqual({ chatPath: moarkConfig.chatPath, authHeader: moarkConfig.authHeader, authPrefix: moarkConfig.authPrefix }, {
+    chatPath: '/chat/completions',
+    authHeader: 'Authorization',
+    authPrefix: 'Bearer ',
   });
   assert.ok(presetsWithLogo.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || presetsWithLogo.every((preset) => typeof preset.logo === 'string'));
   assert.match(providerPickerSource, /className=\{preset\.logo \? "platform-logo" : ""\}/);
@@ -55,7 +72,7 @@ test('provider picker uses real local logos for visible providers', async () => 
     assert.ok(logo.byteLength > 0, `${preset.value} logo should not be empty`);
   }
   const cangyuan = presets.providerPresets.find((preset) => preset.value === 'cangyuan');
-  assert.equal(cangyuan.logo, undefined);
+  assert.equal(cangyuan.logo, '/brand/providers/cangyuan.webp');
   assert.deepEqual({ baseUrl: cangyuan.baseUrl, apiKeyUrl: cangyuan.apiKeyUrl, type: cangyuan.type }, {
     baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
     apiKeyUrl: 'https://ai.cangyuansuanli.cn/keys',
@@ -83,6 +100,7 @@ test('provider picker uses real local logos for visible providers', async () => 
     type: 'openai-compatible',
     needsBaseUrl: false,
   });
+  assert.equal(claudeStd.showInPicker, false);
   const claudeModels = await providers.discoverModels({ platform: '65535-claude-code' });
   assert.deepEqual(claudeModels.map((model) => model.id), [
     'claude-haiku-5-5', 'claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-opus-5-5',

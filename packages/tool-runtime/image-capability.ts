@@ -155,15 +155,19 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           try {
             const itemImages = await invokeMediaModelCandidates(
               initialRuntime,
-              async () => explicitlyRequestedImageModel
-                ? []
-                : getRuntimeImageModelCandidates('auto', requiredImageCapability),
+              async () => getRuntimeImageModelCandidates(requestedAgentImageModelId || 'auto', requiredImageCapability),
               async (candidate: typeof initialRuntime) => {
                 itemRuntime = candidate;
-                return mode === 'edit'
+                const candidateImages = mode === 'edit'
                   ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
                   : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
+                const images = await candidateImages;
+                if (!images.length) {
+                  throw Object.assign(new Error('图片模型没有返回可交付图片'), { mediaModelNoOutput: true });
+                }
+                return images;
               },
+              { allowFallbackBeforeProviderSubmission: true },
             );
             void observer?.emit({ operationId: providerOperationId, kind: 'provider', phase: 'completed', at: Date.now(), durationMs: Date.now() - providerStartedAt, status: 'completed', identity: String((itemRuntime.provider as { name?: unknown }).name || 'image') });
             return itemImages.map((image: RuntimeImage) => ({

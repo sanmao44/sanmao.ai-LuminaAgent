@@ -8,6 +8,7 @@ const realSkills = requireTs('./skills');
 const realBrowserGuidance = requireTs('./mcp/browser-guidance');
 function harness(options = {}) {
   const calls = [];
+  const searchCalls = [];
   const mcpCalls = [];
   const mcpAuditCalls = [];
   const discoveryCalls = [];
@@ -16,17 +17,20 @@ function harness(options = {}) {
   const manageCalls = [];
   const runtimeLoads = [];
   const images = [];
+  const imageModelCalls = [];
   const imageRuntimeRequests = [];
   const modelCalls = [];
   const candidateCalls = [];
   const bundledSkillInstalls = [];
   const spreadsheetCalls = [];
+  const presentationCalls = [];
   const transcriptionCalls = [];
   const savedSubtitleArtifacts = [];
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat' };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
+  const imageModelCandidates = options.imageModelCandidates || [{ provider, model: imageModel }];
   const routedSkill = options.skill || {
     id: 'luxun-voice',
     name: 'luxun-voice',
@@ -69,7 +73,22 @@ function harness(options = {}) {
             collectArchiveEntries: async () => [],
             generateArchiveArtifact: async () => ({ files: [] }),
             generateDocumentArtifact: async () => ({ files: [] }),
-            generatePresentationArtifact: async () => ({ files: [] }),
+            generatePresentationArtifact: async (input) => {
+              presentationCalls.push(input);
+              if (typeof options.generatePresentationArtifact === 'function') return options.generatePresentationArtifact(input);
+              return {
+                artifact: {
+                  id: 'test-presentation-artifact',
+                  kind: 'presentation',
+                  name: 'SANMAO-演示文稿.pptx',
+                  mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                  size: 128,
+                  downloadUrl: '/api/artifacts/test-presentation-artifact',
+                  createdAt: Date.now(),
+                },
+                warnings: [],
+              };
+            },
             generateSpreadsheetArtifact: async (input) => {
               spreadsheetCalls.push(input);
               if (typeof options.generateSpreadsheetArtifact === 'function') return options.generateSpreadsheetArtifact(input);
@@ -121,7 +140,11 @@ function harness(options = {}) {
           },
           web: {
             planSearch: webApi.planSearch,
-            searchWeb: async () => ({ query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 }),
+            searchWeb: async (...args) => {
+              searchCalls.push(args);
+              if (typeof options.searchWeb === 'function') return options.searchWeb(...args);
+              return { query: '', intent: { entities: [] }, results: [], status: 'empty', resultCount: 0, rounds: 0 };
+            },
           },
           mcp: {
             callMcpTool: async (server, toolName, args) => {
@@ -248,8 +271,14 @@ function harness(options = {}) {
       describeProviderFailure: options.describeProviderFailure || (() => 'provider failure'),
       generateImage: async (_provider, _model, args) => {
         images.push({ mode: 'generate', ...args });
+        imageModelCalls.push(_model);
         if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
-        return options.emptyImages ? [] : [{ url: '/test.png' }];
+        const imageFailure = options.generateImageError?.(_model);
+        if (imageFailure) throw imageFailure;
+        const emptyOutput = typeof options.emptyImagesForModel === 'function'
+          ? options.emptyImagesForModel(_model)
+          : options.emptyImages;
+        return emptyOutput ? [] : [{ url: options.generatedImageRef || '/test.png' }];
       },
       editImage: async (_provider, _model, args) => { images.push({ mode: 'edit', ...args }); return [{ url: '/test.png' }]; },
       imageDownloadAuth: () => undefined,
@@ -266,7 +295,7 @@ function harness(options = {}) {
           || (capability === 'edit' && imageModel.capabilities.includes('generate'));
         return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
       },
-      getRuntimeImageModelCandidates: async () => [{ provider, model: imageModel }],
+      getRuntimeImageModelCandidates: async () => imageModelCandidates,
       getPublicState: async () => ({ settings: {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
@@ -332,7 +361,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-	    calls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, transcriptionCalls, savedSubtitleArtifacts,
+	    calls, searchCalls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -345,6 +374,19 @@ function harness(options = {}) {
     },
   };
 }
+
+test('always-mode news search calls the search adapter and reports failure without a model denial', async () => {
+  const agent = harness({ searchWeb: async () => { throw new Error('外部搜索请求超时'); } });
+  const result = await agent.post([{ role: 'user', content: '推送今日军事新闻' }], { webMode: 'always' });
+
+  assert.equal(agent.searchCalls.length, 1);
+  assert.equal(agent.searchCalls[0][0], '推送今日军事新闻');
+  assert.equal(agent.modelCalls.length, 0);
+  assert.equal(result.webSearchDecision.status, 'failed');
+  assert.match(result.message, /联网搜索失败：搜索请求超时/);
+  assert.match(result.message, /没有获取到可核验来源/);
+  assert.doesNotMatch(result.message, /无法直接访问实时互联网/);
+});
 
 test('audio attachments generate a timestamped SRT artifact locally without a chat model', async () => {
   const agent = harness({ noChatModel: true });
@@ -368,7 +410,7 @@ test('audio attachments generate a timestamped SRT artifact locally without a ch
   assert.equal(agent.savedSubtitleArtifacts[0].data.toString('utf8'), '1\n00:00:01,250 --> 00:00:02,750\nHello.\n');
   assert.equal(result.files[0].artifactId, 'test-subtitle-artifact');
   assert.equal(result.files[0].downloadUrl, '/api/artifacts/test-subtitle-artifact');
-  assert.match(result.message, /已读取 1 个参考文档；短术语表可辅助识别/);
+  assert.match(result.message, /已读取 1 个参考文档；会用其中的专名提示识别/);
   assert.equal(agent.modelCalls.length, 0);
 });
 
@@ -1083,7 +1125,7 @@ test('fresh chat asks for the image subject without calling a model or image ser
 test('bare image command uses this chat subject, ratio and actual reference despite prose-only model output', async () => {
   const agent = harness();
   const data = await agent.post([...history, { role: 'user', content: '出图', references: [{ id: 'ref', kind: 'image', name: '当前对话图片', url: 'data:image/png;base64,dGVzdA==' }] }]);
-  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images.length, 1, JSON.stringify({ calls: agent.calls.map((call) => (call.tools || []).map((tool) => tool.function.name)), models: agent.modelCalls.map((call) => ({ model: call.model, tools: (call.payload.tools || []).map((tool) => tool.function.name) })) }));
   assert.equal(agent.images[0].mode, 'generate');
   assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.match(agent.images[0].prompt, /鲁迅/);
@@ -1109,6 +1151,149 @@ test('batch generation with a reference uses generate mode and shares the refere
   assert.ok(agent.images.every((image) => image.mode === 'generate'));
   assert.ok(agent.images.every((image) => image.references?.[0] === 'data:image/png;base64,dGVzdA=='));
   assert.equal(data.images.length, 2);
+});
+
+test('explicit PPT auto-illustration generates an image first and passes its stored ref into the deck', async () => {
+  const imageRef = '/api/storage/file?name=generated-ppt-visual.png';
+  const agent = harness({
+    generatedImageRef: imageRef,
+    reply: (payload) => {
+      const generatedPresentation = payload.messages.some((message) => message.role === 'tool' && String(message.content).includes('test-presentation-artifact'));
+      if (generatedPresentation) return { content: 'PPT 已生成。' };
+      const offered = (payload.tools || []).map((tool) => tool.function.name);
+      if (offered.includes('image_generate')) {
+        assert.ok(offered.includes('presentation_generate'), 'PPT delivery remains available in the first step');
+        return { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"产品介绍的横向主视觉","aspectRatio":"16:9"}}</tool_call>' };
+      }
+      if (offered.includes('presentation_generate')) {
+        assert.ok(!offered.includes('image_generate'), 'the artifact step should follow the completed image step');
+        const imageResult = payload.messages.find((message) => message.role === 'tool' && String(message.content).includes('images'));
+        const ref = JSON.parse(imageResult.content).images[0].ref;
+        return { tool_calls: [{ id: 'ppt-1', type: 'function', function: { name: 'presentation_generate', arguments: JSON.stringify({
+          filename: '产品介绍.pptx',
+          slides: [{ layout: 'image-content', title: '产品介绍', subtitle: '围绕效率与协作提升日常工作体验。', bullets: ['减少重复操作。', '让团队协作更加清晰。'], image: { ref } }],
+        }) } }] };
+      }
+      return { content: 'PPT 已生成。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请做一个产品介绍 PPT，并自动生成图片配进去' }]);
+  assert.equal(agent.images.length, 1, JSON.stringify({ tools: agent.modelCalls.map((call) => call.payload.tools?.map((tool) => tool.function.name)), imageModels: agent.imageModelCalls, result: data.message }));
+  assert.equal(agent.presentationCalls.length, 1);
+  assert.equal(agent.presentationCalls[0].slides[0].layout, 'image-content');
+  assert.equal(agent.presentationCalls[0].slides[0].image.ref, imageRef);
+  assert.equal(data.files.length, 1);
+});
+
+test('image generation switches to the next configured model after a definitive rejection', async () => {
+  const backupProvider = { id: 'backup', name: 'Backup', platform: 'openai', enabled: true };
+  const backupModel = {
+    id: 'backup-image', rawId: 'backup-image', displayName: 'Backup image', kind: 'image',
+    enabled: true, published: true, capabilities: ['generate'], providerId: 'backup',
+  };
+  const agent = harness({
+    imageModelCandidates: [{ provider: backupProvider, model: backupModel }],
+    generateImageError: (model) => model === 'test-image'
+      ? Object.assign(new Error('rate limit exceeded'), { providerFailureKind: 'http', providerStatus: 429 })
+      : undefined,
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"fallback image test"}}</tool_call>' }
+      : { content: '图片已生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '画一张蓝色鲸鱼的图片' }], { imageModelId: 'test-image' });
+
+  assert.equal(data.images.length, 1, JSON.stringify({ tools: agent.modelCalls.map((call) => call.payload.tools?.map((tool) => tool.function.name)), imageModels: agent.imageModelCalls, result: data.message }));
+  assert.deepEqual(agent.imageModelCalls, ['test-image', 'backup-image']);
+});
+
+test('an empty image response switches to the next configured model', async () => {
+  const backupProvider = { id: 'backup', name: 'Backup', platform: 'openai', enabled: true };
+  const backupModel = {
+    id: 'backup-image', rawId: 'backup-image', displayName: 'Backup image', kind: 'image',
+    enabled: true, published: true, capabilities: ['generate'], providerId: 'backup',
+  };
+  const agent = harness({
+    imageModelCandidates: [{ provider: backupProvider, model: backupModel }],
+    emptyImagesForModel: (model) => model === 'test-image',
+    reply: (payload) => payload.tools
+      ? { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"no image output fallback"}}</tool_call>' }
+      : { content: '图片已生成。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '画一张蓝色鲸鱼的图片' }]);
+
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.imageModelCalls, ['test-image', 'backup-image']);
+});
+
+test('failed PPT illustration still delivers a text-only presentation', async () => {
+  const agent = harness({
+    emptyImages: true,
+    reply: (payload) => {
+      const generatedPresentation = payload.messages.some((message) => message.role === 'tool' && String(message.content).includes('test-presentation-artifact'));
+      if (generatedPresentation) return { content: 'PPT 已生成。' };
+      const offered = (payload.tools || []).map((tool) => tool.function.name);
+      if (offered.includes('image_generate')) {
+        return { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"产品介绍视觉图"}}</tool_call>' };
+      }
+      if (offered.includes('presentation_generate')) {
+        return { tool_calls: [{ id: 'ppt-after-image-failure', type: 'function', function: { name: 'presentation_generate', arguments: JSON.stringify({
+          filename: '产品介绍.pptx',
+          slides: [{ layout: 'bullets', title: '产品介绍', bullets: ['核心能力', '使用价值'] }],
+        }) } }] };
+      }
+      return { content: '已生成。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请做一个产品介绍 PPT，并自动生成图片配进去' }]);
+
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.presentationCalls.length, 1);
+  assert.equal(agent.presentationCalls[0].slides[0].layout, 'bullets');
+  assert.equal('image' in agent.presentationCalls[0].slides[0], false);
+  assert.equal(data.files.length, 1);
+});
+
+test('an accepted pending image does not block a no-image PPT or lose its task id', async () => {
+  const agent = harness({
+    pendingImage: true,
+    mediaLogId: 'ppt-media-log-1',
+    reply: (payload) => {
+      const generatedPresentation = payload.messages.some((message) => message.role === 'tool' && String(message.content).includes('test-presentation-artifact'));
+      if (generatedPresentation) return { content: 'PPT 已生成。' };
+      const offered = (payload.tools || []).map((tool) => tool.function.name);
+      if (offered.includes('image_generate')) {
+        return { content: '<tool_call>{"name":"image_generate","arguments":{"prompt":"产品介绍视觉图"}}</tool_call>' };
+      }
+      if (offered.includes('presentation_generate')) {
+        return { tool_calls: [{ id: 'ppt-while-image-pending', type: 'function', function: { name: 'presentation_generate', arguments: JSON.stringify({
+          filename: '产品介绍.pptx',
+          slides: [{ layout: 'bullets', title: '产品介绍', bullets: ['核心能力', '使用价值'] }],
+        }) } }] };
+      }
+      return { content: '已生成。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '请做一个产品介绍 PPT，并自动生成图片配进去' }]);
+
+  assert.equal(data.pending, true);
+  assert.equal(data.generationTaskId, 'ppt-media-log-1');
+  assert.equal(agent.presentationCalls.length, 1);
+  assert.equal(data.files.length, 1);
+  assert.match(data.message, /无配图版 PPT/);
+});
+
+test('ordinary PPT generation lets the model skip unnecessary illustration', async () => {
+  const agent = harness({
+    reply: (payload) => {
+      const tool = (payload.tools || []).find((entry) => entry.function.name === 'presentation_generate');
+      return tool
+        ? { content: '<tool_call>{"name":"presentation_generate","arguments":{"filename":"产品介绍.pptx","slides":[{"layout":"bullets","title":"产品介绍","bullets":["主要能力"]}]}}</tool_call>' }
+        : { content: '完成。' };
+    },
+  });
+  await agent.post([{ role: 'user', content: '请做一个产品介绍 PPT' }]);
+  assert.ok(agent.calls.length > 0);
+  assert.equal(agent.images.length, 0);
 });
 
 test('valid inline tool calls are executed once with their original prompt', async () => {

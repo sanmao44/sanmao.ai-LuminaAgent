@@ -37,6 +37,48 @@ test('passes the selected image model version to text2image and image2image', ()
   ]);
 });
 
+test('builds the official Canvas CLI text-to-image node command', () => {
+  assert.deepEqual(image.buildJimengCanvasImageArgs('project-1', {
+    prompt: 'a red fox', aspectRatio: '16:9', resolution: '2K', count: 2,
+  }, 'seedream_4.7', [], 'submit-1'), [
+    'node', 'create', 'image', '--project-id', 'project-1', '--run', '--mode', 't2i', '--title', 'a red fox', '--prompt', 'a red fox', '--count', '2',
+    '--model', 'seedream_4.7', '--ratio', '16:9', '--resolution', '2K', '--submit-id', 'submit-1',
+  ]);
+});
+
+test('builds the official Canvas CLI image-to-image command with typed refs', () => {
+  assert.deepEqual(image.buildJimengCanvasImageArgs('project-2', {
+    prompt: 'keep the composition', aspectRatio: '1:1', resolution: '1K', count: 1,
+  }, 'seedream_5.0_pro', ['resource-1', 'resource-2'], 'submit-2'), [
+    'node', 'create', 'image', '--project-id', 'project-2', '--run', '--mode', 'i2i', '--title', 'keep the composition', '--prompt', 'keep the composition', '--count', '1',
+    '--model', 'seedream_5.0_pro', '--ratio', '1:1', '--resolution', '1K', '--submit-id', 'submit-2', '--ref', 'res:resource-1', '--ref', 'res:resource-2',
+  ]);
+});
+
+test('preserves the requested image count for official dynamic model validation', () => {
+  const args = image.buildJimengCanvasImageArgs('project-3', {
+    prompt: 'batch', count: 12,
+  }, 'seedream_4.7', [], 'submit-3');
+  assert.equal(args[args.indexOf('--count') + 1], '12');
+});
+
+test('waits for official operation resources before downloading images', () => {
+  assert.deepEqual(image.canvasImageResourceIds({ values: [{ state: 'running', resources: [
+    { resourceId: 'image-running', state: 'running' },
+  ] }], latest: {}, output: '' }), []);
+  assert.deepEqual(image.canvasImageResourceIds({ values: [{ state: 'success', resources: [
+    { resourceId: 'image-ready', state: 'success', format: 'png' },
+    { resourceId: 'video-ready', state: 'success', format: 'mp4' },
+  ] }], latest: {}, output: '' }), ['image-ready']);
+});
+
+test('uses the operation submission instead of a resource submit id', () => {
+  assert.equal(image.canvasSubmitId({ values: [{
+    node: { resources: [{ resourceId: 'image-1', submitId: 'resource-submit' }] },
+    submission: { identity: { value: 'operation-submit' } },
+  }], latest: {}, output: '' }), 'operation-submit');
+});
+
 test('parses formatted async responses and nested image results', () => {
   const parsed = image.imagesFrom(`\n${JSON.stringify({
     submit_id: 'task-123',

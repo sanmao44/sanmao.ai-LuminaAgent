@@ -3,6 +3,7 @@ export type VideoProviderIdentity = {
   videoTransport?: string;
   baseUrl?: string;
   videoBaseUrl?: string;
+  jimengCliPath?: string;
 };
 
 /**
@@ -23,6 +24,12 @@ export function isJimengProvider(provider?: VideoProviderIdentity | null) {
     provider.platform === 'jimeng-cli'
     || provider.videoTransport === 'jimeng-cli'
   ));
+}
+
+/** The old `dreamina` binary still exposes the fixed multiframe2video API. */
+export function isJimengLegacyCli(provider?: VideoProviderIdentity | null) {
+  const configured = String(provider?.jimengCliPath || '').trim();
+  return Boolean(configured && /(?:^|[\\/])dreamina(?:\.exe|\.cmd)?$/i.test(configured));
 }
 
 export function isAgnesProvider(provider?: VideoProviderIdentity | null) {
