@@ -1,6 +1,5 @@
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
-import { isAudioTranscriptionModelId } from '@/lib/model-kind';
 
 function openAiCompatibleModels(state: PublicState | null, capability: RegistryModel['capabilities'][number]) {
   if (!state) return [];
@@ -16,8 +15,7 @@ function creativeTaskModels(state: PublicState | null, capability: 'music-genera
 }
 
 export function supportedSpeechModels(state: PublicState | null) {
-  return openAiCompatibleModels(state, 'speech').filter((model) =>
-    !model.capabilities.includes('transcription') && !isAudioTranscriptionModelId(model.rawId));
+  return openAiCompatibleModels(state, 'speech');
 }
 
 export function supportedTranscriptionModels(state: PublicState | null) {

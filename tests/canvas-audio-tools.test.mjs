@@ -22,13 +22,15 @@ test('canvas speech model discovery excludes incompatible and transcription-only
   const models = [
     { id: 'tts-compatible', providerId: 'compatible', rawId: 'vendor-tts', kind: 'audio', enabled: true, published: true, capabilities: ['speech'] },
     { id: 'tts-native', providerId: 'native', rawId: 'native-tts', kind: 'audio', enabled: true, published: true, capabilities: ['speech'] },
-    { id: 'asr-compatible', providerId: 'compatible', rawId: 'whisper-large', kind: 'audio', enabled: true, published: true, capabilities: ['speech', 'transcription'] },
+    { id: 'asr-compatible', providerId: 'compatible', rawId: 'whisper-large', kind: 'audio', enabled: true, published: true, capabilities: ['transcription'] },
+    { id: 'dual-compatible', providerId: 'compatible', rawId: 'audio-dual', kind: 'audio', enabled: true, published: true, capabilities: ['speech', 'transcription'] },
   ];
   const providers = [
     { id: 'compatible', type: 'openai-compatible', modelLibraryEnabled: true },
     { id: 'native', type: 'google-gemini', modelLibraryEnabled: true },
   ];
-  assert.deepEqual(tools.canvasAudioSpeechModels(models, providers).map((model) => model.id), ['tts-compatible']);
+  assert.deepEqual(tools.canvasAudioSpeechModels(models, providers).map((model) => model.id), ['tts-compatible', 'dual-compatible']);
+  assert.deepEqual(tools.canvasAudioTranscriptionModels(models, providers).map((model) => model.id), ['asr-compatible', 'dual-compatible']);
 });
 
 test('canvas speech history migrates legacy single records before appending', () => {

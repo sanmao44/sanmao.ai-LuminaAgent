@@ -4,8 +4,8 @@ import { createTsRequire } from './ts-require.mjs';
 
 const categories = createTsRequire(process.cwd())('./lib/model-library-categories');
 
-function model(kind, capabilities = []) {
-  return { kind, capabilities };
+function model(kind, capabilities = [], source) {
+  return { kind, capabilities, ...(source ? { source } : {}) };
 }
 
 test('separates speech, music generation, and transcription in the model library', () => {
@@ -36,4 +36,7 @@ test('preserves legacy audio records as speech and reports multi-task audio expl
   assert.equal(categories.modelMatchesLibraryCategory(model('audio'), 'speech'), true);
   assert.equal(categories.modelMatchesLibraryCategory(model('audio'), 'transcription'), false);
   assert.equal(categories.modelLibraryCategoryLabel(model('audio', ['speech', 'music-generate'])), '多用途音频 · 配音 / 音乐生成');
+  const unclassified = model('audio', [], 'discovered');
+  assert.equal(categories.modelMatchesLibraryCategory(unclassified, 'speech'), false);
+  assert.equal(categories.modelLibraryCategoryLabel(unclassified), '音频用途待确认');
 });

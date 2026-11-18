@@ -48,6 +48,15 @@ test('all five Cangyuan speech models are inferred into the speech picker while 
   assert.deepEqual(supportedTranscriptionModels(state).map((model) => model.rawId), ['mu1-muse-asr']);
 });
 
+test('model inference preserves every explicitly declared audio task capability', () => {
+  const inferred = inferModel('vendor/audio-model', 'custom', undefined, {
+    capabilities: ['speech', 'transcription', 'music-generate'],
+  });
+
+  assert.equal(inferred.kind, 'audio');
+  assert.deepEqual(inferred.capabilities, ['speech', 'transcription', 'music-generate']);
+});
+
 test('music and 3D pickers require the declared creative task protocol', () => {
   const state = {
     providers: [
@@ -57,10 +66,11 @@ test('music and 3D pickers require the declared creative task protocol', () => {
       { id: 'native-only', type: 'google-gemini', platform: 'google-gemini', creativeTaskProtocol: 'cangyuan-creative-v1' },
     ],
     models: [
-      { id: 'cangyuan-asr', providerId: 'cangyuan', rawId: 'mu1-muse-asr', enabled: true, published: true, capabilities: ['speech', 'transcription'] },
+      { id: 'cangyuan-asr', providerId: 'cangyuan', rawId: 'mu1-muse-asr', enabled: true, published: true, capabilities: ['transcription'] },
       { id: 'cangyuan-tts', providerId: 'cangyuan', rawId: 'mu1-muse-tts', enabled: true, published: true, capabilities: ['speech'] },
       { id: 'other-asr', providerId: 'custom-compatible', rawId: 'vendor-asr', enabled: true, published: true, capabilities: ['transcription'] },
       { id: 'other-tts', providerId: 'custom-compatible', rawId: 'vendor-tts', enabled: true, published: true, capabilities: ['speech'] },
+      { id: 'other-dual-audio', providerId: 'custom-compatible', rawId: 'vendor-audio', enabled: true, published: true, capabilities: ['speech', 'transcription'] },
       { id: 'undeclared-music', providerId: 'custom-no-protocol', rawId: 'suno-v6', enabled: true, published: true, capabilities: ['music-generate'] },
       { id: 'undeclared-3d', providerId: 'custom-no-protocol', rawId: 'tripo3d-p2', enabled: true, published: true, capabilities: ['3d-generate'] },
       { id: 'other-music', providerId: 'custom-compatible', rawId: 'suno-v6', enabled: true, published: true, capabilities: ['music-generate'] },
@@ -70,9 +80,9 @@ test('music and 3D pickers require the declared creative task protocol', () => {
   };
 
   assert.deepEqual(supportedSpeechModels(state).map((model) => model.id), [
-    'cangyuan-tts', 'other-tts',
+    'cangyuan-tts', 'other-tts', 'other-dual-audio',
   ]);
-  assert.deepEqual(supportedTranscriptionModels(state).map((model) => model.id), ['cangyuan-asr', 'other-asr']);
+  assert.deepEqual(supportedTranscriptionModels(state).map((model) => model.id), ['cangyuan-asr', 'other-asr', 'other-dual-audio']);
   assert.deepEqual(supportedMusicModels(state).map((model) => model.id), ['other-music']);
   assert.deepEqual(supportedThreeDModels(state).map((model) => model.id), ['other-3d']);
 });

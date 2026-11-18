@@ -16,7 +16,7 @@ const audioTaskLabels: Record<(typeof audioTaskCapabilities)[number], string> = 
   transcription: '语音转写模型',
 };
 
-export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 'capabilities'>, category: ModelLibraryCategory) {
+export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 'capabilities' | 'source'>, category: ModelLibraryCategory) {
   if (category === 'all') return true;
   const capability = categoryCapabilities[category];
   if (capability) {
@@ -25,17 +25,18 @@ export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 
     // their historic speech behavior without absorbing known music or ASR.
     return category === 'speech'
       && model.kind === 'audio'
+      && model.source !== 'discovered'
       && !audioTaskCapabilities.some((item) => model.capabilities.includes(item));
   }
   return model.kind === category;
 }
 
-export function modelLibraryCategoryLabel(model: Pick<RegistryModel, 'kind' | 'capabilities'>) {
+export function modelLibraryCategoryLabel(model: Pick<RegistryModel, 'kind' | 'capabilities' | 'source'>) {
   if (model.kind !== 'audio') return model.kind === 'unknown' ? '待分类' : `${modelKindLabel(model.kind)}模型`;
   const taskLabels = audioTaskCapabilities
     .filter((capability) => model.capabilities.includes(capability))
     .map((capability) => audioTaskLabels[capability].replace('模型', ''));
-  if (!taskLabels.length) return audioTaskLabels.speech;
+  if (!taskLabels.length) return model.source === 'discovered' ? '音频用途待确认' : audioTaskLabels.speech;
   if (taskLabels.length > 1) return `多用途音频 · ${taskLabels.join(' / ')}`;
   return audioTaskLabels[audioTaskCapabilities.find((capability) => model.capabilities.includes(capability))!];
 }

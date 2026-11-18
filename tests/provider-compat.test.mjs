@@ -156,6 +156,7 @@ test('detects distinct audio task capabilities from explicit provider metadata',
     { id: 'custom-voice', capabilities: ['text-to-speech'] },
     { id: 'custom-recognition', endpoints: ['/v1/audio/transcriptions'] },
     { id: 'custom-music', operations: ['music_generation'] },
+    { id: 'custom-dual-audio', capabilities: ['text-to-speech'], endpoints: ['/v1/audio/transcriptions'] },
     { id: 'generic-audio', modalities: ['audio'] },
   ] });
 
@@ -165,7 +166,9 @@ test('detects distinct audio task capabilities from explicit provider metadata',
   assert.equal(models[1].capabilities.includes('speech'), false);
   assert.equal(models[2].capabilities.includes('music-generate'), true);
   assert.equal(models[2].capabilities.includes('speech'), false);
-  assert.deepEqual(models[3].capabilities, []);
+  assert.equal(models[3].capabilities.includes('speech'), true);
+  assert.equal(models[3].capabilities.includes('transcription'), true);
+  assert.deepEqual(models[4].capabilities, []);
 });
 
 test('detects native task transport from endpoint metadata', () => {

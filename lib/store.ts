@@ -205,16 +205,17 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   // would otherwise mark a discovered `jev-1.14` record as unknown and the
   // runtime resolver could never select it after a model refresh.
   if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
-  if (isMusicGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('music-generate')) {
-    return { kind: 'audio', capabilities: ['music-generate'] };
-  }
-  if (isAudioTranscriptionModelId(rawId) || hints.capabilities?.includes('transcription')) {
-    return { kind: 'audio', capabilities: ['transcription'] };
-  }
+  const audioModelText = `${rawId} ${hints.displayName || ''}`;
+  const audioCapabilities = new Set<ModelCapability>(
+    (hints.capabilities || []).filter((capability) => ['speech', 'transcription', 'music-generate'].includes(capability)),
+  );
+  if (isMusicGenerationModelId(audioModelText)) audioCapabilities.add('music-generate');
+  if (isAudioTranscriptionModelId(audioModelText)) audioCapabilities.add('transcription');
+  if (isSpeechModelId(audioModelText)) audioCapabilities.add('speech');
+  if (audioCapabilities.size) return { kind: 'audio', capabilities: [...audioCapabilities] };
   if (isThreeDGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('3d-generate')) {
     return { kind: '3d', capabilities: ['3d-generate'] };
   }
-  if (isSpeechModelId(id) || inferredKind === 'audio') return { kind: 'audio', capabilities: ['speech'] };
   // 向量 / OCR / ASR 这一类即使命中 chatish（qwen3-embedding）也不能当对话模型。
   if (isNonConversationalModelId(id)) return { kind: 'unknown', capabilities: [] };
   if (platform === 'agnes' || id.startsWith('agnes-')) {

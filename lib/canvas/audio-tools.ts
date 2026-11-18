@@ -3,13 +3,11 @@ import { getCangyuanMusicModelProfile, validateCangyuanMusicInput, type Cangyuan
 import type { AudioTranscriptionResult } from '../../packages/contracts/audio-transcription';
 import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasAudioTranscriptionMeta, CanvasDocument, CanvasGenerationStatus } from './types';
 import { filterModelsByActiveProviders } from '../provider-availability';
-import { isAudioTranscriptionModelId } from '../model-kind';
 import type { ProviderConnection, RegistryModel } from '../types';
 
 export function canvasAudioSpeechModels(models: RegistryModel[], providers: ProviderConnection[]) {
   const compatibleProviders = providers.filter((provider) => provider.type === 'openai-compatible');
-  return filterModelsByActiveProviders(models, compatibleProviders, { capability: 'speech' })
-    .filter((model) => !model.capabilities.includes('transcription') && !isAudioTranscriptionModelId(model.rawId));
+  return filterModelsByActiveProviders(models, compatibleProviders, { capability: 'speech' });
 }
 
 export function canvasAudioSpeechHistory(
