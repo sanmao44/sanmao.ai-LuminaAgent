@@ -4,18 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
-let requestedCapability;
 const loader = createTsRequire(process.cwd(), {
   '@/components/ModelPicker': { __esModule: true, default: () => null },
   '@/components/SelectMenu': { __esModule: true, default: () => null },
-  '@/components/cangyuan/CangyuanSuggestionInput': { __esModule: true, default: () => null },
-  '@/lib/generation-log-client': { listGenerationLogs: async () => [] },
-  '@/lib/provider-availability': {
-    filterModelsByActiveProviders: (models, _providers, options) => {
-      requestedCapability = options.capability;
-      return models.filter((model) => model.capabilities.includes(options.capability));
-    },
+  '@/components/audio/model-options': {
+    supportedTranscriptionModels: (state) => state.models.filter((model) => model.capabilities.includes('transcription')),
   },
+  '@/lib/generation-log-client': { listGenerationLogs: async () => [] },
   './AudioTranscription.module.css': { __esModule: true, default: { result: 'result', transcript: 'transcript', details: 'details', segments: 'segments', fileInput: 'fileInput', upload: 'upload', advanced: 'advanced', temperature: 'temperature' } },
 });
 const module = loader('./components/AudioTranscription');
@@ -28,7 +23,6 @@ test('transcription model discovery requires the dedicated capability', () => {
     ],
     providers: [],
   });
-  assert.equal(requestedCapability, 'transcription');
   assert.deepEqual(models.map((model) => model.id), ['asr']);
 });
 

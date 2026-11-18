@@ -14,7 +14,7 @@ import CangyuanThreeDScenarioPicker from '@/components/cangyuan/CangyuanThreeDSc
 import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from '@/components/cangyuan/CangyuanTripoQualityOptions';
 import CangyuanReferenceImagePreview from '@/components/cangyuan/CangyuanReferenceImagePreview';
 import { speechVoiceOptions } from '@/components/audio/voice-options';
-import { supportedMusicModels, supportedSpeechModels, supportedThreeDModels } from '@/components/audio/model-options';
+import { supportedSpeechModels } from '@/components/audio/model-options';
 import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
 import MediaTaskAudioOutput, { type MediaTaskAudioOutputValue } from '@/components/MediaTaskAudioOutput';
 import { mediaTaskModeLabel, mediaTaskProviderStatusLabel } from '@/components/media-task-presentation';
@@ -35,6 +35,8 @@ import { getSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { listGenerationLogs } from '@/lib/generation-log-client';
 import type { GenerationLog } from '@/lib/generation-log';
+import { isCangyuanProvider } from '@/lib/cangyuan-provider';
+import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
@@ -59,6 +61,20 @@ function taskStatusLabel(task: CangyuanMediaTask) {
 
 function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
+}
+
+function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | '3d-generate') {
+  if (!state) return [];
+  const providers = state.providers.filter(isCangyuanProvider);
+  return filterModelsByActiveProviders(state.models, providers, { capability });
+}
+
+function supportedMusicModels(state: PublicState | null) {
+  return cangyuanTaskModels(state, 'music-generate').filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
+}
+
+function threeDModels(state: PublicState | null) {
+  return cangyuanTaskModels(state, '3d-generate').filter((model) => getCangyuan3DModelProfile(model.rawId) !== null);
 }
 
 function isLegacyTripoModel(model: RegistryModel | undefined) {
@@ -297,7 +313,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
   const speechModels = useMemo(() => supportedSpeechModels(publicState), [publicState]);
   const musicModels = useMemo(() => supportedMusicModels(publicState), [publicState]);
-  const models3d = useMemo(() => supportedThreeDModels(publicState), [publicState]);
+  const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
   const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
   const musicModel = useMemo(() => musicModels.find((model) => model.id === musicModelId) || musicModels[0], [musicModelId, musicModels]);

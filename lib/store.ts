@@ -1,7 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId } from './types';
+import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, ProviderPlatform, ProviderStatus, ProviderTextProtocol, ProviderType, PublicState, RegistryModel, WebSearchApiProvider, NativeSearchDetection, NativeSearchOverride, NativeSearchProtocol, ModelBilling, UpscaleConnection, UpscaleConnectionStatus, UpscaleProviderId, ProviderCreativeTaskProtocol } from './types';
+import { isProviderCreativeTaskProtocol } from '../packages/contracts/provider-creative-task';
 import { modelSupportsCapabilities, selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
@@ -139,9 +140,16 @@ async function readState(): Promise<StoreData> {
       settings.intentClassifierModelId = null;
       settingsChanged = true;
     }
+    const parsedProviders = Array.isArray(parsed.providers) ? parsed.providers : [];
+    const providers = parsedProviders.map((provider) =>
+      !provider.creativeTaskProtocol && provider.platform === 'cangyuan'
+        ? { ...provider, creativeTaskProtocol: 'cangyuan-creative-v1' as const }
+        : provider,
+    );
+    const providersChanged = providers.some((provider, index) => provider.creativeTaskProtocol !== parsedProviders[index]?.creativeTaskProtocol);
     const nextState: StoreData = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
-      providers: Array.isArray(parsed.providers) ? parsed.providers : [],
+      providers,
       models,
       settings,
       upscaleConnections: Array.isArray(parsed.upscaleConnections) ? parsed.upscaleConnections.filter((item): item is StoredUpscaleConnection => Boolean(item && typeof item === 'object' && (item as StoredUpscaleConnection).provider && ['tencent-ci', 'aliyun-viapi'].includes((item as StoredUpscaleConnection).provider))) : [],
@@ -149,7 +157,7 @@ async function readState(): Promise<StoreData> {
         ? { provider: 'baidu-qianfan', encryptedApiKey: parsed.webSearch.encryptedApiKey }
         : undefined,
     };
-    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections) || models.length !== parsedModels.length || settingsChanged) {
+    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION || !Array.isArray(parsed.upscaleConnections) || models.length !== parsedModels.length || settingsChanged || providersChanged) {
       await writeStateDirect(nextState);
     }
     return nextState;
@@ -281,6 +289,7 @@ export async function getPublicState(): Promise<PublicState> {
       imageUpscaleStatusPath: p.imageUpscaleStatusPath || '',
       responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
       textProtocol: p.textProtocol || 'chat-completions',
+        creativeTaskProtocol: p.creativeTaskProtocol,
       videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
       videoBaseUrl: p.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
       videoTaskPath: p.videoTaskPath || '/v1/tasks',
@@ -436,7 +445,13 @@ export async function removeUpscaleConnection(provider: UpscaleProviderId) {
   await mutateState((state) => { state.upscaleConnections = state.upscaleConnections.filter((connection) => connection.provider !== provider); });
 }
 
-type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; textProtocol?: ProviderTextProtocol; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoQueryPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };
+type ProviderInput = { name: string; type: ProviderType; platform?: ProviderPlatform; modelLibraryEnabled?: boolean; baseUrl: string; apiKey?: string; videoApiKey?: string; modelsPath?: string; chatPath?: string; imageGenerationPath?: string; imageEditPath?: string; imageUpscalePath?: string; imageUpscaleStatusPath?: string; responsesPath?: string; textProtocol?: ProviderTextProtocol; creativeTaskProtocol?: ProviderCreativeTaskProtocol; videoTransport?: ProviderConnection['videoTransport']; videoBaseUrl?: string; videoTaskPath?: string; videoTaskStatusPath?: string; videoGenerationPath?: string; videoQueryPath?: string; videoModelsPath?: string; videoPricingPath?: string; jimengCliPath?: string; jimengCliPollSeconds?: number; authHeader?: string; authPrefix?: string };
+
+function normalizeCreativeTaskProtocol(value: unknown): ProviderCreativeTaskProtocol | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (isProviderCreativeTaskProtocol(value)) return value;
+  throw new Error('音乐与三维任务接口协议无效');
+}
 
 function normalizeEndpointPath(value: string | undefined, fallback: string) {
   const clean = String(value || fallback).trim();
@@ -468,6 +483,7 @@ export async function addProvider(input: ProviderInput & { apiKey: string }) {
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
       textProtocol: input.textProtocol === 'responses' || input.textProtocol === 'messages' ? input.textProtocol : 'chat-completions',
+      creativeTaskProtocol: normalizeCreativeTaskProtocol(input.creativeTaskProtocol),
       videoTransport: normalizeVideoTransport(input.videoTransport),
       videoBaseUrl: String(input.videoBaseUrl || '').replace(/\/+$/, ''),
       videoTaskPath: normalizeEndpointPath(input.videoTaskPath, '/v1/tasks'),
@@ -511,6 +527,9 @@ export async function updateProvider(id: string, input: ProviderInput) {
       imageUpscaleStatusPath: normalizeOptionalEndpointPath(input.imageUpscaleStatusPath),
       responsesPath: normalizeEndpointPath(input.responsesPath, '/responses'),
       textProtocol: input.textProtocol === 'responses' || input.textProtocol === 'messages' ? input.textProtocol : (current.textProtocol || 'chat-completions'),
+      creativeTaskProtocol: Object.prototype.hasOwnProperty.call(input, 'creativeTaskProtocol')
+        ? normalizeCreativeTaskProtocol(input.creativeTaskProtocol)
+        : current.creativeTaskProtocol,
       videoTransport: normalizeVideoTransport(input.videoTransport ?? current.videoTransport),
       videoBaseUrl: String(input.videoBaseUrl || current.videoBaseUrl || '').replace(/\/+$/, ''),
       videoTaskPath: normalizeEndpointPath(input.videoTaskPath, current.videoTaskPath || '/v1/tasks'),
@@ -575,6 +594,7 @@ export async function mergeProviderTransferConfiguration(bundle: Pick<ProviderTr
         imageUpscaleStatusPath: provider.imageUpscaleStatusPath,
         responsesPath: provider.responsesPath,
         textProtocol: provider.textProtocol as ProviderTextProtocol,
+        creativeTaskProtocol: normalizeCreativeTaskProtocol(provider.creativeTaskProtocol ?? (provider.platform === 'cangyuan' ? 'cangyuan-creative-v1' : undefined)),
         videoTransport: provider.videoTransport as ProviderConnection['videoTransport'],
         videoBaseUrl: provider.videoBaseUrl.replace(/\/+$/, ''),
         videoTaskPath: provider.videoTaskPath,

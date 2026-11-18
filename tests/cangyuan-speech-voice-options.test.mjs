@@ -3,11 +3,11 @@ import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const contracts = createTsRequire(process.cwd())('./packages/contracts/audio-synthesis');
-const voiceOptions = createTsRequire(process.cwd())('./components/cangyuan/speech-voice-options');
+const voiceOptions = createTsRequire(process.cwd())('./components/audio/voice-options');
 
 test('Gemini TTS displays Chinese voice names while preserving documented request IDs', () => {
-  const profile = contracts.getCangyuanSpeechModelProfile('gemini-tts');
-  const options = voiceOptions.cangyuanSpeechVoiceOptions(profile);
+  const profile = contracts.getSpeechModelProfile('gemini-tts');
+  const options = voiceOptions.speechVoiceOptions(profile);
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), ['五车二', '大熊', '织女星', '日蚀', '天琴', '轨道', '北斗', '新星', '飞马']);
@@ -15,8 +15,8 @@ test('Gemini TTS displays Chinese voice names while preserving documented reques
 });
 
 test('Muse TTS labels explain documented voice groups without changing request IDs', () => {
-  const profile = contracts.getCangyuanSpeechModelProfile('mu1-muse-tts');
-  const options = voiceOptions.cangyuanSpeechVoiceOptions(profile);
+  const profile = contracts.getSpeechModelProfile('mu1-muse-tts');
+  const options = voiceOptions.speechVoiceOptions(profile);
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [

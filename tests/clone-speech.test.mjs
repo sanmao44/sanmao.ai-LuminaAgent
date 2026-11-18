@@ -25,11 +25,11 @@ const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WA
 const mp3 = Buffer.concat([Buffer.from([0x49, 0x44, 0x33]), Buffer.alloc(32, 1)]);
 
 function runtime(baseUrl = 'https://ai.gitee.com/v1') {
-  return { model: { rawId: 'GLM-TTS' }, provider: { baseUrl } };
+  return { model: { rawId: 'GLM-TTS' }, provider: { type: 'openai-compatible', baseUrl } };
 }
 
 function cangyuanRuntime(rawId = 'gemini-tts') {
-  return { model: { rawId }, provider: { platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1' } };
+  return { model: { rawId }, provider: { type: 'openai-compatible', platform: 'custom', baseUrl: 'https://api.example.test/v1' } };
 }
 
 function stubFetch(handler) {
@@ -92,28 +92,28 @@ test('留空音色时不发送 voice，避免 Gitee 这类没有该参数的服�
   } finally { stub.restore(); }
 });
 
-test('沧元 Gemini TTS 按型号发送可选音色、格式和速度', async () => {
+test('documented model settings work through another compatible provider', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {
     await speech.synthesizeSpeech(cangyuanRuntime('gemini-tts'), {
-      text: '沧元合成测试', voice: 'Ursa', format: 'flac', speed: 1.25,
+      text: '跨服务商合成测试', voice: 'Ursa', format: 'flac', speed: 1.25,
     });
     assert.equal(stub.calls.length, 1);
     assert.deepEqual(stub.calls[0].body, {
-      model: 'gemini-tts', input: '沧元合成测试', voice: 'Ursa', response_format: 'flac', speed: 1.25,
+      model: 'gemini-tts', input: '跨服务商合成测试', voice: 'Ursa', response_format: 'flac', speed: 1.25,
     });
-    assert.equal(stub.calls[0].url, 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+    assert.equal(stub.calls[0].url, 'https://api.example.test/v1/audio/speech');
   } finally { stub.restore(); }
 });
 
-test('沧元 Muse TTS 发送型号支持的字段并保留文档默认格式行为', async () => {
+test('model-specific speech fields are forwarded only when documented', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {
     await speech.synthesizeSpeech(cangyuanRuntime('mu1-muse-tts'), {
-      text: '沧元 Muse 合成', voice: 'fable', format: 'opus',
+      text: 'Muse 合成', voice: 'fable', format: 'opus',
     });
     assert.deepEqual(stub.calls[0].body, {
-      model: 'mu1-muse-tts', input: '沧元 Muse 合成', voice: 'fable', response_format: 'opus',
+      model: 'mu1-muse-tts', input: 'Muse 合成', voice: 'fable', response_format: 'opus',
     });
     await speech.synthesizeSpeech(cangyuanRuntime('mu1-muse-tts'), { text: '使用默认音色和格式' });
     assert.deepEqual(stub.calls[1].body, { model: 'mu1-muse-tts', input: '使用默认音色和格式' });
@@ -140,10 +140,11 @@ test('沧元 TTS accepts recommended-as-guidance voice values but rejects undocu
     await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('mu1-muse-tts'), {
       text: '不支持格式', format: 'aac',
     }), /不支持 aac 格式/);
-    await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('undocumented-tts'), {
-      text: '型号未核实',
-    }), /模型尚未接入/);
-    assert.equal(stub.calls.length, 1);
+    await assert.rejects(() => speech.synthesizeSpeech({
+      ...cangyuanRuntime('undocumented-tts'),
+      provider: { ...cangyuanRuntime('undocumented-tts').provider, type: 'google-gemini' },
+    }, { text: '原生协议不兼容' }), /暂不支持兼容的语音生成接口/);
+    assert.equal(stub.calls.length, 3);
   } finally { stub.restore(); }
 });
 
