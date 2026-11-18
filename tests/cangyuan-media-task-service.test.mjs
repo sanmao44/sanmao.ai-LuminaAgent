@@ -215,7 +215,7 @@ test('music service rejects out-of-range and model-incompatible options before p
   } });
   await assert.rejects(
     su2.service.create({ kind: 'music', modelId: 'su2', idempotencyKey: 'too-long', input: { prompt: 'x'.repeat(3001) } }),
-    /1–3000/,
+    /最多 3000 个字符/,
   );
   await assert.rejects(
     su2.service.create({ kind: 'music', modelId: 'su2', idempotencyKey: 'unsupported-option', input: { prompt: 'song', styleWeight: 0.5 } }),

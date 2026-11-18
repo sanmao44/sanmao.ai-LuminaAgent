@@ -148,6 +148,7 @@ export function mediaViewerReferencesForCanvasNode(
   nodeId: string,
 ): MediaViewerReference[] {
   return comparisonReferences(document, nodeId)
+    .filter(isCanvasReferenceableNode)
     .map((reference) => ({
       id: reference.id,
       kind: reference.data.kind || "image",

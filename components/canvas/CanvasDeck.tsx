@@ -17,7 +17,7 @@ import type { SmartVariantSourceUnit } from "@/lib/canvas/model";
 import type { CreationSettings } from "@/lib/creation/settings";
 import type { VideoModelInputContext } from "@/lib/video-model-limits";
 
-type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
+type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio" | "3d">;
 export type CanvasDeckMode = CanvasGenerationMode | "text";
 
 function videoModelInputForReferences(

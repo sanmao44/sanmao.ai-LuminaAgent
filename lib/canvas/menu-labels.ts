@@ -10,5 +10,5 @@ export function nodeLabel(node: CanvasNode) {
   if (node.type === "prompt") return "Agent 节点";
   if (node.type === "generator")
     return node.data.kind === "video" ? "视频变体生成器" : "图片变体生成器";
-  return node.data.kind === "video" ? "视频卡片" : node.data.kind === "audio" ? "音频节点" : "图片卡片";
+  return node.data.kind === "video" ? "视频卡片" : node.data.kind === "audio" ? "音频节点" : node.data.kind === "3d" ? "三维节点" : "图片卡片";
 }

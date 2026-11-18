@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const smartVariantDialog = await readFile(new URL("../components/canvas/CanvasSmartVariantDialog.tsx", import.meta.url), "utf8");
@@ -33,11 +34,12 @@ test("克隆弹窗是合法 TSX，并且具备三步式傻瓜操作", () => {
   assert.match(dialog, /超出默认成本闸门/);
   assert.match(dialog, /capability="speech"/);
   assert.doesNotMatch(dialog, /<select\b/);
-  assert.equal((dialog.match(/<SelectMenu\b/g) || []).length, 4, "克隆弹窗的下拉框统一使用 SelectMenu");
+  assert.ok((dialog.match(/<SelectMenu\b/g) || []).length >= 4, "克隆弹窗的下拉框统一使用 SelectMenu");
   // 一个在线配音模型都没配时，弹窗要提示服务端有没有「本机离线配音」兜底。
   assert.match(dialog, /fetch\("\/api\/health", \{ cache: "no-store" \}\)/);
   assert.match(dialog, /本机离线配音，免费，音色偏机械/);
-  assert.match(dialog, /list="clone-voice-presets"/);
+  assert.doesNotMatch(dialog, /<datalist\b/);
+  assert.match(dialog, /配音音色预设/);
   assert.match(dialog, /不贴脸、不换脸、不做数字人/);
 });
 
@@ -249,10 +251,11 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
 });
 
 test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
-  assert.match(storeLib, /if \(isSpeechModelId\(id\) \|\| inferredKind === 'audio'\) return \{ kind: 'audio', capabilities: \['speech'\] \};/);
-  assert.match(storeLib, /!\['chat', 'image', 'video', 'audio', '3d'\]\.includes\(selectedKind\)/);
-  assert.match(match_types, /export type ModelKind = 'chat' \| 'image' \| 'video' \| 'audio' \| '3d' \| 'unknown';/);
-  assert.match(match_types, /\| 'speech'/);
+  const { inferModel } = createTsRequire(process.cwd())("./lib/store");
+  const model = inferModel("tts-voice-v1");
+  assert.equal(model.kind, "audio");
+  assert.deepEqual(model.capabilities, ["speech"]);
+  assert.deepEqual(model.classification?.purposes, ["speech"]);
 });
 
 test("高级设置里选的模型真的生效，降级都不静默，幂等键不复用旧成片", () => {

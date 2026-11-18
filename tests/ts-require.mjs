@@ -16,7 +16,10 @@ function normalizePath(target) {
 export function createTsRequire(baseDir, overrides = {}) {
   // Windows 上来自 fileURLToPath 之外的路径可能带前导斜杠，先归一化再解析依赖。
   const base = path.resolve(normalizePath(baseDir));
-  const projectRoot = path.basename(base).toLowerCase() === 'lib' ? path.dirname(base) : base;
+  let projectRoot = base;
+  while (!existsSync(path.join(projectRoot, 'packages')) && path.dirname(projectRoot) !== projectRoot) {
+    projectRoot = path.dirname(projectRoot);
+  }
   const nodeRequire = createRequire(path.join(base, 'noop.cjs'));
   const cache = new Map();
 

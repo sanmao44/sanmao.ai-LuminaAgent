@@ -30,6 +30,7 @@ async function loadCanvasPatch() {
   const cangyuanImageRuntime = compile(cangyuanImage.source, cangyuanImage.url.pathname).replace(/\bexport\s+/g, '');
   const cangyuanProviderRuntime = compile(cangyuanProvider.source, cangyuanProvider.url.pathname).replace(/\bexport\s+/g, '');
   const settingsCompiled = compile(settings.source, settings.url.pathname)
+    .replace(/^\s*import\s+\{\s*parseVideoModelParameterValues[\s\S]*?\}\s+from\s+["']@\/packages\/contracts\/video-generation["'];?\s*$/m, 'const parseVideoModelParameterValues = () => ({});')
     .replace(/^\s*import\s+\{\s*getLastModelCall\s*\}\s+from\s+["']\.\.\/model-preferences["'];?\s*$/m, 'const getLastModelCall = () => null;')
     .replace(/^\s*import\s+\{\s*selectAutomaticModel\s*\}\s+from\s+["']\.\.\/model-selection["'];?\s*$/m, 'const selectAutomaticModel = (models, defaultProviderId, defaultModelId) => models.find((model) => model.id === defaultModelId) || models[0];')
     .replace(/^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m, '')

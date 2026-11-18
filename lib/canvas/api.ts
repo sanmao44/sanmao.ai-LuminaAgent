@@ -4,6 +4,7 @@ import type { AgentDeliverable } from "../agent-intent";
 import type { CanvasAgentTarget } from "./run-context";
 import type { CreativeReference } from "../creative-references";
 import { MAX_IMAGE_REFERENCES, parseImageModelParameters, type CanvasImageIntentPreview, type CanvasImageIntentPreviewRequest, type CreativeProjectBrief, type CreativeRoute, type ImageModelParameters, type ImageOutputFormat, type ImageRequestMode, type ImageRequestOperation } from "@/packages/contracts/creative";
+import { parseVideoModelParameterValues, type VideoModelParameterValues } from "@/packages/contracts/video-generation";
 import type { WorkspaceContext } from "../workspace-context";
 import type { CanvasDocument, CanvasNode } from "./types";
 import { canvasInlineImageUrls, replaceCanvasMediaUrls } from './inline-images';
@@ -885,21 +886,30 @@ export async function generateCanvasVideo(input: {
   agnesHeight?: number;
   agnesNumFrames?: number;
   agnesFrameRate?: number;
+  modelParameters?: VideoModelParameterValues;
   /** Reference audio files supplied by the canvas connection resolver. */
   audios?: Array<{ url: string; name?: string }>;
 }) {
   const usesCangyuan = input.videoTransport === "cangyuan-videos";
+  const modelParameters = usesCangyuan && input.modelParameters
+    ? parseVideoModelParameterValues(input.modelParameters)
+    : undefined;
+  const cangyuanParameters = usesCangyuan
+    ? {
+        ...(modelParameters || {}),
+        ...(input.operation && input.operation !== "generate" ? { mode: input.operation } : {}),
+        ...(input.duration !== undefined ? { duration: input.duration } : {}),
+        ...(input.aspect ? { aspect_ratio: input.aspect } : {}),
+        ...(input.resolution ? { resolution: input.resolution } : {}),
+      }
+    : undefined;
   if (usesCangyuan) {
     const hasReferences = [input.references, input.referenceVideos, input.audios].some(
       (values) => values?.some((item) => Boolean(item.url.trim())),
     );
     const hasFrameInput = Boolean(input.firstFrame?.trim() || input.lastFrame?.trim() || input.referenceVideo?.trim());
     const hasCustomSettings =
-      (input.operation && input.operation !== "generate") ||
       (input.inputMode && input.inputMode !== "text") ||
-      (input.duration !== undefined && Number(input.duration) !== 5) ||
-      (input.aspect && !["16:9", "auto", "自动"].includes(input.aspect.trim().toLowerCase())) ||
-      (input.resolution && !["720p", "auto", "自动"].includes(input.resolution.trim().toLowerCase())) ||
       Boolean(input.audio) ||
       (input.agnesWidth !== undefined && input.agnesWidth !== 1152) ||
       (input.agnesHeight !== undefined && input.agnesHeight !== 768) ||
@@ -1015,6 +1025,7 @@ export async function generateCanvasVideo(input: {
         ...(audioData.length
           ? { audios: audioData.map((item) => item.url), audio: audioData[0].url }
           : {}),
+        ...(cangyuanParameters && Object.keys(cangyuanParameters).length ? { modelParameters: cangyuanParameters } : {}),
       },
     }),
   });

@@ -37,7 +37,7 @@ type ModelPickerProps = {
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
   'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音', transcription: '转写',
-  'music-generate': '音乐', '3d-generate': '三维',
+  'music-generate': '音乐', 'sound-effect': '音效', 'audio-conversation': '音频对话', '3d-generate': '三维',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = {
@@ -53,6 +53,8 @@ const capabilityClasses: Partial<Record<ModelCapability, string>> = {
   'video-audio': 'video-audio',
   speech: 'speech',
   'music-generate': 'music',
+  'sound-effect': 'sound-effect',
+  'audio-conversation': 'audio-conversation',
   '3d-generate': 'three-dimensional',
 };
 
@@ -305,6 +307,7 @@ export default function ModelPicker({
     value,
     automaticModelLabel: autoModel?.displayName,
   });
+  const triggerAccessibleLabel = triggerLabelMode === 'model' ? triggerValueLabel : triggerLabel;
   const quickShowsAll = availableModels.length <= 8;
   const quickModels = quickShowsAll ? availableModels.filter((model) => model.id !== autoModel?.id) : [];
 
@@ -369,7 +372,7 @@ export default function ModelPicker({
   ) : null;
 
   return <div className={`model-picker ${className}`} ref={rootRef}>
-    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerLabel} data-tooltip={triggerLabel} disabled={disabled}>
+    <button ref={triggerRef} type="button" className={`model-picker-trigger ${quickOpen || dialogOpen ? 'open' : ''}`} onClick={toggleQuick} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-label={triggerAccessibleLabel} data-tooltip={triggerAccessibleLabel} disabled={disabled}>
       <span className="model-picker-trigger-copy"><b>{triggerPrefix || (value === 'auto' ? '自动' : '手动')}</b><span>{triggerValueLabel}</span></span><i aria-hidden="true"/>
     </button>
     {quickPanel}

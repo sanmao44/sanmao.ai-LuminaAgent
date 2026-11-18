@@ -6,12 +6,15 @@ import ModelPicker from '@/components/ModelPicker';
 import SelectMenu from '@/components/SelectMenu';
 import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
 import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
-import CangyuanMusicOptionsFields from '@/components/cangyuan/CangyuanMusicOptionsFields';
+import CangyuanMusicOptionsFields, { cangyuanMusicTaskKindName } from '@/components/cangyuan/CangyuanMusicOptionsFields';
 import AudioTranscription from '@/components/AudioTranscription';
 import CangyuanThreeDScenarioPicker from '@/components/cangyuan/CangyuanThreeDScenarioPicker';
 import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from '@/components/cangyuan/CangyuanTripoQualityOptions';
 import CangyuanReferenceImagePreview from '@/components/cangyuan/CangyuanReferenceImagePreview';
 import { speechVoiceOptions } from '@/components/audio/voice-options';
+import VoiceSampleButton from '@/components/audio/VoiceSampleButton';
+import SpeechAdvancedOptions, { speechDialogueDraftError, type SpeechAdvancedDraft } from '@/components/audio/SpeechAdvancedOptions';
+import { speechOutputFormatLabel } from '@/components/audio/speech-format-options';
 import { supportedSpeechModels } from '@/components/audio/model-options';
 import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
 import MediaTaskAudioOutput, { type MediaTaskAudioOutputValue } from '@/components/MediaTaskAudioOutput';
@@ -29,7 +32,7 @@ import type {
 } from '@/packages/contracts/cangyuan-media';
 import { CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL, getCangyuan3DModelProfile, getCangyuanMusicModelProfile, reconcileCangyuan3DMode } from '@/packages/contracts/cangyuan-media';
 import type { SpeechOutputFormat } from '@/packages/contracts/audio-synthesis';
-import { getSpeechModelProfile } from '@/packages/contracts/audio-synthesis';
+import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, SPEECH_PLATFORM_TEXT_LIMIT } from '@/packages/contracts/audio-synthesis';
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { listGenerationLogs } from '@/lib/generation-log-client';
 import type { GenerationLog } from '@/lib/generation-log';
@@ -38,7 +41,7 @@ import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
-type StudioMode = 'speech' | 'transcription' | 'music' | '3d';
+type StudioMode = 'speech' | 'transcription' | 'music' | 'sound-effect' | '3d';
 type StudioNotice = { kind: 'error' | 'info' | 'success'; text: string } | null;
 type SpeechResult = { url: string; name: string; modelName: string; contentType: string; extension: string };
 
@@ -61,14 +64,29 @@ function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
 }
 
-function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | '3d-generate') {
+function isSoundEffectTask(task: CangyuanMediaTask) {
+  const profile = getCangyuanMusicModelProfile(task.providerModel);
+  return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+}
+
+function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | 'sound-effect' | '3d-generate') {
   if (!state) return [];
   const providers = state.providers.filter(isCangyuanProvider);
   return filterModelsByActiveProviders(state.models, providers, { capability });
 }
 
 function supportedMusicModels(state: PublicState | null) {
-  return cangyuanTaskModels(state, 'music-generate').filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
+  return cangyuanTaskModels(state, 'music-generate').filter((model) => {
+    const profile = getCangyuanMusicModelProfile(model.rawId);
+    return profile !== null && profile.family !== 'suno-sfx' && profile.family !== 'elevenlabs-sfx';
+  });
+}
+
+function supportedSoundEffectModels(state: PublicState | null) {
+  return cangyuanTaskModels(state, 'sound-effect').filter((model) => {
+    const profile = getCangyuanMusicModelProfile(model.rawId);
+    return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+  });
 }
 
 function threeDModels(state: PublicState | null) {
@@ -126,12 +144,14 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const [stateError, setStateError] = useState('');
   const [speechModelId, setSpeechModelId] = useState('');
   const [musicModelId, setMusicModelId] = useState('');
+  const [soundEffectModelId, setSoundEffectModelId] = useState('');
   const [model3dId, setModel3dId] = useState('');
   const [speechText, setSpeechText] = useState('');
   const [speechVoiceChoice, setSpeechVoiceChoice] = useState('');
   const [speechCustomVoice, setSpeechCustomVoice] = useState('');
   const [speechFormat, setSpeechFormat] = useState<SpeechOutputFormat>('mp3');
   const [speechSpeed, setSpeechSpeed] = useState(1);
+  const [speechAdvanced, setSpeechAdvanced] = useState<SpeechAdvancedDraft>({});
   const [musicPrompt, setMusicPrompt] = useState('');
   const [musicOptions, setMusicOptions] = useState<CangyuanMusicOptions>({});
   const [prompt3d, setPrompt3d] = useState('');
@@ -177,16 +197,32 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
   const speechModels = useMemo(() => supportedSpeechModels(publicState), [publicState]);
   const musicModels = useMemo(() => supportedMusicModels(publicState), [publicState]);
+  const soundEffectModels = useMemo(() => supportedSoundEffectModels(publicState), [publicState]);
   const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
   const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
+  const speechFormats = speechProfile ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine) : [];
+  const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine) : undefined;
+  const selectedSpeechFormat = speechFormats.includes(speechFormat) ? speechFormat : speechFormats[0];
+  const speechTextLimit = speechProfile?.textMaxLength ?? SPEECH_PLATFORM_TEXT_LIMIT;
+  const dialogueDraftText = speechAdvanced.dialogueText ?? speechAdvanced.dialogue?.map((line) => `${line.voice} | ${line.text}`).join('\n') ?? '';
+  const dialogueDraftError = speechDialogueDraftError(dialogueDraftText);
+  const displayedSpeechSpeed = speechSpeedRange ? clampSpeechSpeed(speechSpeed, speechSpeedRange.min, speechSpeedRange.max) : speechSpeed;
   const musicModel = useMemo(() => musicModels.find((model) => model.id === musicModelId) || musicModels[0], [musicModelId, musicModels]);
   const musicProfile = useMemo(() => getCangyuanMusicModelProfile(musicModel?.rawId || ''), [musicModel]);
+  const soundEffectModel = useMemo(() => soundEffectModels.find((model) => model.id === soundEffectModelId) || soundEffectModels[0], [soundEffectModelId, soundEffectModels]);
+  const soundEffectProfile = useMemo(() => getCangyuanMusicModelProfile(soundEffectModel?.rawId || ''), [soundEffectModel]);
+  const isCreativeAudioMode = mode === 'music' || mode === 'sound-effect';
+  const creativeAudioModel = mode === 'sound-effect' ? soundEffectModel : musicModel;
+  const creativeAudioProfile = mode === 'sound-effect' ? soundEffectProfile : musicProfile;
+  const creativeAudioKindName = mode === 'sound-effect' ? '音效' : cangyuanMusicTaskKindName(creativeAudioProfile);
   const model3d = useMemo(() => models3d.find((model) => model.id === model3dId) || models3d[0], [model3dId, models3d]);
   const previewUrl = previewOutput
     ? `/api/media/model-preview/${encodeURIComponent(previewOutput.taskId)}/${previewOutput.outputIndex}`
     : '';
-  const selectedTasks = mode === 'music' ? musicTasks : mode === '3d' ? threeTasks : [];
+  const selectedTasks = mode === 'music' ? musicTasks.filter((task) => !isSoundEffectTask(task))
+    : mode === 'sound-effect' ? musicTasks.filter(isSoundEffectTask)
+      : mode === '3d' ? threeTasks : [];
   const sortedMusicTasks = useMemo(() => [...musicTasks].sort(taskSort), [musicTasks]);
   const sortedThreeTasks = useMemo(() => [...threeTasks].sort(taskSort), [threeTasks]);
 
@@ -250,15 +286,16 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     setSpeechCustomVoice('');
     setSpeechFormat('mp3');
     setSpeechSpeed(1);
+    setSpeechAdvanced({});
   }, [speechModel?.id]);
 
   useEffect(() => {
-    if (continuation && musicModel?.rawId === 'suno-extend-audio') {
+    if (mode === 'music' && continuation && creativeAudioModel?.rawId === 'suno-extend-audio') {
       setMusicOptions({ uploadUrl: continuation.uploadUrl, ...(continuation.continueAt ? { continueAt: continuation.continueAt } : {}) });
       return;
     }
     setMusicOptions({});
-  }, [musicModel?.id]);
+  }, [creativeAudioModel?.id, mode]);
 
   useEffect(() => {
     const profile = model3d ? getCangyuan3DModelProfile(model3d.rawId) : null;
@@ -332,11 +369,12 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           text,
           modelId: speechModel.id,
           source: 'workspace',
-          ...(speechProfile && speechVoiceChoice === 'custom'
+          ...(speechProfile && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom'
             ? (speechCustomVoice.trim() ? { voice: speechCustomVoice.trim() } : {})
-            : (speechProfile && speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
-          ...(speechProfile ? { format: speechFormat } : {}),
-          ...(speechProfile?.speedRange ? { speed: speechSpeed } : {}),
+            : (speechProfile && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
+          ...(speechFormats.includes(speechFormat) ? { format: speechFormat } : {}),
+          ...(speechSpeedRange ? { speed: clampSpeechSpeed(speechSpeed, speechSpeedRange.min, speechSpeedRange.max) } : {}),
+          ...getSpeechModelAdvancedOptions(speechProfile?.publicModel || '', speechAdvanced),
         }),
         cache: 'no-store',
       });
@@ -374,13 +412,13 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   }
 
   async function submitMedia(kind: CangyuanMediaKind) {
-    const selectedModel = kind === 'music' ? musicModel : model3d;
+    const selectedModel = kind === 'music' ? creativeAudioModel : model3d;
     const prompt = (kind === 'music' ? musicPrompt : prompt3d).trim();
     const profile3d = kind === '3d' && selectedModel ? getCangyuan3DModelProfile(selectedModel.rawId) : null;
-    const promptRequired = kind === 'music' ? musicProfile?.promptRequired !== false : profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
+    const promptRequired = kind === 'music' ? creativeAudioProfile?.promptRequired !== false : profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
     const requiresSingleImage = kind === '3d' && (profile3d?.family === 'trellis' || generationMode === 'image-to-3d');
     if (!selectedModel || promptRequired && !prompt || busy) return;
-    if (kind === 'music' && continuation && (selectedModel.rawId !== 'suno-extend-audio' || musicOptions.uploadUrl !== continuation.uploadUrl)) {
+    if (kind === 'music' && mode === 'music' && continuation && (selectedModel.rawId !== 'suno-extend-audio' || musicOptions.uploadUrl !== continuation.uploadUrl)) {
       setNotice({ kind: 'error', text: '请使用续写工作流和所选音频来源，或清除续写来源后继续。' });
       return;
     }
@@ -400,7 +438,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     try {
       let input: CangyuanMediaCreateInput;
       if (kind === 'music') {
-        const supportedOptions = musicProfile?.allowedOptions.reduce<CangyuanMusicOptions>((result, key) => {
+        const supportedOptions = creativeAudioProfile?.allowedOptions.reduce<CangyuanMusicOptions>((result, key) => {
           const value = (musicOptions as Record<string, unknown>)[key];
           if (value !== undefined) {
             Object.assign(result, { [key]: value });
@@ -552,9 +590,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     });
   }
 
-  const availableCount = mode === 'speech' ? speechModels.length : mode === 'music' ? musicModels.length : models3d.length;
-  const selectedModel = mode === 'speech' ? speechModel : mode === 'music' ? musicModel : model3d;
-  const currentTasks = mode === 'music' ? sortedMusicTasks : sortedThreeTasks;
+  const availableCount = mode === 'speech' ? speechModels.length : mode === 'music' ? musicModels.length : mode === 'sound-effect' ? soundEffectModels.length : models3d.length;
+  const selectedModel = mode === 'speech' ? speechModel : isCreativeAudioMode ? creativeAudioModel : model3d;
+  const currentTasks = isCreativeAudioMode ? sortedMusicTasks : sortedThreeTasks;
   const isTripo = mode === '3d' && isTripoModel(model3d);
   const isLegacyTripo = mode === '3d' && isLegacyTripoModel(model3d);
   const isTrellis = mode === '3d' && isTrellisModel(model3d);
@@ -575,6 +613,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           <button type="button" className={mode === 'speech' ? 'active' : ''} aria-pressed={mode === 'speech'} onClick={() => { setMode('speech'); setNotice(null); }}>配音</button>
           <button type="button" className={mode === 'transcription' ? 'active' : ''} aria-pressed={mode === 'transcription'} onClick={() => { setMode('transcription'); setNotice(null); }}>转写</button>
           <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐</button>
+          <button type="button" className={mode === 'sound-effect' ? 'active' : ''} aria-pressed={mode === 'sound-effect'} onClick={() => { setMode('sound-effect'); setNotice(null); }}>音效</button>
           <button type="button" className={mode === '3d' ? 'active' : ''} aria-pressed={mode === '3d'} onClick={() => { setMode('3d'); setNotice(null); }}>三维</button>
         </nav>
         <div className="cangyuan-studio-header-meta">
@@ -590,19 +629,19 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         mode === 'transcription' && publicState
           ? <AudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
           : <div className="cangyuan-studio-layout">
-          <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}生成设置`}>
+          <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : isCreativeAudioMode ? creativeAudioKindName : '三维'}生成设置`}>
             <div className="cangyuan-form-heading">
               <div>
-                <h2>{mode === 'speech' ? '文本配音' : mode === 'music' ? '音乐生成' : '三维生成'}</h2>
-                <p>{mode === 'speech' ? '提交文本并接收音频文件。' : mode === 'music' ? '输入创作提示词，任务完成后可试听、下载或续作。' : '按所选模型公开的参数生成 GLB。'}</p>
+                <h2>{mode === 'speech' ? '文本配音' : isCreativeAudioMode ? `${creativeAudioKindName}生成` : '三维生成'}</h2>
+                <p>{mode === 'speech' ? '提交文本并接收音频文件。' : isCreativeAudioMode ? mode === 'sound-effect' ? '描述声音本身，任务完成后可试听或下载。' : '输入音乐创作描述，任务完成后可试听、下载或续作。' : '按所选模型公开的参数生成 GLB。'}</p>
               </div>
               <span className="cangyuan-capability-count">{availableCount} 个模型</span>
             </div>
 
             <span className="cangyuan-field-label">生成模型</span>
             <ModelPicker
-              models={mode === 'speech' ? speechModels : mode === 'music' ? musicModels : models3d}
-              value={mode === 'speech' ? speechModel?.id || 'auto' : mode === 'music' ? musicModel?.id || 'auto' : model3d?.id || 'auto'}
+              models={mode === 'speech' ? speechModels : mode === 'music' ? musicModels : mode === 'sound-effect' ? soundEffectModels : models3d}
+              value={mode === 'speech' ? speechModel?.id || 'auto' : isCreativeAudioMode ? creativeAudioModel?.id || 'auto' : model3d?.id || 'auto'}
               onChange={(value) => {
                 if (mode === 'speech') setSpeechModelId(value === 'auto' ? speechModels[0]?.id || '' : value);
                 else if (mode === 'music') {
@@ -610,6 +649,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   setMusicModelId(nextModel?.id || '');
                   if (continuation && nextModel?.rawId !== 'suno-extend-audio') clearContinuation();
                 }
+                else if (mode === 'sound-effect') setSoundEffectModelId(value === 'auto' ? soundEffectModels[0]?.id || '' : value);
                 else {
                   const nextModelId = value === 'auto' ? models3d[0]?.id || '' : value;
                   const nextModel = models3d.find((model) => model.id === nextModelId);
@@ -623,17 +663,18 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   }
                 }
               }}
-              capability={mode === 'speech' ? 'speech' : mode === 'music' ? 'music-generate' : '3d-generate'}
+              capability={mode === 'speech' ? 'speech' : mode === 'music' ? 'music-generate' : mode === 'sound-effect' ? 'sound-effect' : '3d-generate'}
               defaultProviderId={publicState?.settings.defaultProviderId}
-              defaultModelId={mode === 'speech' ? speechModels[0]?.id : mode === 'music' ? musicModels[0]?.id : models3d[0]?.id}
+              defaultModelId={mode === 'speech' ? speechModels[0]?.id : mode === 'music' ? musicModels[0]?.id : mode === 'sound-effect' ? soundEffectModels[0]?.id : models3d[0]?.id}
               placeholder="选择模型"
+              triggerLabelMode="model"
               disabled={busy || availableCount === 0}
               className="cangyuan-model-picker"
             />
 
             {availableCount === 0 ? (
               <div className="cangyuan-empty-models">
-                <p>没有可用的{mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}模型。</p>
+                <p>没有可用的{mode === 'speech' ? '配音' : isCreativeAudioMode ? creativeAudioKindName : '三维'}模型。</p>
                 <span>请在模型库同步并启用具备对应能力的模型。</span>
                 {onOpenModels && <button type="button" onClick={onOpenModels}>打开模型库</button>}
               </div>
@@ -641,7 +682,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
               <>
                 {speechProfile && (
                   <div className="cangyuan-speech-options" aria-label="配音参数">
-                    <div className="cangyuan-speech-field">
+                    {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && <div className="cangyuan-speech-field">
                       <span>音色</span>
                       <SelectMenu
                         value={speechVoiceChoice}
@@ -650,13 +691,17 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         menuClassName="cangyuan-field-select-menu"
                         options={[
                           { value: '', label: '使用模型默认音色' },
-                          ...speechVoiceOptions(speechProfile),
+                          ...speechVoiceOptions(speechProfile).map((option) => ({
+                            ...option,
+                            action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} optionAction />,
+                          })),
                           { value: 'custom', label: '自定义音色名称' },
                         ]}
                         onChange={setSpeechVoiceChoice}
                       />
-                    </div>
-                    {speechVoiceChoice === 'custom' && (
+                      {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} />}
+                    </div>}
+                    {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom' && (
                       <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-custom-voice">
                         <span>自定义音色</span>
                         <input
@@ -669,61 +714,62 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         />
                       </label>
                     )}
-                    <div className="cangyuan-speech-field">
+                    {speechFormats.length > 0 && <div className="cangyuan-speech-field">
                       <span>输出格式</span>
                       <SelectMenu
-                        value={speechFormat}
+                        value={selectedSpeechFormat}
                         ariaLabel="配音输出格式"
                         className="cangyuan-field-select"
                         menuClassName="cangyuan-field-select-menu"
-                        options={speechProfile.responseFormats.map((format) => ({ value: format, label: format.toUpperCase() }))}
+                        options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
                         onChange={(format) => setSpeechFormat(format as SpeechOutputFormat)}
                       />
-                    </div>
-                    {speechProfile.speedRange && (
+                    </div>}
+                    {speechSpeedRange && (
                       <div className="cangyuan-speech-speed">
                         <label htmlFor="cangyuan-speech-speed-range">语速</label>
                         <input
                           id="cangyuan-speech-speed-range"
                           type="range"
-                          min={speechProfile.speedRange.min}
-                          max={speechProfile.speedRange.max}
+                          min={speechSpeedRange.min}
+                          max={speechSpeedRange.max}
                           step="0.05"
-                          value={speechSpeed}
-                          onChange={(event) => setSpeechSpeed(clampSpeechSpeed(Number(event.target.value), speechProfile.speedRange!.min, speechProfile.speedRange!.max))}
+                          value={displayedSpeechSpeed}
+                          onChange={(event) => setSpeechSpeed(clampSpeechSpeed(Number(event.target.value), speechSpeedRange.min, speechSpeedRange.max))}
                         />
                         <input
                           aria-label="语速数值"
                           type="number"
-                          min={speechProfile.speedRange.min}
-                          max={speechProfile.speedRange.max}
+                          min={speechSpeedRange.min}
+                          max={speechSpeedRange.max}
                           step="any"
-                          value={speechSpeed}
-                          onChange={(event) => setSpeechSpeed(clampSpeechSpeed(Number(event.target.value), speechProfile.speedRange!.min, speechProfile.speedRange!.max))}
+                          value={displayedSpeechSpeed}
+                          onChange={(event) => setSpeechSpeed(clampSpeechSpeed(Number(event.target.value), speechSpeedRange.min, speechSpeedRange.max))}
                         />
-                        <small>{speechProfile.speedRange.min}–{speechProfile.speedRange.max}，默认 1</small>
+                        <small>{speechProfile.publicModel === 'voice-clone-tts' && speechAdvanced.engine?.startsWith('elevenlabs-v4') ? '该引擎限制为 0.7–1.2' : `${speechSpeedRange.min}–${speechSpeedRange.max}，默认 1`}</small>
                       </div>
                     )}
+                    <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={setSpeechAdvanced} disabled={busy} />
                   </div>
                 )}
                 <label className="cangyuan-field-label" htmlFor="cangyuan-speech-text">配音文本</label>
-                <textarea id="cangyuan-speech-text" className="cangyuan-prompt" value={speechText} maxLength={5000} onChange={(event) => setSpeechText(event.target.value)} placeholder="输入要朗读的文本" rows={8} />
-                <div className="cangyuan-field-foot"><span>音色、格式与该型号支持的语速会随请求发送</span><span>{speechText.length}/5000</span></div>
+                <textarea id="cangyuan-speech-text" className="cangyuan-prompt" value={speechText} maxLength={speechTextLimit} onChange={(event) => setSpeechText(event.target.value)} placeholder={speechProfile?.supportsDialogue ? '填写对白说明，并在更多语音设置中逐行添加角色台词' : '输入要朗读的文本'} rows={8} />
+                <div className="cangyuan-field-foot"><span>{speechProfile?.supportsDialogue ? '多人对白字段按逐句角色对象提交；官方目录的字段类型定义存在冲突' : speechProfile?.textMaxLength ? `当前型号正文上限 ${speechProfile.textMaxLength} 字符` : `平台输入上限 ${SPEECH_PLATFORM_TEXT_LIMIT} 字符；官方未列该型号专属上限`}</span><span>{speechText.length}/{speechTextLimit}</span></div>
                 <div className="cangyuan-submit-row">
                   <span>{speechModel?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || speechVoiceChoice === 'custom' && !speechCustomVoice.trim()} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : '生成配音'}</button>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || speechVoiceChoice === 'custom' && !speechCustomVoice.trim() || speechProfile?.requiresVoiceId && !speechAdvanced.voiceId?.trim() || speechProfile?.supportsDialogue && (!speechAdvanced.dialogue?.length || Boolean(dialogueDraftError))} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : speechProfile?.supportsDialogue ? '生成对白' : '生成配音'}</button>
                 </div>
               </>
-            ) : mode === 'music' ? (
+            ) : isCreativeAudioMode ? (
               <>
-                {continuation && <div className="cangyuan-continuation-banner"><span>续写来源：{continuation.title}</span><button type="button" aria-label="清除续写来源" onClick={clearContinuation}>清除</button></div>}
-                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">音乐提示词{musicProfile?.promptRequired ? '（必填）' : '（可选）'}</label>
-                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={musicProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={musicProfile?.family === 'su2' ? '直接描述希望生成的音乐' : musicProfile?.family === 'suno-sfx' ? '描述单个声音，例如关门声、雨打窗户' : musicProfile?.family === 'suno-workflow' && !musicProfile.promptRequired ? '此工作流可根据来源素材处理，无需额外提示词' : '描述曲风、情绪、乐器与场景'} rows={8} />
-                <div className="cangyuan-field-foot"><span>{musicProfile?.family === 'su2' ? '仅使用提示词；请求固定 n=1' : musicProfile?.family === 'lyria' ? '一次生成 1 首；时长与 BPM 为目标值，成片以实际结果为准' : musicProfile?.family === 'suno-sfx' ? '用于短音效，不是完整歌曲；结果可能包含多段音频' : '歌词、风格与续作字段按所选型号发送'}</span><span>{musicProfile?.promptMaxLength ? `${musicPrompt.length}/${musicProfile.promptMaxLength}` : `${musicPrompt.length} 字`}</span></div>
-                {musicProfile && <CangyuanMusicOptionsFields profile={musicProfile} options={musicOptions} onChange={setMusicOptions} onUploadStateChange={handleMediaUploadState} />}
+                {mode === 'music' && continuation && <div className="cangyuan-continuation-banner"><span>续写来源：{continuation.title}</span><button type="button" aria-label="清除续写来源" onClick={clearContinuation}>清除</button></div>}
+                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">{mode === 'sound-effect' ? '音效描述' : '音乐提示词'}{creativeAudioProfile?.promptRequired ? '（必填）' : '（可选）'}</label>
+                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={creativeAudioProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={creativeAudioProfile?.family === 'su2' ? '直接描述希望生成的音乐' : creativeAudioProfile?.family === 'suno-sfx' || creativeAudioProfile?.family === 'elevenlabs-sfx' ? '描述单个声音，例如关门声、雨打窗户' : creativeAudioProfile?.family === 'elevenlabs-music' ? '描述音乐内容、情绪与场景' : creativeAudioProfile?.family === 'suno-workflow' && !creativeAudioProfile.promptRequired ? '此工作流可根据来源素材处理，无需额外提示词' : mode === 'sound-effect' ? '描述想生成的声音效果' : '描述曲风、情绪、乐器与场景'} rows={8} />
+                <div className="cangyuan-field-foot"><span>{creativeAudioProfile?.family === 'su2' ? '仅使用提示词；每次固定生成 1 首' : creativeAudioProfile?.family === 'lyria' ? '一次生成 1 首；时长与节奏速度（每分钟拍数）为目标值，成片以实际结果为准' : creativeAudioProfile?.family === 'suno-sfx' ? '用于短音效，不是完整歌曲；结果可能包含多段音频' : creativeAudioProfile?.family === 'elevenlabs-sfx' ? '短音效用途；参数按所选型号的时长限制生效' : creativeAudioProfile?.family === 'elevenlabs-music' ? '默认时长 30 秒；高码率 MP3 会增加费用' : '歌词、风格与续作字段按所选型号发送'}</span><span>{creativeAudioProfile?.promptMaxLength ? `${musicPrompt.length}/${creativeAudioProfile.promptMaxLength}` : `${musicPrompt.length} 字`}</span></div>
+                {creativeAudioProfile && <CangyuanMusicOptionsFields profile={creativeAudioProfile} options={musicOptions} onChange={setMusicOptions} onUploadStateChange={handleMediaUploadState} />}
                 <div className="cangyuan-submit-row">
-                  <span>{musicModel?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || Boolean(musicProfile?.promptRequired && !musicPrompt.trim()) || !musicModel} onClick={() => void submitMedia('music')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : musicProfile?.family === 'suno-workflow' ? '运行音乐工具' : musicProfile?.family === 'suno-sfx' ? '生成音效' : '生成音乐'}</button>
+                  <span>{creativeAudioModel?.displayName || '请选择模型'}</span>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || Boolean(creativeAudioProfile?.promptRequired && !musicPrompt.trim()) || !creativeAudioModel} onClick={() => void submitMedia('music')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : creativeAudioProfile?.family === 'suno-workflow' ? '运行音乐工具' : `生成${creativeAudioKindName}`}</button>
                 </div>
               </>
             ) : (
@@ -769,7 +815,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                 {isLegacyTripo && (
                   <div className="cangyuan-3d-options">
                     <div className="cangyuan-select-field"><span>贴图质量</span><SelectMenu value={texture} ariaLabel="三维贴图质量" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: 'no', label: '无贴图' }, { value: 'standard', label: '标准' }, { value: 'HD', label: '高清（HD）' }]} onChange={(value) => setTexture(value as typeof texture)} /></div>
-                    <label className="cangyuan-checkbox-field"><input type="checkbox" checked={pbr} onChange={(event) => setPbr(event.target.checked)} /><span>PBR 材质</span></label>
+                    <label className="cangyuan-checkbox-field"><input type="checkbox" checked={pbr} onChange={(event) => setPbr(event.target.checked)} /><span>物理渲染材质（PBR）</span></label>
                   </div>
                 )}
                 {profile3d?.family === 'tripo' && (
@@ -806,14 +852,14 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           {mode !== 'speech' ? (
             <section className="cangyuan-studio-results" aria-label="生成任务">
               <div className="cangyuan-results-header">
-                <div><h2>{mode === 'music' ? '音乐任务' : '三维任务'}</h2><p>最近 {currentTasks.length} 条 · 状态自动更新</p></div>
-                <button type="button" className="cangyuan-refresh-button" aria-label="刷新任务列表" title="刷新任务列表" onClick={() => void loadTasks(mode === 'music' ? 'music' : '3d')}>刷新</button>
+                <div><h2>{mode === 'music' ? '音乐任务' : mode === 'sound-effect' ? '音效任务' : '三维任务'}</h2><p>最近 {currentTasks.length} 条 · 状态自动更新</p></div>
+                <button type="button" className="cangyuan-refresh-button" aria-label="刷新任务列表" title="刷新任务列表" onClick={() => void loadTasks(isCreativeAudioMode ? 'music' : '3d')}>刷新</button>
               </div>
               {selectedTasks.length === 0 ? (
                 <div className="cangyuan-task-empty"><strong>还没有生成任务</strong><span>提交一次生成后，任务与结果会显示在这里。</span></div>
               ) : (
                 <div className="cangyuan-task-list">
-                  {(mode === 'music' ? sortedMusicTasks : sortedThreeTasks).map((task) => (
+                  {(isCreativeAudioMode ? selectedTasks : sortedThreeTasks).map((task) => (
                     <article className="cangyuan-task-item" key={task.id}>
                       <div className="cangyuan-task-title-row">
                         <div><strong>{task.modelName}</strong><small>{formatCreatedAt(task.createdAt)}</small></div>
@@ -824,17 +870,17 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                       {isActiveTask(task) && <p className="cangyuan-task-progress">{mediaTaskProviderStatusLabel(task.providerStatus, task.status)}</p>}
                       {task.error && <p className="cangyuan-task-error" role="alert">{task.error}</p>}
                       {task.status === 'succeeded' && task.outputs.length === 0 && <p className="cangyuan-task-error">任务完成，但服务商没有返回结果地址。</p>}
-                      {task.outputs.map((output, index) => mode === 'music' ? (
+                      {task.outputs.map((output, index) => isCreativeAudioMode ? (
                         <MediaTaskAudioOutput
                           key={`${task.id}-${output.audioId || index}`}
                           output={output}
                           index={index}
-                          canContinue={Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
+                          canContinue={mode === 'music' && Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
                           onContinue={(selectedOutput) => chooseContinuation(task, selectedOutput)}
                         />
                       ) : (
                         <div className="cangyuan-3d-output" key={`${task.id}-${index}`}>
-                          <div className="cangyuan-output-meta"><b>{output.artifactType === 'fbx' ? `FBX 模型 ${index + 1}` : `GLB 模型 ${index + 1}`}</b><span>{output.artifactType === 'fbx' ? 'FBX 网格文件' : 'GLTF Binary'}</span></div>
+                          <div className="cangyuan-output-meta"><b>{output.artifactType === 'fbx' ? `FBX 模型 ${index + 1}` : `GLB 模型 ${index + 1}`}</b><span>{output.artifactType === 'fbx' ? 'FBX 网格文件' : 'GLB（二进制 glTF）'}</span></div>
                           <div className="cangyuan-output-actions">
                             {output.url ? <>
                               {output.artifactType !== 'fbx' && <button type="button" onClick={() => setPreviewOutput({ taskId: task.id, output, outputIndex: index, modelName: task.modelName })}>预览</button>}

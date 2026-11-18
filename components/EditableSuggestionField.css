@@ -1,0 +1,6 @@
+.editable-suggestion-field{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;min-width:0}
+.editable-suggestion-field>.select-menu{min-width:0;width:100%}
+.editable-suggestion-field>.select-menu .select-menu-trigger{width:100%;min-width:0}
+.editable-suggestion-field>input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 9px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:10px;outline:0}
+.editable-suggestion-field>input::placeholder{color:var(--muted)}
+.editable-suggestion-field>input:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent)}

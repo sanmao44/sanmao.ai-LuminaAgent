@@ -21,6 +21,8 @@ export type CangyuanVideoParameterSpec = {
 export type CangyuanVideoModelSpec = {
   [key: string]: unknown;
   publicModel: string;
+  /** Capability tags from the official catalog, e.g. video. */
+  capabilityRefs?: string[];
   intro?: string | null;
   warnings?: string[];
   examples?: Array<{ title?: string; request?: Record<string, unknown>; response?: Record<string, unknown> }>;

@@ -25,6 +25,7 @@ import { canvasAudioGenerationRecoveryDraft, canvasImageGenerationRecoveryDraft,
 import { retryCanvasVideoLogs, type CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
 import { retryCanvasUpscaleLogs, type CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
 import { applyCanvasTaskRecordRecovery } from "@/lib/canvas/task-record-recovery";
+import { appendCanvasAudioTranscriptionDocument, canvasAudioSpeechHistory } from "@/lib/canvas/audio-tools";
 import {
   addEdge,
   alignCanvasNodes,
@@ -327,6 +328,8 @@ import type {
   CanvasAudioTranscriptionMeta,
   CanvasAudioMusicDraft,
   CanvasAudioMusicTask,
+  CanvasThreeDDraft,
+  CanvasThreeDTaskSnapshot,
   CanvasCamera,
   CanvasAngleParams,
   CanvasConnectionStyle,
@@ -556,7 +559,7 @@ import VideoEditorWorkbench from "@/components/VideoEditorWorkbench";
 import { type AngleConsoleDraft } from "@/components/AngleConsole";
 import CanvasAngleWorkbench from "@/components/canvas/CanvasAngleWorkbench";
 
-type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio">;
+type CanvasGenerationMode = Exclude<CanvasMediaKind, "audio" | "3d">;
 type Mode = CanvasGenerationMode | "text";
 type ConnectionStyle = CanvasConnectionStyle;
 type CanvasTheme = "light" | "dark";
@@ -1555,6 +1558,10 @@ export default function SuperCanvas() {
   }, []);
   const flushAutomaticProjectCheckpoints = useCallback(async () => {
     autoCheckpointTimerRef.current = null;
+    if (autoCheckpointIntervalMinutesRef.current === -1) {
+      autoCheckpointQueueRef.current.clear();
+      return;
+    }
     let nextDelayMs: number | null = null;
     const pending = [...autoCheckpointQueueRef.current.entries()];
     for (const [key, checkpoint] of pending) {
@@ -1575,6 +1582,10 @@ export default function SuperCanvas() {
         autoCheckpointIntervalMinutesRef.current,
         now,
       );
+      if (delayMs === null) {
+        autoCheckpointQueueRef.current.clear();
+        return;
+      }
       if (delayMs > 0) {
         nextDelayMs = nextDelayMs === null ? delayMs : Math.min(nextDelayMs, delayMs);
         continue;
@@ -1618,6 +1629,7 @@ export default function SuperCanvas() {
     autoCheckpointFlushRef.current = flushAutomaticProjectCheckpoints;
   }, [flushAutomaticProjectCheckpoints]);
   const queueAutomaticProjectCheckpoint = useCallback((projectId: string, canvasId: string, triggerIds: readonly string[]) => {
+    if (autoCheckpointIntervalMinutesRef.current === -1) return;
     const key = `${projectId}:${canvasId}`;
     const queued = autoCheckpointQueueRef.current.get(key) || { projectId, canvasId, triggerIds: new Set<string>() };
     triggerIds.forEach((triggerId) => queued.triggerIds.add(triggerId));
@@ -1629,6 +1641,11 @@ export default function SuperCanvas() {
     autoCheckpointIntervalMinutesRef.current = value;
     setAutoCheckpointIntervalMinutes(value);
     if (autoCheckpointTimerRef.current !== null) window.clearTimeout(autoCheckpointTimerRef.current);
+    autoCheckpointTimerRef.current = null;
+    if (value === -1) {
+      autoCheckpointQueueRef.current.clear();
+      return;
+    }
     if (autoCheckpointQueueRef.current.size) {
       autoCheckpointTimerRef.current = window.setTimeout(() => autoCheckpointFlushRef.current(), 900);
     }
@@ -1722,14 +1739,34 @@ export default function SuperCanvas() {
   }, [setDoc]);
   const updateCanvasAudioTranscription = useCallback((nodeId: string, result: CanvasAudioTranscriptionMeta) => {
     const current = canvasCoreRef.current.document();
-    const next = {
-      ...current,
-      nodes: current.nodes.map((item) => item.id === nodeId && item.type === "media" && item.data.kind === "audio"
-        ? { ...item, data: { ...item.data, transcription: result } }
-        : item),
-    };
-    if (next.nodes.some((item, index) => item !== current.nodes[index])) setDoc(next, { preserveHistory: true });
+    const next = appendCanvasAudioTranscriptionDocument(current, nodeId, result);
+    if (next !== current) setDoc(next, { preserveHistory: true });
   }, [setDoc]);
+  const updateCanvasThreeDDraft = useCallback((nodeId: string, draft: CanvasThreeDDraft) => {
+    updateDoc((value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => node.id === nodeId && node.type === "media" && node.data.kind === "3d"
+        ? { ...node, data: { ...node.data, threeDDraft: draft, status: node.data.threeDTask ? node.data.status : "draft", statusLabel: "等待生成三维模型" } }
+        : node),
+    }));
+  }, [updateDoc]);
+  const updateCanvasThreeDTask = useCallback((nodeId: string, task: CanvasThreeDTaskSnapshot) => {
+    updateDoc((value) => ({
+      ...value,
+      nodes: value.nodes.map((node) => node.id === nodeId && node.type === "media" && node.data.kind === "3d"
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              threeDTask: task,
+              status: task.status === "succeeded" ? "completed" : task.status === "failed" || task.status === "cancelled" ? "failed" : "running",
+              statusLabel: task.status === "succeeded" ? "三维模型生成完成" : task.status === "failed" || task.status === "cancelled" ? (task.error || "三维模型生成失败") : "三维模型生成中",
+              progress: task.status === "succeeded" ? 100 : node.data.progress,
+            },
+          }
+        : node),
+    }));
+  }, [updateDoc]);
   const commit = useCallback(
     (updater: (value: CanvasDocument) => CanvasDocument) => {
       const previous = canvasCoreRef.current.document();
@@ -2386,6 +2423,7 @@ export default function SuperCanvas() {
         snapEnabled?: unknown;
         depthQuality?: unknown;
         autoCheckpointIntervalMinutes?: unknown;
+        autoCheckpointSettingsVersion?: unknown;
       } | null;
       if (
         CONNECTION_STYLE_OPTIONS.some(
@@ -2396,7 +2434,9 @@ export default function SuperCanvas() {
       if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
       if (typeof raw?.edgesVisible === "boolean") setEdgesVisible(raw.edgesVisible);
       setDepthQuality(normalizeDepthQuality(raw?.depthQuality));
-      const checkpointInterval = normalizeAutoProjectCheckpointIntervalMinutes(raw?.autoCheckpointIntervalMinutes);
+      const checkpointInterval = raw?.autoCheckpointSettingsVersion === 1
+        ? normalizeAutoProjectCheckpointIntervalMinutes(raw.autoCheckpointIntervalMinutes)
+        : DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES;
       autoCheckpointIntervalMinutesRef.current = checkpointInterval;
       setAutoCheckpointIntervalMinutes(checkpointInterval);
     } catch {
@@ -2409,7 +2449,7 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes }),
+        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes, autoCheckpointSettingsVersion: 1 }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */
@@ -4222,7 +4262,7 @@ export default function SuperCanvas() {
         return;
       }
       const mediaKind =
-        kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
+        kind === "audio" ? "audio" : kind === "threeD" ? "3d" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const seed =
         position || screenToWorld(stageSize.width / 2, stageSize.height / 2);
       const draft =
@@ -4230,14 +4270,16 @@ export default function SuperCanvas() {
           ? createVideoEditorNode(seed)
           : kind === "text"
           ? createPrompt(seed)
-          : kind === "workflowImage"
+              : kind === "threeD"
+                ? createEmptyMedia("3d", seed)
+              : kind === "workflowImage"
             ? createGenerator("image", seed, defaultCanvasGenerationParams("image", runtime))
             : kind === "workflowVideo"
               ? createGenerator("video", seed, defaultCanvasGenerationParams("video", runtime))
               : createEmptyMedia(
                   mediaKind,
                   seed,
-                  mediaKind === "audio" ? undefined : defaultCanvasGenerationParams(mediaKind, runtime),
+                  mediaKind === "image" || mediaKind === "video" ? defaultCanvasGenerationParams(mediaKind, runtime) : undefined,
                 );
       const point = position ? seed : openNodePosition(seed, draft);
       const node = { ...draft, x: point.x, y: point.y };
@@ -4245,11 +4287,11 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       if (kind === "text") setMode("text");
-      else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
-      if (mediaKind === "audio") setExpandedEditorId(node.id);
+      else if (mediaKind !== "audio" && mediaKind !== "3d" && kind !== "videoEditor") setMode(mediaKind as CanvasGenerationMode);
+      if (mediaKind === "audio" || mediaKind === "3d") setExpandedEditorId(node.id);
       setContextMenu(null);
       notify(
-        `已添加${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加${kind === "videoEditor" ? "视频编辑" : kind === "text" ? "Agent" : kind === "threeD" ? "三维模型" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [
@@ -4293,7 +4335,7 @@ export default function SuperCanvas() {
         return notify("角度控制节点只接受一张已完成的图片", "error");
       }
       const mediaKind =
-        kind === "audio" ? "audio" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
+        kind === "audio" ? "audio" : kind === "threeD" ? "3d" : kind === "workflowVideo" || kind === "video" ? "video" : "image";
       const draft =
         kind === "videoEditor"
           ? createVideoEditorNode(picker.world)
@@ -4303,14 +4345,16 @@ export default function SuperCanvas() {
           ? createAngleNode(picker.world)
           : kind === "text"
           ? createPrompt(picker.world)
-          : kind === "workflowImage"
+            : kind === "threeD"
+              ? createEmptyMedia("3d", picker.world)
+            : kind === "workflowImage"
             ? createGenerator("image", picker.world, defaultCanvasGenerationParams("image", runtime))
             : kind === "workflowVideo"
               ? createGenerator("video", picker.world, defaultCanvasGenerationParams("video", runtime))
               : createEmptyMedia(
                   mediaKind,
                   picker.world,
-                  mediaKind === "audio" ? undefined : defaultCanvasGenerationParams(mediaKind, runtime),
+                  mediaKind === "image" || mediaKind === "video" ? defaultCanvasGenerationParams(mediaKind, runtime) : undefined,
                 );
       const size = nodeSize(draft);
       const seed = {
@@ -4337,12 +4381,12 @@ export default function SuperCanvas() {
       setSelectedIds(new Set([node.id]));
       setSelectedGroupId(null);
       if (kind === "text") setMode("text");
-      else if (mediaKind !== "audio" && kind !== "videoEditor") setMode(mediaKind);
-      if (mediaKind === "audio") setExpandedEditorId(node.id);
+      else if (mediaKind !== "audio" && mediaKind !== "3d" && kind !== "videoEditor") setMode(mediaKind as CanvasGenerationMode);
+      if (mediaKind === "audio" || mediaKind === "3d") setExpandedEditorId(node.id);
       if (kind === "upscale") setExpandedEditorId(node.id);
       if (kind === "angle") setAngleNodeId(node.id);
       notify(
-        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "angle" ? "角度控制" : kind === "text" ? "Agent" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
+        `已添加并连接${kind === "videoEditor" ? "视频编辑" : kind === "angle" ? "角度控制" : kind === "text" ? "Agent" : kind === "threeD" ? "三维模型" : kind === "workflowVideo" ? "视频变体生成器" : kind === "workflowImage" ? "图片变体生成器" : mediaKind === "video" ? "视频" : mediaKind === "audio" ? "音频" : "图片"}节点`,
       );
     },
     [commit, notify, openNodePosition, runtime],
@@ -6049,8 +6093,8 @@ export default function SuperCanvas() {
               const videoInputError = canvasVideoInputError(videoInputs, videoParams.inputMode, videoLimits, videoParams.operation);
               if (videoInputError) throw new Error(videoInputError);
               const generationStartedAt = Date.now();
-              const task = await generateCanvasVideo(
-                canvasVariantVideoRequest({
+              const task = await generateCanvasVideo({
+                ...canvasVariantVideoRequest({
                   prompt,
                   model: effectiveParams.model,
                   modelRawId: resolvedModel.model?.rawId,
@@ -6072,7 +6116,8 @@ export default function SuperCanvas() {
                     name: String(item.data.name || "参考音频"),
                   })),
                 }),
-              );
+                modelParameters: videoParams.modelParameters,
+              });
               const targetCreatedAt = Date.now();
               const target = createMedia(
                 "video",
@@ -6231,7 +6276,7 @@ export default function SuperCanvas() {
         includeSourceReference?: boolean;
       },
     ) => {
-      if (source.type !== "media" || !source.data.kind || source.data.kind === "audio" || !source.data.url) {
+      if (source.type !== "media" || !source.data.kind || source.data.kind === "audio" || source.data.kind === "3d" || !source.data.url) {
         notify("只有已完成的图片或视频节点可以复用参数。", "error");
         return;
       }
@@ -7069,6 +7114,7 @@ export default function SuperCanvas() {
         agnesHeight: params.agnesHeight,
         agnesNumFrames: params.agnesNumFrames,
         agnesFrameRate: params.agnesFrameRate,
+        modelParameters: params.modelParameters,
         references: videoInputs.referenceImages.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考图片") })),
         referenceVideos: videoInputs.referenceVideos.map((reference) => ({ url: String(reference.data.url), name: String(reference.data.name || "参考视频") })),
         firstFrame: videoInputs.firstFrame?.data.url ? String(videoInputs.firstFrame.data.url) : undefined,
@@ -8132,6 +8178,7 @@ export default function SuperCanvas() {
           agnesHeight: videoParams.agnesHeight,
           agnesNumFrames: videoParams.agnesNumFrames,
           agnesFrameRate: videoParams.agnesFrameRate,
+          modelParameters: videoParams.modelParameters,
           references: mergedVideoRefs.map((item) => ({ url: item.url, name: item.name })),
           referenceVideos: (videoInputs?.referenceVideos || [])
             .filter((item) => item.data.url)
@@ -8488,6 +8535,7 @@ export default function SuperCanvas() {
             agnesNumFrames: videoParams.agnesNumFrames,
             agnesFrameRate: videoParams.agnesFrameRate,
           } : {}),
+          modelParameters: videoParams.modelParameters,
           references: [{ url: sourceUrl, name: sourceName }],
           ...(inputMode === "first-frame" ? { firstFrame: sourceUrl } : {}),
         });
@@ -9602,8 +9650,13 @@ export default function SuperCanvas() {
               processingStartedAt: _processingStartedAt,
               durationMs: _durationMs,
               speechDraft: _speechDraft,
+              speechGenerations: _speechGenerations,
               ...baseData
             } = item.data;
+            const persistedSpeechGeneration = speechGeneration
+              ? { ...speechGeneration, url: asset.url, name: asset.name || file.name || "AI配音", assetId: asset.id }
+              : undefined;
+            const speechHistory = canvasAudioSpeechHistory(item.data.speechGeneration, _speechGenerations, persistedSpeechGeneration);
             return {
               ...item,
               data: {
@@ -9617,7 +9670,7 @@ export default function SuperCanvas() {
                 assetId: asset.id,
                 sourceAssetId: asset.id,
                 mimeType: asset.mime || file.type || undefined,
-                speechGeneration,
+                ...(persistedSpeechGeneration ? { speechGeneration: persistedSpeechGeneration, speechGenerations: speechHistory } : speechHistory ? { speechGenerations: speechHistory } : {}),
               },
             };
           }),
@@ -11520,7 +11573,7 @@ export default function SuperCanvas() {
         ),
       );
       setSelectedGroupId(targetGroup?.id || null);
-       if (asset.kind !== "audio") setMode(asset.kind);
+       if (asset.kind === "image" || asset.kind === "video") setMode(asset.kind);
        notify(
          targetGroup
            ? `已将${asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "图片"}加入${targetGroup.name}`
@@ -14501,6 +14554,8 @@ export default function SuperCanvas() {
               onTranscriptionChange={updateCanvasAudioTranscription}
               onMusicDraftChange={updateCanvasAudioMusicDraft}
               onMusicTaskChange={updateCanvasAudioMusicTask}
+              onThreeDDraftChange={updateCanvasThreeDDraft}
+              onThreeDTaskChange={updateCanvasThreeDTask}
               onAudioDurationChange={(nodeId, durationSeconds) => setMediaNaturalSize(
                 nodeId,
                 0,
@@ -14683,7 +14738,9 @@ export default function SuperCanvas() {
           settings={reuseDraft ? reuseDraft.params : deck.params}
           deckPromptRef={deckPromptRef}
           onToggleCollapsed={toggleDeckCollapsed}
-          onModeChange={(nextMode: CanvasDeckMode) => setMode(nextMode)}
+          onModeChange={(nextMode: CanvasDeckMode) => {
+            if (nextMode === "image" || nextMode === "video" || nextMode === "text") setMode(nextMode);
+          }}
           onClearSelection={clearSelection}
           onOpenFilePicker={() => openFilePicker()}
           onAddReuseFiles={(files) => void addReuseFiles(files)}

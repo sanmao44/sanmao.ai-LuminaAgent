@@ -1,6 +1,6 @@
 import type {
   CanvasGenerationParams,
-  CanvasMediaKind,
+  CanvasReferenceMediaKind,
   CanvasNode,
 } from "./types";
 
@@ -10,7 +10,7 @@ export type CanvasReferenceOrigin = "node" | "asset" | "upload" | "paste";
 
 export type CanvasReferenceDraft = {
   id: string;
-  kind: CanvasMediaKind | "text";
+  kind: CanvasReferenceMediaKind | "text";
   url?: string;
   text?: string;
   mimeType?: string;
@@ -26,7 +26,7 @@ export type CanvasReferenceDraft = {
 
 export type CanvasReuseDraft = {
   sourceNodeId?: string;
-  kind: CanvasMediaKind;
+  kind: CanvasReferenceMediaKind;
   prompt: string;
   params: CanvasGenerationParams;
   references: CanvasReferenceDraft[];
@@ -124,7 +124,7 @@ export function reuseDraftFromNode(
   references: CanvasReferenceDraft[],
   fallbackParams?: CanvasGenerationParams,
 ): CanvasReuseDraft | null {
-  if (node.type !== "media" || !node.data.kind) return null;
+  if (node.type !== "media" || !node.data.kind || node.data.kind === "3d") return null;
   // Uploaded media has no generation snapshot. Use the caller's current
   // defaults so it can still be used as the source of a new branch.
   const params =

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { GenerationLog } from '@/lib/generation-log';
 import { generationLogSourceLabel, generationLogTitle } from '@/lib/generation-log-presentation';
+import GenerationModelBadge from './GenerationModelBadge';
 import './GenerationLogAudio.css';
 
 type AudioPlayerProps = {
@@ -156,7 +157,7 @@ export function GenerationLogAudioWorks({ logs }: { logs: readonly GenerationLog
           <article className="generation-audio-work" key={log.id}>
             <div className="generation-audio-work-copy">
               <strong>{generationLogTitle(log)}</strong>
-              <small>{generationLogSourceLabel(log)} · {log.modelName || '自动选择模型'} · {new Date(log.createdAt).toLocaleString('zh-CN', { hour12: false })}</small>
+              <small>{generationLogSourceLabel(log)} · <GenerationModelBadge modelId={log.modelId} requestedModelId={log.requestedModelId} modelName={log.modelName} providerName={log.providerName} /> · {new Date(log.createdAt).toLocaleString('zh-CN', { hour12: false })}</small>
             </div>
             <GenerationLogAudioPlayer src={log.audioUrl || ''} />
           </article>

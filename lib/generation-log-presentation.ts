@@ -76,6 +76,21 @@ export function generationLogTitle(log: GenerationLog): string {
         .trim();
     return userPrompt || (generationLogIsLlm(log) ? '画布上下文任务' : '未填写提示词');
 }
+
+export function generationLogModelHue(log: Pick<GenerationLog, 'modelId' | 'requestedModelId' | 'modelName'>): number | null {
+    const candidates = [log.modelId, log.requestedModelId, log.modelName]
+        .map((value) => String(value || '').trim())
+        .filter((value) => value && value.toLowerCase() !== 'auto');
+    const identity = candidates[0]?.toLowerCase();
+    if (!identity) return null;
+    let hash = 2166136261;
+    for (const character of identity) {
+        hash ^= character.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) % 360;
+}
+
 export function generationMediaKind(log: GenerationLog): GenerationLogPresentationKind {
     if (log.taskKind === 'llm' || log.mode === 'llm') return 'llm';
     if (log.mediaKind === 'audio' || log.mode === 'audio') return 'audio';

@@ -115,7 +115,7 @@ export type ChatSession = {
 
 export type AssetIndexItem = {
   id: string;
-  kind: 'image' | 'video' | 'audio';
+  kind: 'image' | 'video' | 'audio' | '3d';
   url: string;
   /** Stable logical location; old records may only have url. */
   storageKey?: string;

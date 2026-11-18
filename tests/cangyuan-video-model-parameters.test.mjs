@@ -26,7 +26,7 @@ const load = createTsRequire(process.cwd(), {
   },
 });
 const CangyuanVideoModelParameters = load('./components/cangyuan/CangyuanVideoModelParameters').default;
-const { getCangyuanVideoParameterSuggestions } = load('./lib/cangyuan-video-model-catalog');
+const { getCangyuanVideoParameterSuggestions, cangyuanVideoParameterValueLabel, getCangyuanVideoAdvancedParameters } = load('./lib/cangyuan-video-model-catalog');
 const { getCangyuanSuggestionWireValue } = load('./components/cangyuan/CangyuanSuggestionInput');
 
 test('video model settings render documented field types with localized labels', () => {
@@ -65,7 +65,34 @@ test('video model settings stay hidden when the current model has no advanced fi
     values: {},
     onChange: () => undefined,
   }));
-  assert.equal(markup, '');
+  assert.match(markup, /官方文档暂未列出额外可调参数/);
+  assert.match(markup, /此型号没有额外可调参数/);
+});
+
+test('video model settings expose official material and parameter constraints in Chinese', () => {
+  const markup = renderToStaticMarkup(createElement(CangyuanVideoModelParameters, {
+    spec: {
+      publicModel: 'documented-video',
+      params: [{ name: 'prompt', type: 'string' }],
+      sections: [{
+        title: '参数组合与素材要求',
+        variant: 'list',
+        items: [
+          '可以只提供首帧；提供尾帧时必须同时提供首帧。',
+          '首尾帧不能与参考图、参考视频或参考音频同时使用。',
+          'resolution 不支持 4k。',
+        ],
+      }],
+    },
+    values: {},
+    onChange: () => undefined,
+  }));
+
+  assert.match(markup, /素材与参数限制/);
+  assert.match(markup, /可以只提供首帧；若提供尾帧，必须同时提供首帧/);
+  assert.match(markup, /首尾帧模式与参考图、参考视频、参考音频互斥/);
+  assert.match(markup, /不支持以下画面清晰度：4K/);
+  assert.doesNotMatch(markup, /resolution 不支持 4k/);
 });
 
 test('video model help text hides raw API keys and presents localized guidance', () => {
@@ -83,9 +110,9 @@ test('video model help text hides raw API keys and presents localized guidance',
     onChange: () => undefined,
   }));
 
-  assert.match(markup, /向左摇镜、推近、环绕/);
-  assert.match(markup, /不确定时保留模型默认值/);
-  assert.doesNotMatch(markup, /duration。|pan_left|zoom_in|asset_id|asset:\/\/|Active/);
+  assert.match(markup, /自由文本，不是固定选项列表/);
+  assert.match(markup, /素材编号/);
+  assert.doesNotMatch(markup, /duration。|pan_left|zoom_in/);
 });
 
 test('Muse controls present documented recommendations in Chinese and keep official wire values', () => {
@@ -101,13 +128,46 @@ test('Muse controls present documented recommendations in Chinese and keep offic
   const values = { style_preset: 'cinematic_realistic', camera_movement: 'pan_left', language: 'zh', voices: 'alloy' };
   const markup = renderToStaticMarkup(createElement(CangyuanVideoModelParameters, { spec, values, onChange: () => undefined }));
 
-  for (const label of ['电影写实', '向左摇镜', '中文', '清亮女声一']) assert.match(markup, new RegExp(label));
+  for (const label of ['电影写实', '向左摇镜', '中文', '艾洛伊（清亮女声）']) assert.match(markup, new RegExp(label));
   assert.match(markup, /value="电影写实"/);
   assert.doesNotMatch(markup, /cinematic_realistic|pan_left|alloy/);
   assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[0]), '电影写实'), 'cinematic_realistic');
   assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[1]), '向左摇镜'), 'pan_left');
   assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[2]), '中文'), 'zh');
-  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '清亮女声一'), 'alloy');
-  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '清亮女声一，叙事男声', true), 'alloy,fable');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '艾洛伊（清亮女声）'), 'alloy');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '艾洛伊（清亮女声），费布尔（叙事男声）', true), 'alloy,fable');
   assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[0]), '我的自定义画风'), '我的自定义画风');
+});
+
+test('video ratio and resolution values have Chinese hints while retaining documented wire values', () => {
+  assert.equal(cangyuanVideoParameterValueLabel('aspect_ratio', 'auto'), '自动');
+  assert.equal(cangyuanVideoParameterValueLabel('aspect_ratio', 'adaptive'), '自适应');
+  assert.equal(cangyuanVideoParameterValueLabel('aspect_ratio', '16:9'), '16:9（横屏）');
+  assert.equal(cangyuanVideoParameterValueLabel('resolution', '480P'), '480p（标清）');
+  assert.equal(cangyuanVideoParameterValueLabel('resolution', '720p'), '720p（高清）');
+  assert.equal(cangyuanVideoParameterValueLabel('aspect_ratio', 'custom-ratio'), 'custom-ratio');
+});
+
+test('unknown documented enum values are marked for official verification instead of being silently translated', () => {
+  const { cangyuanVideoParameterEnumLabel } = load('./lib/cangyuan-video-model-catalog');
+  assert.equal(cangyuanVideoParameterEnumLabel('style_preset', 'vendor_style_x'), '待按官方说明核实（vendor_style_x）');
+});
+
+test('untyped generate_audio fields stay hidden until the wire contract is documented', () => {
+  const stringSpec = {
+    publicModel: 'seedance-string-audio',
+    params: [
+      { name: 'generate_audio', type: 'string', description: 'generate_audio。' },
+      { name: 'style', type: 'string', description: '画面风格。' },
+    ],
+  };
+  const booleanSpec = {
+    publicModel: 'seedance-boolean-audio',
+    params: [
+      { name: 'generate_audio', type: 'boolean', description: '是否生成声音。' },
+      { name: 'style', type: 'string', description: '画面风格。' },
+    ],
+  };
+  assert.deepEqual(getCangyuanVideoAdvancedParameters(stringSpec).map((parameter) => parameter.name), ['style']);
+  assert.deepEqual(getCangyuanVideoAdvancedParameters(booleanSpec).map((parameter) => parameter.name), ['style']);
 });

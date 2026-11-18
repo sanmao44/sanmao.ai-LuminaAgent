@@ -91,8 +91,47 @@ test('Suno v6 payload maps all documented creation fields without sending refere
   });
 });
 
+test('ElevenLabs music sends its documented seed, target duration, instrumental, and format fields', () => {
+  assert.deepEqual(provider.buildCangyuanMusicPayload('elevenlabs-music', {
+    prompt: 'Warm acoustic song', duration: 180, seed: 0, force_instrumental: true, output_format: 'mp3_hq',
+  }), {
+    model: 'elevenlabs-music', prompt: 'Warm acoustic song', n: 1, duration: 180,
+    seed: 0, force_instrumental: true, output_format: 'mp3_hq',
+  });
+});
+
+test('ElevenLabs sound effects v2 and v3 serialize their model-specific options', () => {
+  assert.deepEqual(provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', {
+    prompt: 'A soft wooden door closes', duration: 0.5, loop: true, output_format: 'mp3_hq', prompt_influence: 1,
+  }), {
+    model: 'elevenlabs-sound-effects-v2', prompt: 'A soft wooden door closes', n: 1,
+    duration: 0.5, loop: true, output_format: 'mp3_hq', prompt_influence: 1,
+  });
+  assert.deepEqual(provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', {
+    prompt: 'Distant thunder', duration: 30, loop: false, output_format: 'mp3', prompt_influence: 0,
+  }), {
+    model: 'elevenlabs-sound-effects-v3', prompt: 'Distant thunder', n: 1,
+    duration: 30, loop: false, output_format: 'mp3', prompt_influence: 0,
+  });
+});
+
+test('ElevenLabs music profiles enforce documented prompt, duration, seed, and influence limits', () => {
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-music', { prompt: '' }), /请输入音乐生成描述/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-music', { prompt: 'x'.repeat(4_001) }), /最多 4000 个字符/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-music', { prompt: 'song', duration: 20 }), /仅支持 10、30、60、120、180 秒/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-music', { prompt: 'song', seed: -1 }), /不能小于 0/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', duration: 0.49 }), /必须在 0\.5–22 秒/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', duration: 22.1 }), /必须在 0\.5–22 秒/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', prompt_influence: 1.01 }), /必须在 0–1 之间/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 30.5 }), /时长必须是整数秒/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 31 }), /不能大于 30/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', loop: 'yes' }), /loop 必须是布尔值/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', instrumental: true }), /不支持这些音乐参数/);
+});
+
 test('music payload rejects unprofiled models, unsupported fields, and values outside documentation bounds', () => {
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6.1', { prompt: 'Song' }), /尚未接入/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno', { prompt: 'Song' }), /尚未接入/);
   assert.throws(() => provider.buildCangyuanMusicPayload('su2-suno-v6', { prompt: 'Song', title: 'Title' }), /不支持这些音乐参数/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', n: 2 }), /n 目前只支持 1/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', duration: 9 }), /10–360/);
@@ -178,6 +217,28 @@ test('Lyria and Suno SFX validate their documented ranges and do not accept each
   assert.throws(() => provider.buildCangyuanMusicPayload('lyria-3.5', { prompt: 'song', bpm: 29 }), /30–300/);
   assert.throws(() => provider.buildCangyuanMusicPayload('lyria-3.5', { prompt: 'song', style_text: 'pop' }), /不支持这些音乐参数/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-sfx', { prompt: 'rain', lyrics: 'lyrics' }), /不支持这些音乐参数/);
+});
+
+test('music input bounds follow the documented model profile and do not invent workflow text limits', () => {
+  assert.equal(provider.buildCangyuanMusicPayload('lyria-3.5', {
+    prompt: 'song', duration: 300, bpm: 300, seed: 2_147_483_647,
+  }).duration, 300);
+  assert.throws(() => provider.buildCangyuanMusicPayload('lyria-3.5', { prompt: 'song', duration: 4 }), /5–300/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('lyria-3.5', { prompt: 'song', seed: 2_147_483_648 }), /固定生成编号.*0–2147483647/);
+
+  assert.equal(provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'song', duration: 360 }).duration, 360);
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'song', duration: 361 }), /10–360/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'song', style_text: 'x'.repeat(1_001) }), /最多 1000 个字符/);
+
+  const longStyle = provider.buildCangyuanMusicPayload('suno-extend-audio', {
+    prompt: 'continue', style_text: 'x'.repeat(1_001), uploadUrl: 'https://cdn.example.test/source.wav',
+  });
+  assert.equal(longStyle.style_text.length, 1_001);
+
+  const longLyrics = provider.buildCangyuanMusicPayload('suno-replace-section', {
+    prompt: 'replace', lyrics: 'x'.repeat(20_001), sourceTaskId: 'source-job', infillStartS: '1', infillEndS: '3',
+  });
+  assert.equal(longLyrics.lyrics.length, 20_001);
 });
 
 test('Tripo3D payload applies documented defaults and requires an image for its default mode', () => {

@@ -144,6 +144,7 @@ test('沧元 TTS accepts recommended-as-guidance voice values but rejects undocu
       ...cangyuanRuntime('undocumented-tts'),
       provider: { ...cangyuanRuntime('undocumented-tts').provider, type: 'google-gemini' },
     }, { text: '原生协议不兼容' }), /暂不支持兼容的语音生成接口/);
+    // Unsupported options are rejected before a provider request is sent.
     assert.equal(stub.calls.length, 1);
   } finally { stub.restore(); }
 });

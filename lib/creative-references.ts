@@ -17,6 +17,7 @@ export type CreativeReferenceLike = {
   url?: string;
   text?: string;
   mimeType?: string;
+  nodeId?: string;
   width?: number;
   height?: number;
   pending?: boolean;

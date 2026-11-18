@@ -7,6 +7,7 @@ import { createTsRequire } from './ts-require.mjs';
 const presentation = createTsRequire(process.cwd())('./lib/generation-log-presentation');
 const components = createTsRequire(process.cwd(), {
   '@/lib/generation-log-presentation': presentation,
+  './GenerationModelBadge.css': {},
   './GenerationLogAudio.css': {},
 });
 const { GenerationLogAudioPlayer, GenerationLogAudioWorks } = components('./components/GenerationLogAudio');
@@ -47,6 +48,8 @@ test('generation log audio works render saved results and their source labels', 
   assert.match(markup, /aria-label="音频作品"/);
   assert.match(markup, /Project narration/);
   assert.match(markup, /画布生成/);
+  assert.match(markup, /generation-model-badge/);
+  assert.match(markup, /Gemini TTS/);
   assert.match(markup, /project\.wav/);
   assert.match(markup, /generation-log-audio-controls/);
   assert.doesNotMatch(markup, /<audio[^>]*\scontrols(?:\s|>)/);

@@ -1,9 +1,10 @@
-export type AssetReferenceKind = 'image' | 'video' | 'audio';
+export type AssetReferenceKind = 'image' | 'video' | 'audio' | '3d';
 
 const FOLDER_BY_KIND: Record<AssetReferenceKind, string> = {
   image: 'images',
   video: 'videos',
   audio: 'audio',
+  '3d': 'models',
 };
 
 function cleanRelativePath(value: string) {

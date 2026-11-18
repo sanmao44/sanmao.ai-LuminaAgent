@@ -23,21 +23,28 @@ async function importTypeScript(sourceUrl, source, fileName = sourceUrl.pathname
 
 const providersUrl = new URL('../lib/providers.ts', import.meta.url);
 const providersSource = await readFile(providersUrl, 'utf8');
+globalThis.__agnesAudioModelClassification = createTsRequire(process.cwd())('./lib/audio-model-classification');
+globalThis.__agnesCangyuanVideoCatalog = createTsRequire(process.cwd())('./lib/cangyuan-video-model-catalog');
+const providersWithAudioClassifier = providersSource
+  .replace("import { classifyAudioModelPurpose } from './audio-model-classification';", 'const { classifyAudioModelPurpose } = globalThis.__agnesAudioModelClassification;')
+  .replace("import { getCangyuanVideoModelCatalogEntry } from './cangyuan-video-model-catalog';", 'const { getCangyuanVideoModelCatalogEntry } = globalThis.__agnesCangyuanVideoCatalog;');
 const signedMediaImport = `import('./signed-media')`;
 const detectionSource = await readFile(new URL('../lib/native-search-detection.ts', import.meta.url), 'utf8');
 const modelKindSource = await readFile(new URL('../lib/model-kind.ts', import.meta.url), 'utf8');
 const agnesSource = await readFile(new URL('../lib/agnes.ts', import.meta.url), 'utf8');
 globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
 globalThis.__agnesTestSharp = sharp;
+globalThis.__providerTestSharp = sharp;
 const providers = await importTypeScript(providersUrl, [
   detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch'),
   modelKindSource,
   agnesSource.replace(/^import .+;\r?\n/gm, ''),
-  providersSource
+  providersWithAudioClassifier
     .replace("import { isSvgImageBytes } from './svg-image';", 'const isSvgImageBytes = () => false;')
     .replace("await import('./image-storage')", "Promise.resolve({ resolveStoredImageReference: async (value) => value })")
     .replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", 'const getCangyuanImageModelProfile = () => null;')
     .replace("import { isCangyuanProvider } from './cangyuan-provider';", 'const isCangyuanProvider = () => false;')
+    .replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerTestSharp;')
     .replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;')
     .replace("import { inferNativeSearch } from './native-search-detection';", '')
     .replace("import { inferModelKind } from './model-kind';", '')
@@ -51,6 +58,9 @@ const providers = await importTypeScript(providersUrl, [
 } })`));
 delete globalThis.__providerImageReferenceReaderModule;
 delete globalThis.__agnesTestSharp;
+delete globalThis.__agnesAudioModelClassification;
+delete globalThis.__agnesCangyuanVideoCatalog;
+delete globalThis.__providerTestSharp;
 
 const videoUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');

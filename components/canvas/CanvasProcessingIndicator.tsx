@@ -10,6 +10,7 @@ import {
 export type CanvasProcessingKind =
   | "image"
   | "video"
+  | "audio"
   | "agent"
   | "generator"
   | "angle"
@@ -100,6 +101,14 @@ function ProcessingGlyph({ kind }: { kind: CanvasProcessingKind }) {
   let glyph: ReactNode;
   if (kind === "video") {
     glyph = <path d="m9 7 6 5-6 5Z" fill="currentColor" stroke="none" />;
+  } else if (kind === "audio") {
+    glyph = (
+      <>
+        <path d="M9 17V8.5l8-2v8.5" />
+        <circle cx="7.5" cy="17" r="2.25" />
+        <circle cx="15.5" cy="15" r="2.25" />
+      </>
+    );
   } else if (kind === "agent") {
     glyph = (
       <>
@@ -152,6 +161,7 @@ function processingStageLabel(
   hasProgress: boolean,
 ) {
   if (kind === "video") return waiting ? "等待服务商" : hasProgress ? "远程渲染" : "服务商处理中";
+  if (kind === "audio") return waiting ? "等待音频任务" : "音频处理中";
   if (waiting) return "队列等待";
   if (kind === "agent") return "思考中";
   if (kind === "generator") return "分支处理中";

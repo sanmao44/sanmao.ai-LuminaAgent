@@ -39,16 +39,33 @@ export const CANGYUAN_MUSIC_OPTION_KEYS = Object.freeze([
   'sound_key',
   'sound_loop',
   'sound_tempo',
+  'force_instrumental',
+  'output_format',
+  'loop',
+  'prompt_influence',
 ] as const);
 
 export type CangyuanMusicOptionKey = typeof CANGYUAN_MUSIC_OPTION_KEYS[number];
+export type CangyuanMusicParameterRange = readonly [minimum?: number, maximum?: number];
 export type CangyuanMusicModelProfile = {
   modelId: string;
-  family: 'su2' | 'suno-v6' | 'lyria' | 'suno-sfx' | 'suno-workflow';
+  family: 'su2' | 'suno-v6' | 'lyria' | 'suno-sfx' | 'suno-workflow' | 'elevenlabs-music' | 'elevenlabs-sfx';
   supportsReferences: false;
   promptRequired: boolean;
   promptMaxLength?: number;
   titleMaxLength?: number;
+  styleTextMaxLength?: number;
+  lyricsMaxLength?: number;
+  durationRange?: CangyuanMusicParameterRange;
+  durationValues?: readonly number[];
+  durationDefault?: number;
+  durationInteger?: boolean;
+  bpmRange?: CangyuanMusicParameterRange;
+  seedRange?: CangyuanMusicParameterRange;
+  weightRange?: CangyuanMusicParameterRange;
+  soundTempoRange?: CangyuanMusicParameterRange;
+  promptInfluenceRange?: CangyuanMusicParameterRange;
+  outputFormatSuggestions?: readonly string[];
   allowedOptions: readonly CangyuanMusicOptionKey[];
 };
 
@@ -87,23 +104,51 @@ const SUNO_PERSONA_OPTIONS = Object.freeze(['sourceTaskId', 'sourceAudioId', 'so
 const SUNO_MIDI_OPTIONS = Object.freeze(['sourceTaskId', 'sourceAudioId', 'sourceTrack'] as const);
 const SUNO_WAV_OPTIONS = Object.freeze(['sourceTaskId', 'sourceAudioId', 'sourceTrack'] as const);
 const SUNO_TIMESTAMPED_LYRICS_OPTIONS = Object.freeze(['sourceTaskId', 'sourceAudioId', 'sourceTrack'] as const);
+const ELEVENLABS_MUSIC_OPTIONS = Object.freeze(['seed', 'duration', 'force_instrumental', 'output_format', 'n'] as const);
+const ELEVENLABS_SFX_OPTIONS = Object.freeze(['duration', 'loop', 'output_format', 'prompt_influence', 'n'] as const);
+const SUNO_WEIGHT_RANGE = Object.freeze([0, 1] as const);
+const SUNO_TITLE_MAX_LENGTH = 80;
+const ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS = Object.freeze(['mp3', 'mp3_hq'] as const);
 
-const workflowProfile = (modelId: string, allowedOptions: readonly CangyuanMusicOptionKey[], promptRequired = false): CangyuanMusicModelProfile => Object.freeze({
-  modelId,
-  family: 'suno-workflow',
-  supportsReferences: false,
-  promptRequired,
-  allowedOptions: Object.freeze([...allowedOptions, 'n'] as CangyuanMusicOptionKey[]),
-});
+const workflowProfile = (modelId: string, allowedOptions: readonly CangyuanMusicOptionKey[], promptRequired = false): CangyuanMusicModelProfile => {
+  const supportsWeights = allowedOptions.some((key) => ['audioWeight', 'styleWeight', 'weirdnessConstraint'].includes(key));
+  return Object.freeze({
+    modelId,
+    family: 'suno-workflow',
+    supportsReferences: false,
+    promptRequired,
+    ...(allowedOptions.includes('title') ? { titleMaxLength: SUNO_TITLE_MAX_LENGTH } : {}),
+    ...(supportsWeights ? { weightRange: SUNO_WEIGHT_RANGE } : {}),
+    allowedOptions: Object.freeze([...allowedOptions, 'n'] as CangyuanMusicOptionKey[]),
+  });
+};
 
 const CANGYUAN_MUSIC_MODEL_PROFILES: Readonly<Record<string, CangyuanMusicModelProfile>> = Object.freeze({
   'su2-suno-v6': Object.freeze({ modelId: 'su2-suno-v6', family: 'su2', supportsReferences: false, promptRequired: true, promptMaxLength: 3_000, allowedOptions: SU2_MUSIC_OPTIONS }),
   'su2-suno-v6-mini': Object.freeze({ modelId: 'su2-suno-v6-mini', family: 'su2', supportsReferences: false, promptRequired: true, promptMaxLength: 3_000, allowedOptions: SU2_MUSIC_OPTIONS }),
   'su2-suno-v6-wild': Object.freeze({ modelId: 'su2-suno-v6-wild', family: 'su2', supportsReferences: false, promptRequired: true, promptMaxLength: 3_000, allowedOptions: SU2_MUSIC_OPTIONS }),
-  'suno-v6': Object.freeze({ modelId: 'suno-v6', family: 'suno-v6', supportsReferences: false, promptRequired: true, allowedOptions: SUNO_V6_MUSIC_OPTIONS }),
-  'lyria-3.5': Object.freeze({ modelId: 'lyria-3.5', family: 'lyria', supportsReferences: false, promptRequired: true, promptMaxLength: 10_000, titleMaxLength: 160, allowedOptions: LYRIA_MUSIC_OPTIONS }),
-  'lyria-3-pro': Object.freeze({ modelId: 'lyria-3-pro', family: 'lyria', supportsReferences: false, promptRequired: true, promptMaxLength: 10_000, titleMaxLength: 160, allowedOptions: LYRIA_MUSIC_OPTIONS }),
-  'suno-sfx': Object.freeze({ modelId: 'suno-sfx', family: 'suno-sfx', supportsReferences: false, promptRequired: true, allowedOptions: SUNO_SFX_OPTIONS }),
+  'suno-v6': Object.freeze({ modelId: 'suno-v6', family: 'suno-v6', supportsReferences: false, promptRequired: true, titleMaxLength: SUNO_TITLE_MAX_LENGTH, styleTextMaxLength: 1_000, durationRange: Object.freeze([10, 360] as const), durationInteger: true, weightRange: SUNO_WEIGHT_RANGE, allowedOptions: SUNO_V6_MUSIC_OPTIONS }),
+  'lyria-3.5': Object.freeze({ modelId: 'lyria-3.5', family: 'lyria', supportsReferences: false, promptRequired: true, promptMaxLength: 10_000, titleMaxLength: 160, lyricsMaxLength: 20_000, durationRange: Object.freeze([5, 300] as const), durationInteger: true, seedRange: Object.freeze([0, 2_147_483_647] as const), bpmRange: Object.freeze([30, 300] as const), allowedOptions: LYRIA_MUSIC_OPTIONS }),
+  'lyria-3-pro': Object.freeze({ modelId: 'lyria-3-pro', family: 'lyria', supportsReferences: false, promptRequired: true, promptMaxLength: 10_000, titleMaxLength: 160, lyricsMaxLength: 20_000, durationRange: Object.freeze([5, 300] as const), durationInteger: true, seedRange: Object.freeze([0, 2_147_483_647] as const), bpmRange: Object.freeze([30, 300] as const), allowedOptions: LYRIA_MUSIC_OPTIONS }),
+  'suno-sfx': Object.freeze({ modelId: 'suno-sfx', family: 'suno-sfx', supportsReferences: false, promptRequired: true, soundTempoRange: Object.freeze([1, 300] as const), allowedOptions: SUNO_SFX_OPTIONS }),
+  'elevenlabs-music': Object.freeze({
+    modelId: 'elevenlabs-music', family: 'elevenlabs-music', supportsReferences: false, promptRequired: true,
+    promptMaxLength: 4_000, durationValues: Object.freeze([10, 30, 60, 120, 180]), durationDefault: 30,
+    durationInteger: true, seedRange: Object.freeze([0, undefined] as const),
+    outputFormatSuggestions: ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS, allowedOptions: ELEVENLABS_MUSIC_OPTIONS,
+  }),
+  'elevenlabs-sound-effects-v2': Object.freeze({
+    modelId: 'elevenlabs-sound-effects-v2', family: 'elevenlabs-sfx', supportsReferences: false, promptRequired: true,
+    promptMaxLength: 4_000, durationRange: Object.freeze([0.5, 22] as const), durationDefault: 5,
+    durationInteger: false, promptInfluenceRange: Object.freeze([0, 1] as const),
+    outputFormatSuggestions: ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS, allowedOptions: ELEVENLABS_SFX_OPTIONS,
+  }),
+  'elevenlabs-sound-effects-v3': Object.freeze({
+    modelId: 'elevenlabs-sound-effects-v3', family: 'elevenlabs-sfx', supportsReferences: false, promptRequired: true,
+    promptMaxLength: 4_000, durationRange: Object.freeze([undefined, 30] as const), durationDefault: 5,
+    durationInteger: true, promptInfluenceRange: Object.freeze([0, 1] as const),
+    outputFormatSuggestions: ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS, allowedOptions: ELEVENLABS_SFX_OPTIONS,
+  }),
   'suno-lyrics': workflowProfile('suno-lyrics', SUNO_LYRICS_OPTIONS, true),
   'suno-style-boost': workflowProfile('suno-style-boost', SUNO_STYLE_BOOST_OPTIONS, true),
   'suno-extend-audio': workflowProfile('suno-extend-audio', SUNO_EXTEND_OPTIONS, true),
@@ -131,22 +176,25 @@ export function parseCangyuanMusicOptions(value: unknown): CangyuanMusicOptions 
   const unknownKeys = Object.keys(input).filter((key) => !(CANGYUAN_MUSIC_OPTION_KEYS as readonly string[]).includes(key));
   if (unknownKeys.length) throw new Error(`未支持的音乐参数：${unknownKeys.join(', ')}`);
 
-  for (const key of ['uploadUrl', 'audioUrl', 'sourceTaskId', 'sourceAudioId', 'title', 'lyrics', 'style_text', 'negativeTags', 'personaId', 'personaName', 'personaDescription', 'personaModel', 'version', 'vocalGender', 'audio_format', 'sound_key', 'stemType', 'stemName', 'tags', 'continueAt', 'infillStartS', 'infillEndS']) {
+  for (const key of ['uploadUrl', 'audioUrl', 'sourceTaskId', 'sourceAudioId', 'title', 'lyrics', 'style_text', 'negativeTags', 'personaId', 'personaName', 'personaDescription', 'personaModel', 'version', 'vocalGender', 'audio_format', 'output_format', 'sound_key', 'stemType', 'stemName', 'tags', 'continueAt', 'infillStartS', 'infillEndS']) {
     if (input[key] !== undefined && typeof input[key] !== 'string') throw new Error(`${key} 必须是字符串`);
   }
   if (input.uploadUrls !== undefined && (!Array.isArray(input.uploadUrls) || input.uploadUrls.some((item) => typeof item !== 'string'))) {
     throw new Error('uploadUrls 必须是字符串数组');
   }
   if (input.instrumental !== undefined && typeof input.instrumental !== 'boolean') throw new Error('instrumental 必须是布尔值');
+  if (input.force_instrumental !== undefined && typeof input.force_instrumental !== 'boolean') throw new Error('force_instrumental 必须是布尔值');
   if (input.customMode !== undefined && typeof input.customMode !== 'boolean') throw new Error('customMode 必须是布尔值');
   if (input.sound_loop !== undefined && typeof input.sound_loop !== 'boolean') throw new Error('sound_loop 必须是布尔值');
+  if (input.loop !== undefined && typeof input.loop !== 'boolean') throw new Error('loop 必须是布尔值');
   if (input.n !== undefined && input.n !== 1) throw new Error('n 目前只支持 1');
-  for (const key of ['duration', 'seed', 'bpm'] as const) {
-    if (input[key] !== undefined && (typeof input[key] !== 'number' || !Number.isInteger(input[key]))) throw new Error(`${key} 必须是整数`);
+  if (input.duration !== undefined && (typeof input.duration !== 'number' || !Number.isFinite(input.duration))) throw new Error('duration 必须是有限数字');
+  for (const key of ['seed', 'bpm'] as const) {
+    if (input[key] !== undefined && (typeof input[key] !== 'number' || !Number.isSafeInteger(input[key]))) throw new Error(`${key} 必须是安全整数`);
   }
   if (input.sourceTrack !== undefined && (typeof input.sourceTrack !== 'number' || !Number.isInteger(input.sourceTrack))) throw new Error('sourceTrack 必须是整数');
   if (input.sound_tempo !== undefined && (typeof input.sound_tempo !== 'number' || !Number.isFinite(input.sound_tempo))) throw new Error('sound_tempo 必须是有限数字');
-  for (const key of ['audioWeight', 'styleWeight', 'weirdnessConstraint']) {
+  for (const key of ['audioWeight', 'styleWeight', 'weirdnessConstraint', 'prompt_influence']) {
     if (input[key] !== undefined && (typeof input[key] !== 'number' || !Number.isFinite(input[key]))) throw new Error(`${key} 必须是有限数字`);
   }
 
@@ -158,9 +206,8 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
   if (!profile) throw new Error(`音乐模型尚未接入：${modelId}`);
   if (typeof input.prompt !== 'string' && input.prompt !== undefined) throw new Error('音乐描述必须是字符串');
   const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
-  if (profile.promptRequired && (!prompt || profile.promptMaxLength !== undefined && prompt.length > profile.promptMaxLength)) {
-    throw new Error(profile.promptMaxLength === undefined ? '请输入音乐生成描述' : `音乐描述长度必须为 1–${profile.promptMaxLength} 个字符`);
-  }
+  if (profile.promptRequired && !prompt) throw new Error('请输入音乐生成描述');
+  if (profile.promptMaxLength !== undefined && prompt.length > profile.promptMaxLength) throw new Error(`音乐描述最多 ${profile.promptMaxLength} 个字符`);
 
   const { prompt: _prompt, ...rawOptions } = input;
   const options = parseCangyuanMusicOptions(rawOptions);
@@ -235,21 +282,30 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
     options.personaDescription = options.personaDescription?.trim();
     if (!options.personaName || !options.personaDescription) throw new Error('suno-persona 必须提供 personaName 和 personaDescription');
   }
-  if (options.title !== undefined && options.title.length > (profile.titleMaxLength ?? 80)) throw new Error(`title 最多 ${profile.titleMaxLength ?? 80} 个字符`);
-  if (options.style_text !== undefined && options.style_text.length > 1_000) throw new Error('style_text 最多 1,000 个字符');
-  if (options.lyrics !== undefined && options.lyrics.length > 20_000) throw new Error('lyrics 最多 20,000 个字符');
-  if (options.duration !== undefined) {
-    const min = profile.family === 'lyria' ? 5 : 10;
-    const max = profile.family === 'lyria' ? 300 : 360;
-    if (options.duration < min || options.duration > max) throw new Error(`duration 必须是 ${min}–${max} 秒之间的整数`);
+  if (options.title !== undefined && profile.titleMaxLength !== undefined && options.title.length > profile.titleMaxLength) {
+    throw new Error(`曲名最多 ${profile.titleMaxLength} 个字符`);
   }
-  if (options.seed !== undefined && (options.seed < 0 || options.seed > 2_147_483_647)) throw new Error('seed 必须是 0–2147483647 之间的整数');
-  if (options.bpm !== undefined && (options.bpm < 30 || options.bpm > 300)) throw new Error('bpm 必须是 30–300 之间的整数');
+  if (options.style_text !== undefined && profile.styleTextMaxLength !== undefined && options.style_text.length > profile.styleTextMaxLength) {
+    throw new Error(`音乐风格描述最多 ${profile.styleTextMaxLength} 个字符`);
+  }
+  if (options.lyrics !== undefined && profile.lyricsMaxLength !== undefined && options.lyrics.length > profile.lyricsMaxLength) {
+    throw new Error(`歌词最多 ${profile.lyricsMaxLength} 个字符`);
+  }
+  if (options.duration !== undefined && options.duration <= 0) throw new Error('时长必须大于 0 秒');
+  if (options.duration !== undefined && profile.durationInteger !== false && !Number.isInteger(options.duration)) {
+    throw new Error('时长必须是整数秒');
+  }
+  if (options.duration !== undefined && profile.durationValues && !profile.durationValues.includes(options.duration)) {
+    throw new Error(`elevenlabs-music 时长仅支持 ${profile.durationValues.join('、')} 秒`);
+  }
+  validateMusicRange(profile.modelId, '目标时长', options.duration, profile.durationRange, '秒');
+  validateMusicRange(profile.modelId, '固定生成编号', options.seed, profile.seedRange);
+  validateMusicRange(profile.modelId, '节奏速度', options.bpm, profile.bpmRange);
   if (options.audio_format !== undefined && !['mp3', 'wav', 'm4a'].includes(options.audio_format)) throw new Error('audio_format 必须是 mp3、wav 或 m4a');
-  for (const key of ['audioWeight', 'styleWeight', 'weirdnessConstraint'] as const) {
-    const value = options[key];
-    if (value !== undefined && (value < 0 || value > 1)) throw new Error(`${key} 必须在 0–1 之间`);
+  for (const [key, label] of [['audioWeight', '参考音频影响'], ['styleWeight', '风格贴合度'], ['weirdnessConstraint', '创作变化程度']] as const) {
+    validateMusicRange(profile.modelId, label, options[key], profile.weightRange);
   }
+  validateMusicRange(profile.modelId, '描述影响度', options.prompt_influence, profile.promptInfluenceRange);
   if (options.version !== undefined) {
     options.version = options.version.trim();
     if (!options.version) throw new Error('生成版本不能为空');
@@ -258,9 +314,24 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
     options.vocalGender = options.vocalGender.trim();
     if (!options.vocalGender) throw new Error('人声类型不能为空');
   }
-  if (options.sound_tempo !== undefined && (options.sound_tempo < 1 || options.sound_tempo > 300)) throw new Error('sound_tempo 必须是 1–300 之间的数字');
+  if (options.output_format !== undefined) {
+    options.output_format = options.output_format.trim();
+    if (!options.output_format) throw new Error('输出格式不能为空');
+  }
+  validateMusicRange(profile.modelId, '音效节奏速度', options.sound_tempo, profile.soundTempoRange);
 
   return { ...options, prompt };
+}
+
+function validateMusicRange(modelId: string, label: string, value: number | undefined, range: CangyuanMusicParameterRange | undefined, unit = '') {
+  if (value === undefined || !range) return;
+  const [minimum, maximum] = range;
+  if (minimum !== undefined && maximum !== undefined) {
+    if (value < minimum || value > maximum) throw new Error(`${modelId} 的${label}必须在 ${minimum}–${maximum}${unit ? ` ${unit}` : ''} 之间`);
+    return;
+  }
+  if (minimum !== undefined && value < minimum) throw new Error(`${modelId} 的${label}不能小于 ${minimum}${unit}`);
+  if (maximum !== undefined && value > maximum) throw new Error(`${modelId} 的${label}不能大于 ${maximum}${unit}`);
 }
 
 export type CangyuanMusicOptions = {
@@ -299,6 +370,10 @@ export type CangyuanMusicOptions = {
   sound_key?: string;
   sound_loop?: boolean;
   sound_tempo?: number;
+  force_instrumental?: boolean;
+  output_format?: string;
+  loop?: boolean;
+  prompt_influence?: number;
 };
 
 export type Cangyuan3DMode = 'text-to-3d' | 'image-to-3d' | 'multiview-to-3d';

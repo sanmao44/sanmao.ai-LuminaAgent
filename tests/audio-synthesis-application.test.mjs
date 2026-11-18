@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
 
 const { main: application } = await buildLibModules(
   ['apps/api/audio-synthesis-application', 'packages/contracts/audio-synthesis'],
   'audio-synthesis-application',
 );
+const speechContract = createTsRequire(process.cwd())('./packages/contracts/audio-synthesis');
 
 test('audio synthesis classifies transport failures as provider-result-unconfirmed', () => {
   assert.equal(application.audioSynthesisFailureCode(Object.assign(new Error('服务商在约 2 分钟内没有返回结果'), { name: 'TimeoutError' })), 'provider_result_unconfirmed');
@@ -43,6 +45,76 @@ test('audio synthesis preserves model-specific format and speed options through 
   assert.deepEqual(received, {
     text: '语音参数', modelId: 'gemini-id', voice: 'Ursa', format: 'flac', speed: 1.25,
   });
+});
+
+test('speech profiles distinguish official model limits from the platform input cap and resolve engine defaults', () => {
+  assert.equal(speechContract.SPEECH_PLATFORM_TEXT_LIMIT, 5000);
+  assert.equal(speechContract.getSpeechModelProfile('gemini-tts').textMaxLength, undefined);
+  assert.equal(speechContract.getSpeechModelProfile('mu1-muse-tts').textMaxLength, undefined);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts'), ['mp3', 'wav']);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'minimax-speech-2.6-hd'), ['mp3', 'flac']);
+  assert.deepEqual(speechContract.getSpeechModelResponseFormats('voice-clone-tts', 'elevenlabs-v4-turbo'), ['mp3', 'wav', 'opus', 'pcm']);
+  assert.deepEqual(speechContract.getSpeechModelSpeedRange('voice-clone-tts', 'elevenlabs-v4'), { min: 0.7, max: 1.2 });
+  assert.deepEqual(speechContract.getSpeechModelAdvancedOptions('gemini-tts', { engine: 'turbo', voiceId: 'stale' }), {});
+  assert.deepEqual(speechContract.getSpeechModelProfile('voice-clone-tts').languageCodes, ['auto', 'ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko']);
+  assert.ok(speechContract.getSpeechModelProfile('voice-clone-tts').emotionOptions.includes('disgusted'));
+});
+
+test('audio synthesis validates voice-clone engine, format, language, emotion, and numeric bounds', async () => {
+  let received;
+  const port = { synthesize: async (input) => {
+    received = input;
+    return { data: new Uint8Array([1]), contentType: 'audio/flac', extension: 'flac', engine: 'provider' };
+  } };
+  await application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice',
+    engine: 'minimax-speech-2.6-hd', language: 'zh', emotion: 'disgusted', speed: 1,
+    format: 'flac', seed: 0, similarityBoost: 0.75, stability: 0.5, instruct: '语气温和',
+  }, port);
+  assert.equal(received.engine, 'minimax-speech-2.6-hd');
+  assert.equal(received.emotion, 'disgusted');
+  assert.equal(received.voiceId, 'registered-voice');
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', format: 'flac',
+  }, port), /引擎组合不支持 flac/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', engine: 'unknown-engine',
+  }, port), /引擎不在当前型号支持范围内/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', language: 'pl',
+  }, port), /声音语言不受当前型号支持/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', emotion: 'calm',
+  }, port), /情绪不受当前型号支持/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', voiceId: 'registered-voice', speed: 2.1,
+  }, port), /语速需在 0.5–2/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '克隆音色测试', modelId: 'provider:voice-clone-tts', engine: 'qwen3',
+  }, port), /需要已登记的音色编号/);
+});
+
+test('dialogue synthesis keeps the required description and structured lines while enforcing documented limits', async () => {
+  let received;
+  const port = { synthesize: async (input) => {
+    received = input;
+    return { data: new Uint8Array([1]), contentType: 'audio/mpeg', extension: 'mp3', engine: 'provider' };
+  } };
+  await application.synthesizeAudioRequest({
+    text: '两位角色在车站道别', modelId: 'provider:elevenlabs-dialogue',
+    dialogue: [{ voice: 'Rachel', text: '一路顺风。' }, { voice: 'Roger', text: '回头见。' }], stability: 0.4,
+  }, port);
+  assert.deepEqual(received.dialogue, [
+    { voice: 'Rachel', text: '一路顺风。' }, { voice: 'Roger', text: '回头见。' },
+  ]);
+  assert.equal(received.text, '两位角色在车站道别');
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '两位角色在车站道别', modelId: 'provider:elevenlabs-dialogue', dialogue: 1,
+  }, port), /1 到 50 句/);
+  await assert.rejects(application.synthesizeAudioRequest({
+    text: '对白说明', modelId: 'provider:elevenlabs-dialogue', dialogue: [{ voice: 'Rachel', text: '台词' }],
+    engine: 'turbo',
+  }, port), /不支持这些设置：语音引擎/);
 });
 
 test('audio generation log metadata preserves the requested voice and automatic model preference', () => {

@@ -2,6 +2,7 @@ import type { McpApprovalPolicy } from '@/lib/agent/approval';
 import type { AgentModelHealthRecord } from '@/lib/agent/model-health';
 import type { VideoModelParameterValues } from '@/packages/contracts/video-generation';
 import type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
+import type { AudioModelClassification } from '@/packages/contracts/model-classification';
 
 export type { ProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
 
@@ -103,6 +104,8 @@ export type ModelCapability =
   | 'speech'
   | 'transcription'
   | 'music-generate'
+  | 'sound-effect'
+  | 'audio-conversation'
   | '3d-generate'
   | 'web-search'
   | 'video-generate'
@@ -127,6 +130,8 @@ export type RegistryModel = {
   enabled: boolean;
   published: boolean;
   capabilities: ModelCapability[];
+  /** How the model's primary/audio purpose was determined. Optional for legacy records. */
+  classification?: AudioModelClassification;
   billing?: ModelBilling;
   enabledByDefault?: boolean;
   contextWindow?: number;

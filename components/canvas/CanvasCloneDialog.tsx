@@ -61,6 +61,14 @@ const ASPECT_LABELS: Record<CloneOptions["aspect"], string> = {
 };
 
 const VOICE_PRESETS = ["alloy", "echo", "fable", "nova", "onyx", "shimmer"];
+const VOICE_PRESET_LABELS: Record<string, string> = {
+  alloy: "均衡",
+  echo: "沉稳",
+  fable: "叙事",
+  nova: "明亮",
+  onyx: "低沉",
+  shimmer: "柔和",
+};
 const TERMINAL_STAGES: CloneJob["stage"][] = ["done", "failed", "cancelled"];
 const PLAN_STAGE: CloneJob["stage"] = "planned";
 /** 失败任务只在 24 小时内自动接回：陈年失败任务否则会永远顶掉向导，每次打开弹窗都得先关掉它。 */
@@ -167,6 +175,7 @@ export default function CanvasCloneDialog({
   const [variantRendering, setVariantRendering] = useState(false);
 
   const flags = useMemo(() => cloneCapabilityFlags(models), [models]);
+  const voicePresetValue = VOICE_PRESETS.includes(voice) ? voice : "__custom__";
   const reference = references.find((item) => item.nodeId === referenceId) || null;
   const allAssets = useMemo(() => [...assets, ...uploadedAssets], [assets, uploadedAssets]);
   const selectedAssetOptions = useMemo(
@@ -944,10 +953,16 @@ export default function CanvasCloneDialog({
                   {flags.hasSpeechModel && (
                     <label className="clone-field">
                       <span>配音音色</span>
-                      <input list="clone-voice-presets" value={voice} maxLength={40} placeholder="留空用服务商默认音色" onChange={(event) => setVoice(event.target.value)} />
-                      <datalist id="clone-voice-presets">
-                        {VOICE_PRESETS.map((preset) => <option key={preset} value={preset} />)}
-                      </datalist>
+                      <SelectMenu
+                        value={voicePresetValue}
+                        ariaLabel="配音音色预设"
+                        options={[
+                          { value: "__custom__", label: voice ? "自定义音色" : "服务商默认音色" },
+                          ...VOICE_PRESETS.map((preset) => ({ value: preset, label: VOICE_PRESET_LABELS[preset] })),
+                        ]}
+                        onChange={(value) => setVoice(value === "__custom__" ? "" : value)}
+                      />
+                      {voicePresetValue === "__custom__" && <input value={voice} maxLength={40} placeholder="可填写服务商支持的音色名称" onChange={(event) => setVoice(event.target.value)} />}
                     </label>
                   )}
                 </div>

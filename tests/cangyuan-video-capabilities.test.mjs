@@ -48,7 +48,8 @@ test('Cangyuan Seedance profiles use exact documented sdN model IDs', () => {
 
 test('the official current video catalog is complete and models with empty specs are blocked', () => {
   const catalog = getCangyuanVideoModelCatalog();
-  assert.equal(catalog.length, 139);
+  assert.equal(catalog.length, 140);
+  assert.ok(catalog.some((entry) => entry.publicModel === 'sd23-seedance-2.5-2'));
   assert.ok(catalog.every((entry) => entry.status === 'current' && entry.spec.publicModel === entry.publicModel));
   for (const entry of catalog.filter((model) => model.spec.params.length > 0)) {
     assert.equal(getCangyuanVideoModelSpec(entry.publicModel), entry.spec);

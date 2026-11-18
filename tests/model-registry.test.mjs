@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/model-registry.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
@@ -68,6 +69,47 @@ test('builds manual music and 3D models with their specific generation capabilit
   assert.ok(threeD.capabilities.includes('3d-generate'));
 });
 
+test('keeps manually selected transcription models out of the speech bucket', () => {
+  const transcription = registry.buildManualModelRecord({
+    id: 'manual-asr',
+    providerId: 'provider-1',
+    providerName: '通用接口',
+    rawId: 'asr-v1',
+    displayName: '语音转写 v1',
+    kind: 'audio',
+    inferred: { kind: 'audio', capabilities: ['transcription'] },
+  });
+  assert.ok(transcription.capabilities.includes('transcription'));
+  assert.ok(!transcription.capabilities.includes('speech'));
+});
+
+test('manual audio models can remain unrouted until their purpose is confirmed', () => {
+  const pending = registry.buildManualModelRecord({
+    id: 'manual-audio',
+    providerId: 'provider-1',
+    providerName: '通用接口',
+    rawId: 'vendor-audio-v1',
+    displayName: '未知音频模型',
+    kind: 'audio',
+    inferred: { kind: 'audio', capabilities: [] },
+  });
+  assert.deepEqual(pending.capabilities, []);
+  assert.deepEqual(pending.classification?.purposes, []);
+  assert.equal(pending.classification?.requiresReview, true);
+});
+
+test('pending audio models appear in review filters, not speech filters', () => {
+  const { modelMatchesLibraryCategory, modelLibraryCategoryLabel } = createTsRequire(process.cwd())('./lib/model-library-categories');
+  const pending = registry.buildManualModelRecord({
+    id: 'manual-audio', providerId: 'provider-1', providerName: '通用接口',
+    rawId: 'vendor-audio-v1', displayName: '未知音频模型', kind: 'audio',
+    inferred: { kind: 'audio', capabilities: [] },
+  });
+  assert.equal(modelMatchesLibraryCategory(pending, 'unknown'), true);
+  assert.equal(modelMatchesLibraryCategory(pending, 'speech'), false);
+  assert.equal(modelLibraryCategoryLabel(pending), '音频用途待确认');
+});
+
 test('preserves manual models and enabled state when upstream returns the same ID', () => {
   const existing = model({ id: 'manual-1', source: 'manual', enabled: true, published: true });
   const discovered = model({ id: 'discovered-1', source: 'discovered', enabled: false, published: false, displayName: 'Upstream name' });
@@ -78,6 +120,12 @@ test('preserves manual models and enabled state when upstream returns the same I
   assert.equal(merged[0].enabled, true);
   assert.equal(merged[0].published, true);
   assert.equal(merged[0].displayName, 'Upstream name');
+});
+
+test('provider refresh replaces stale discovered audio purposes', () => {
+  const previous = model({ source: 'discovered', capabilities: ['chat', 'speech'] });
+  const capabilities = registry.reconcileDiscoveredModelCapabilities(previous, ['transcription']);
+  assert.deepEqual(capabilities, ['chat', 'transcription']);
 });
 
 test('keeps a manual model missing from the latest upstream list and removes duplicate IDs', () => {

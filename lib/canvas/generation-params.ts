@@ -14,7 +14,7 @@ export function defaultMediaParams(
   kind: CanvasMediaKind,
   runtime: CanvasRuntimeState | null,
 ): { params?: CanvasGenerationParams } {
-  return kind === "audio" ? {} : { params: defaultCanvasGenerationParams(kind, runtime) };
+  return kind === "audio" || kind === "3d" ? {} : { params: defaultCanvasGenerationParams(kind, runtime) };
 }
 
 export function defaultCanvasGenerationParams(

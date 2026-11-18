@@ -1,10 +1,11 @@
 import type { CanvasNode } from "./types";
+import type { CanvasReferenceableNode } from "./model";
 import type { CanvasReferenceDraft } from "./reuse";
 import { isCanvasReferenceableNode } from "./model";
 
 export type CanvasReferenceableNodePredicate = (
   node: CanvasNode | undefined,
-) => boolean;
+) => node is CanvasReferenceableNode;
 
 export function createCanvasReferenceDraft(
   node: CanvasNode,

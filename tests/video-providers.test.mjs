@@ -7,8 +7,8 @@ import ts from 'typescript';
 const sourceUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
 const cangyuanCapabilitiesSource = await readFile(new URL('../lib/cangyuan-video-capabilities.ts', import.meta.url), 'utf8');
-const cangyuanModelCatalogSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.ts', import.meta.url), 'utf8');
-const cangyuanGeneratedModelCatalogSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.generated.ts', import.meta.url), 'utf8');
+const cangyuanVideoCatalogGeneratedSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.generated.ts', import.meta.url), 'utf8');
+const cangyuanVideoCatalogSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.ts', import.meta.url), 'utf8');
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
 const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
@@ -26,10 +26,10 @@ const signedCompiled = ts.transpileModule(signedSource
   fileName: new URL('../lib/signed-media.ts', import.meta.url).pathname,
 }).outputText;
 const signedModuleUrl = `data:text/javascript;base64,${Buffer.from(signedCompiled).toString('base64')}`;
-const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanGeneratedModelCatalogSource}\n${cangyuanModelCatalogSource
-  .replace("import { CANGYUAN_VIDEO_MODEL_CATALOG } from './cangyuan-video-model-catalog.generated';", '')}\n${cangyuanCapabilitiesSource
-  .replace("import { getCangyuanVideoModelSpec, getCangyuanVideoParameter } from './cangyuan-video-model-catalog';", '')
-  .replace("import { cangyuanVideoParameterLabel, cangyuanVideoParameterLabelByName, getCangyuanVideoAdvancedParameters } from './cangyuan-video-model-catalog';", '')}\n${cangyuanProviderSource}\n${source
+const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanVideoCatalogGeneratedSource}\n${cangyuanVideoCatalogSource
+  .replace("import { CANGYUAN_VIDEO_MODEL_CATALOG } from './cangyuan-video-model-catalog.generated';", '')
+  .replace("import { speechVoiceLabel } from '@/packages/contracts/audio-synthesis';", 'const speechVoiceLabel = () => "";')}\n${cangyuanCapabilitiesSource
+  .replace(/import \{[^}]+\} from '\.\/cangyuan-video-model-catalog';\r?\n/g, '')}\n${cangyuanProviderSource}\n${source
   .replace(/import \{[^}]+\} from '\.\/video-platform';\r?\n/, '')
   .replace("import { isJimengCanvasCliAvailable, resolveJimengCanvasCliCommand } from './jimeng-cli';", "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';")
   .replace("import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';", '')
@@ -140,7 +140,7 @@ test('Cangyuan video submission rejects models outside the official catalog', as
   assert.equal(request, undefined);
 });
 
-test('recognizes an existing Cangyuan API hostname when its provider was saved as a generic platform', async () => {
+test('recognizes an existing Cangyuan API hostname with a documented model when its provider was saved as generic', async () => {
   let request;
   globalThis.fetch = async (url, init) => {
     request = { url: String(url), init };

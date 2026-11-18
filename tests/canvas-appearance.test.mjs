@@ -16,6 +16,7 @@ const appearance = await import(
 test('maps every canvas node category to a stable semantic color key', () => {
   const cases = [
     [{ type: 'media', data: { kind: 'image' } }, 'image'],
+    [{ type: 'media', data: { kind: '3d' } }, 'three-d'],
     [{ type: 'media', data: { kind: 'video' } }, 'video'],
     [{ type: 'video-editor', data: {} }, 'video-editor'],
     [{ type: 'angle', data: {} }, 'angle'],

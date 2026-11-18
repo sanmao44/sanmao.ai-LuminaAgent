@@ -5,4 +5,17 @@
 .cangyuan-music-advanced[open]>summary::after{content:"−"}
 .cangyuan-music-advanced[open]>.cangyuan-music-fields-grid{margin-top:9px}
 .cangyuan-music-advanced>.cangyuan-music-ranges{margin-top:9px}
+.cangyuan-checkbox-field input{display:grid;place-items:center;flex:none;width:15px;height:15px;margin:0;appearance:none;border:1px solid var(--line-strong);border-radius:4px;background:var(--panel);color:var(--accent-contrast,#fff);cursor:pointer;transition:border-color .14s,background .14s,box-shadow .14s}
+.cangyuan-checkbox-field input::before{content:"✓";font:700 10px/1 system-ui,sans-serif;transform:scale(0);transition:transform .12s ease}
+.cangyuan-checkbox-field input:checked{border-color:var(--accent);background:var(--accent)}
+.cangyuan-checkbox-field input:checked::before{transform:scale(1)}
+.cangyuan-checkbox-field input:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:2px}
+.cangyuan-checkbox-field input:disabled{opacity:.5;cursor:not-allowed}
+.cangyuan-music-range-field input{height:18px;appearance:none;background:transparent;cursor:pointer}
+.cangyuan-music-range-field input::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:color-mix(in srgb,var(--accent) 22%,var(--panel-3))}
+.cangyuan-music-range-field input::-moz-range-track{height:4px;border-radius:999px;background:color-mix(in srgb,var(--accent) 22%,var(--panel-3))}
+.cangyuan-music-range-field input::-webkit-slider-thumb{width:14px;height:14px;margin-top:-5px;appearance:none;border:2px solid var(--panel);border-radius:50%;background:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,var(--line))}
+.cangyuan-music-range-field input::-moz-range-thumb{width:11px;height:11px;border:2px solid var(--panel);border-radius:50%;background:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 45%,var(--line))}
+.cangyuan-music-range-field input:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:3px;border-radius:999px}
+.cangyuan-music-range-field input:disabled{opacity:.5;cursor:not-allowed}
 .cangyuan-music-advanced .cangyuan-music-text-field small{color:var(--muted);font-size:9px;font-weight:400;line-height:1.35}

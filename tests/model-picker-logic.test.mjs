@@ -39,6 +39,18 @@ test('model capability requirements require every requested capability', () => {
   assert.equal(picker.modelSupportsCapabilityRequirements(generateOnlyModel, ['edit']), false);
 });
 
+test('task pickers follow explicit capabilities and retain models with multiple declared audio uses', () => {
+  const tts = { ...model('tts-model'), kind: 'audio', rawId: 'vendor/cosyvoice-v2', capabilities: ['speech'] };
+  const dualUse = { ...model('dual-use'), kind: 'audio', rawId: 'vendor/audio-model', capabilities: ['speech', 'transcription'] };
+  const transcriptionOnly = { ...model('asr-model'), kind: 'audio', rawId: 'vendor/asr-v1', capabilities: ['transcription'] };
+
+  assert.equal(picker.modelSupportsCapabilityRequirements(tts, ['speech']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(dualUse, ['speech']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(dualUse, ['transcription']), true);
+  assert.equal(picker.modelSupportsCapabilityRequirements(transcriptionOnly, ['speech']), false);
+  assert.equal(picker.modelSupportsCapabilityRequirements(transcriptionOnly, ['transcription']), true);
+});
+
 test('ordinary chat pickers exclude active and legacy internal JEV models', () => {
   const chatModel = (rawId) => ({
     ...model(rawId),

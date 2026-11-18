@@ -1,5 +1,7 @@
 import type { GeneratedImage, ModelCapability, ProviderCreativeTaskProtocol, ProviderPlatform, ProviderTextProtocol, ProviderType, VideoTransport } from './types';
 import type { ModelProviderFailure } from '@/packages/contracts/model';
+import type { AudioModelClassification } from '@/packages/contracts/model-classification';
+import { classifyAudioModelPurpose } from './audio-model-classification';
 import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';
 import type { ImageModelParameters, ImageOutputFormat } from '@/packages/contracts/creative';
 import type { ImageDownloadAuth } from './image-storage';
@@ -10,6 +12,7 @@ import { inspectJimengCli } from './jimeng-cli';
 import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import type { CangyuanImageAdvancedParameter, CangyuanImageModelProfile } from './cangyuan-image-capabilities';
 import { isCangyuanProvider } from './cangyuan-provider';
+import { getCangyuanVideoModelCatalogEntry } from './cangyuan-video-model-catalog';
 import { isSvgImageBytes } from './svg-image';
 import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';
 import { isIP } from 'node:net';
@@ -56,6 +59,7 @@ export type DiscoveredModel = {
   id: string;
   name?: string;
   capabilities?: ModelCapability[];
+  classification?: AudioModelClassification;
   nativeSearchProtocol?: 'openai-responses' | 'gemini-grounding' | 'native-chat';
   nativeSearchDetection?: 'metadata' | 'model-id' | 'provider' | 'manual';
   billing?: 'free' | 'paid' | 'temporary-free';
@@ -187,8 +191,26 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
     if (/audio|sound/.test(text)) capabilities.push('video-audio');
   }
+  const cangyuanVideoEntry = getCangyuanVideoModelCatalogEntry(id);
+  if (
+    isCangyuanProvider(provider)
+    && cangyuanVideoEntry?.status === 'current'
+    && cangyuanVideoEntry.spec.capabilityRefs?.includes('video')
+    && !capabilities.includes('video-generate')
+  ) {
+    capabilities.push('video-generate');
+  }
   if (/audio[-_ ]?transcri|\/audio\/transcriptions|speech[-_ ]?to[-_ ]?text|\basr\b|\bstt\b/i.test(text)) {
     capabilities.push('transcription');
+  }
+  if (/text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synthesis|generation)|\btts\b|\/audio\/speech(?:[/?"'\s]|$)/i.test(text)) {
+    capabilities.push('speech');
+  }
+  if (/text[-_ ]?to[-_ ]?music|music[-_ ]?(?:generation|generate|creation)|\/music\/(?:generations|generate)(?:[/?"'\s]|$)/i.test(text)) {
+    capabilities.push('music-generate');
+  }
+  if (/(?:sound[-_ ]?effects?|\bsfx\b|foley)/i.test(text)) {
+    capabilities.push('sound-effect');
   }
   // Some OpenAI-compatible model registries return only an id and omit
   // endpoint metadata. Keep discovery consistent with the shared model-kind
@@ -956,17 +978,32 @@ export function normalizeDiscoveredModels(data: any, provider?: RuntimeProvider)
     if (typeof item === 'string' || typeof item === 'number') {
       const id = String(item).trim();
       const inferred = inferNativeSearch(id, provider?.platform);
-      return id ? { id, name: id, ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol, nativeSearchDetection: inferred.detection } : {}), ...(inferred.detected ? { capabilities: ['web-search' as const] } : {}) } : null;
+      const capabilities = discoveredModelCapabilities({ id }, provider, id);
+      if (inferred.detected && !capabilities.includes('web-search')) capabilities.push('web-search');
+      const classification = id ? classifyAudioModelPurpose({ modelId: id, providerPlatform: provider?.platform }) : undefined;
+      return id ? { id, name: id, ...(capabilities.length ? { capabilities } : {}), ...(classification && (classification.purposes.length || /audio|speech|voice|music|sound|asr|tts|transcri/i.test(id)) ? { classification } : {}), ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol, nativeSearchDetection: inferred.detection } : {}) } : null;
     }
     const id = String(item?.id || item?.model || item?.model_id || item?.modelId || item?.name || item?.slug || '').trim();
     if (!id) return null;
     const name = String(item?.name || item?.display_name || item?.displayName || id).trim() || id;
     const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata, item?.endpoints, item?.endpoint, item?.operations, item?.pricing, item?.pricing_info].filter(Boolean);
     const inferred = inferNativeSearch(id, provider?.platform, raw);
+    const audioClassification = classifyAudioModelPurpose({
+      modelId: id,
+      displayName: name,
+      declaredCapabilities: [item?.capabilities, item?.features, item?.modalities].flatMap((value) => Array.isArray(value) ? value.map(String) : []),
+      metadata: item,
+      endpoint: String(item?.endpoint || item?.path || item?.url || ''),
+      providerPlatform: provider?.platform,
+    });
+    const classification = audioClassification.purposes.length || /audio|speech|voice|music|sound|asr|tts|transcri/i.test(`${id} ${name}`)
+      ? audioClassification
+      : undefined;
     return {
       id,
       name,
       capabilities: discoveredModelCapabilities(item, provider, id),
+      ...(classification ? { classification } : {}),
       ...(inferred.protocol ? { nativeSearchProtocol: inferred.protocol } : {}),
       ...(inferred.detection ? { nativeSearchDetection: inferred.detection } : {}),
     };

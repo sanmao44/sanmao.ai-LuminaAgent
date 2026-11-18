@@ -17,6 +17,7 @@ import { CanvasPanelShell } from "@/components/canvas/CanvasPanels";
 import SelectMenu, { type SelectMenuOption } from "@/components/SelectMenu";
 import CanvasProjectProgressPanel from "@/components/canvas/CanvasProjectProgressPanel";
 import { GenerationLogAudioPlayer } from "@/components/GenerationLogAudio";
+import GenerationModelBadge from "@/components/GenerationModelBadge";
 import { deriveCanvasProjectProgress, type CanvasProjectProgressAction } from "@/lib/canvas/project-progress";
 import { deriveCanvasProjectQuality } from "@/lib/canvas/project-quality";
 import { deriveCanvasWorkspaceRecommendation } from "@/lib/canvas/workspace-recommendation";
@@ -397,7 +398,9 @@ export default function CanvasActivityDrawer({
             </div>
             {batchRetryRunning && batchRetryKind === "video" && batchRetryProgress ? <div className="canvas-batch-video-retry-progress" role="status" aria-live="polite">
               <span>正在提交 {batchRetryProgress.completed} / {batchRetryProgress.total}</span>
-              <progress value={batchRetryProgress.completed} max={batchRetryProgress.total} aria-label="批量重试进度" />
+              <span className="canvas-batch-progress-bar" role="progressbar" aria-label="批量重试进度" aria-valuemin={0} aria-valuemax={batchRetryProgress.total} aria-valuenow={batchRetryProgress.completed}>
+                <i style={{ width: `${batchRetryProgress.total ? Math.round((batchRetryProgress.completed / batchRetryProgress.total) * 100) : 0}%` }} />
+              </span>
             </div> : batchRetryConfirm === "video" ? <div className="canvas-batch-video-retry-confirm">
               <span>将仅重试当前筛选列表中的失败项，按原参数创建新视频任务；每项可能产生费用，原失败记录会保留。</span>
               <div>
@@ -417,7 +420,9 @@ export default function CanvasActivityDrawer({
             </div>
             {batchRetryRunning && batchRetryKind === "upscale" && batchRetryProgress ? <div className="canvas-batch-upscale-retry-progress" role="status" aria-live="polite">
               <span>正在提交 {batchRetryProgress.completed} / {batchRetryProgress.total}</span>
-              <progress value={batchRetryProgress.completed} max={batchRetryProgress.total} aria-label="超分批量重试进度" />
+              <span className="canvas-batch-progress-bar" role="progressbar" aria-label="超分批量重试进度" aria-valuemin={0} aria-valuemax={batchRetryProgress.total} aria-valuenow={batchRetryProgress.completed}>
+                <i style={{ width: `${batchRetryProgress.total ? Math.round((batchRetryProgress.completed / batchRetryProgress.total) * 100) : 0}%` }} />
+              </span>
             </div> : batchRetryConfirm === "upscale" ? <div className="canvas-batch-upscale-retry-confirm">
               <span>将仅重试当前筛选列表中符合条件的超分失败项，按原参数新建任务；可能产生费用，原失败记录会保留。</span>
               <div>
@@ -548,8 +553,8 @@ export default function CanvasActivityDrawer({
                         : <span className={showPendingSpinner ? "loading" : "placeholder"}>{showPendingSpinner ? "◌" : kind === "video" ? "▶" : "▣"}</span>}
                 </div>
                 <div className="canvas-task-log-status">{locallyStopped ? "已停止等待" : resultUnconfirmed || stale ? "结果待确认" : generationLogStatusLabel(log.status)}</div>
-                <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · {log.modelName || "自动选择模型"} · {log.providerName || "等待服务商响应"}</small>{displayStatus === "pending" && <small className="pending-note">{locallyStopped ? "已停止画布中的等待；服务商状态未知，稍后仍可能收到结果" : resultUnconfirmed ? kind === "image" ? "服务商可能已接收，结果待核对；不会重复提交" : "服务商可能已接收，请先检查音频素材和生成记录，再决定是否重试" : stale ? `${generationLogDuration(log)} 未收到完成回执；服务商可能仍在处理` : "正在等待服务商返回结果"}</small>}{log.error && !resultUnconfirmed && !stale && <small className="error-note">{log.error}</small>}</div>
-                <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : kind === "audio" ? "1 条音频" : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : kind === "audio" ? `${log.modelName || "本机语音"} · 配音` : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
+                <div className="canvas-task-log-main"><strong>{log.prompt || "未填写提示词"}</strong><small>{log.presetName ? `预设：${log.presetName} · ` : ""}{log.source === "agent" ? "Agent" : "画布生成"} · <GenerationModelBadge modelId={log.modelId} requestedModelId={log.requestedModelId} modelName={log.modelName} providerName={log.providerName} /> · {log.providerName || "等待服务商响应"}</small>{displayStatus === "pending" && <small className="pending-note">{locallyStopped ? "已停止画布中的等待；服务商状态未知，稍后仍可能收到结果" : resultUnconfirmed ? kind === "image" ? "服务商可能已接收，结果待核对；不会重复提交" : "服务商可能已接收，请先检查音频素材和生成记录，再决定是否重试" : stale ? `${generationLogDuration(log)} 未收到完成回执；服务商可能仍在处理` : "正在等待服务商返回结果"}</small>}{log.error && !resultUnconfirmed && !stale && <small className="error-note">{log.error}</small>}</div>
+                <div className="canvas-task-log-meta"><span className="canvas-task-log-meta-count">{kind === "llm" ? `${log.llmCallCount || 0} 次调用` : kind === "video" ? `${urls.length || (log.status === "pending" ? 1 : 0)} 段视频` : kind === "audio" ? "1 条音频" : `${log.status === "pending" ? log.count || 1 : log.imageCount || urls.length} 张`}</span><span className="canvas-task-log-meta-duration">{generationLogDuration(log)}</span><span className="canvas-task-log-meta-size">{kind === "llm" ? `${log.task || "普通对话"} · ${log.responseChars || 0} 字响应 · 联网 ${log.webSearchStatus || "未检索"}` : kind === "video" ? `${log.operation === "edit" ? "编辑" : log.operation === "extend" ? "扩展" : "生成"} · ${log.resolution || "自动"}` : kind === "audio" ? "配音" : `${log.outputSize || "自动尺寸"} · ${log.aspectRatio || "自动比例"}`}</span><time>{new Date(log.createdAt).toLocaleString("zh-CN", { hour12: false })}</time></div>
                 <div className="canvas-task-log-actions">
                   <button type="button" className="canvas-task-log-details-toggle" aria-expanded={selectedId === log.id} onClick={toggleDetails}>{selectedId === log.id ? "收起详情" : "查看详情"}</button>
                   {primaryActionLabel && <button type="button" className="primary" disabled={(primaryAction === "check" && checkingTaskId === log.id) || (primaryAction === "retry" && (batchRetryConfirm !== null || batchRetryRunning || retryingTaskId === log.id))} onClick={runPrimaryAction}>{primaryActionLabel}</button>}

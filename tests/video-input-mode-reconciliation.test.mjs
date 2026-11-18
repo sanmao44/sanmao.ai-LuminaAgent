@@ -5,6 +5,7 @@ import { createTsRequire } from './ts-require.mjs';
 const componentStub = { __esModule: true, default: () => null };
 const { reconcileVideoInputMode } = createTsRequire(process.cwd(), {
   '@/components/SelectMenu': componentStub,
+  '@/components/EditableSuggestionField': componentStub,
   '@/components/ModelPicker': componentStub,
   '@/components/ReferenceMentionEditor': componentStub,
   '@/components/JimengAccountSummary': componentStub,
