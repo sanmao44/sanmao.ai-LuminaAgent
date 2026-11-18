@@ -41,7 +41,7 @@ import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
-type StudioMode = 'speech' | 'transcription' | 'music' | '3d';
+type StudioMode = 'speech' | 'transcription' | 'music' | 'sound-effect' | '3d';
 type StudioNotice = { kind: 'error' | 'info' | 'success'; text: string } | null;
 type SpeechResult = { url: string; name: string; modelName: string; contentType: string; extension: string };
 
@@ -64,6 +64,11 @@ function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
   return Date.parse(right.createdAt) - Date.parse(left.createdAt);
 }
 
+function isSoundEffectTask(task: CangyuanMediaTask) {
+  const profile = getCangyuanMusicModelProfile(task.providerModel);
+  return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+}
+
 function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | '3d-generate') {
   if (!state) return [];
   const providers = state.providers.filter(isCangyuanProvider);
@@ -71,7 +76,17 @@ function cangyuanTaskModels(state: PublicState | null, capability: 'music-genera
 }
 
 function supportedMusicModels(state: PublicState | null) {
-  return cangyuanTaskModels(state, 'music-generate').filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
+  return cangyuanTaskModels(state, 'music-generate').filter((model) => {
+    const profile = getCangyuanMusicModelProfile(model.rawId);
+    return profile !== null && profile.family !== 'suno-sfx' && profile.family !== 'elevenlabs-sfx';
+  });
+}
+
+function supportedSoundEffectModels(state: PublicState | null) {
+  return cangyuanTaskModels(state, 'sound-effect').filter((model) => {
+    const profile = getCangyuanMusicModelProfile(model.rawId);
+    return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+  });
 }
 
 function threeDModels(state: PublicState | null) {
@@ -129,6 +144,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const [stateError, setStateError] = useState('');
   const [speechModelId, setSpeechModelId] = useState('');
   const [musicModelId, setMusicModelId] = useState('');
+  const [soundEffectModelId, setSoundEffectModelId] = useState('');
   const [model3dId, setModel3dId] = useState('');
   const [speechText, setSpeechText] = useState('');
   const [speechVoiceChoice, setSpeechVoiceChoice] = useState('');
@@ -181,6 +197,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
   const speechModels = useMemo(() => supportedSpeechModels(publicState), [publicState]);
   const musicModels = useMemo(() => supportedMusicModels(publicState), [publicState]);
+  const soundEffectModels = useMemo(() => supportedSoundEffectModels(publicState), [publicState]);
   const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
   const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
@@ -193,12 +210,19 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const displayedSpeechSpeed = speechSpeedRange ? clampSpeechSpeed(speechSpeed, speechSpeedRange.min, speechSpeedRange.max) : speechSpeed;
   const musicModel = useMemo(() => musicModels.find((model) => model.id === musicModelId) || musicModels[0], [musicModelId, musicModels]);
   const musicProfile = useMemo(() => getCangyuanMusicModelProfile(musicModel?.rawId || ''), [musicModel]);
-  const musicTaskKindName = cangyuanMusicTaskKindName(musicProfile);
+  const soundEffectModel = useMemo(() => soundEffectModels.find((model) => model.id === soundEffectModelId) || soundEffectModels[0], [soundEffectModelId, soundEffectModels]);
+  const soundEffectProfile = useMemo(() => getCangyuanMusicModelProfile(soundEffectModel?.rawId || ''), [soundEffectModel]);
+  const isCreativeAudioMode = mode === 'music' || mode === 'sound-effect';
+  const creativeAudioModel = mode === 'sound-effect' ? soundEffectModel : musicModel;
+  const creativeAudioProfile = mode === 'sound-effect' ? soundEffectProfile : musicProfile;
+  const creativeAudioKindName = mode === 'sound-effect' ? '音效' : cangyuanMusicTaskKindName(creativeAudioProfile);
   const model3d = useMemo(() => models3d.find((model) => model.id === model3dId) || models3d[0], [model3dId, models3d]);
   const previewUrl = previewOutput
     ? `/api/media/model-preview/${encodeURIComponent(previewOutput.taskId)}/${previewOutput.outputIndex}`
     : '';
-  const selectedTasks = mode === 'music' ? musicTasks : mode === '3d' ? threeTasks : [];
+  const selectedTasks = mode === 'music' ? musicTasks.filter((task) => !isSoundEffectTask(task))
+    : mode === 'sound-effect' ? musicTasks.filter(isSoundEffectTask)
+      : mode === '3d' ? threeTasks : [];
   const sortedMusicTasks = useMemo(() => [...musicTasks].sort(taskSort), [musicTasks]);
   const sortedThreeTasks = useMemo(() => [...threeTasks].sort(taskSort), [threeTasks]);
 
@@ -266,12 +290,12 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   }, [speechModel?.id]);
 
   useEffect(() => {
-    if (continuation && musicModel?.rawId === 'suno-extend-audio') {
+    if (mode === 'music' && continuation && creativeAudioModel?.rawId === 'suno-extend-audio') {
       setMusicOptions({ uploadUrl: continuation.uploadUrl, ...(continuation.continueAt ? { continueAt: continuation.continueAt } : {}) });
       return;
     }
     setMusicOptions({});
-  }, [musicModel?.id]);
+  }, [creativeAudioModel?.id]);
 
   useEffect(() => {
     const profile = model3d ? getCangyuan3DModelProfile(model3d.rawId) : null;

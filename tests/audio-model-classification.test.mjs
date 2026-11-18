@@ -26,7 +26,7 @@ test('Cangyuan official model profiles distinguish dialogue, music, and sound ef
   assert.ok(dialogue.capabilities.includes('audio-conversation'));
   assert.deepEqual(soundEffect.classification?.purposes, ['sound-effect']);
   assert.ok(soundEffect.capabilities.includes('sound-effect'));
-  assert.ok(soundEffect.capabilities.includes('music-generate'));
+  assert.equal(soundEffect.capabilities.includes('music-generate'), false);
   assert.deepEqual(music.classification?.purposes, ['music']);
 });
 

@@ -216,18 +216,12 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
     if (purpose === 'speech') audioCapabilities.add('speech');
     if (purpose === 'transcription') audioCapabilities.add('transcription');
     if (purpose === 'music') audioCapabilities.add('music-generate');
-    if (purpose === 'sound-effect') {
-      audioCapabilities.add('sound-effect');
-      audioCapabilities.add('music-generate');
-    }
+    if (purpose === 'sound-effect') audioCapabilities.add('sound-effect');
     if (purpose === 'conversation') audioCapabilities.add('audio-conversation');
   }
   if (!audioClassification.purposes.length) {
     if (isMusicGenerationModelId(audioModelText)) audioCapabilities.add('music-generate');
-    if (isSoundEffectModelId(audioModelText)) {
-      audioCapabilities.add('sound-effect');
-      audioCapabilities.add('music-generate');
-    }
+    if (isSoundEffectModelId(audioModelText)) audioCapabilities.add('sound-effect');
     if (isAudioTranscriptionModelId(audioModelText)) audioCapabilities.add('transcription');
     if (isSpeechModelId(audioModelText)) audioCapabilities.add('speech');
   }
@@ -784,7 +778,7 @@ export async function addManualProviderModel(providerId: string, input: ManualPr
     const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
     const selectedAudioCapabilities: ModelCapability[] = input.audioTask
       ? input.audioTask === 'sound-effect'
-        ? ['sound-effect', 'music-generate']
+        ? ['sound-effect']
         : [input.audioTask]
       : inferred.capabilities.filter((capability) => ['speech', 'music-generate', 'sound-effect', 'transcription', 'audio-conversation'].includes(capability));
     const selectedPurpose: AudioModelPurpose | null = input.audioTask === 'speech' ? 'speech'

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { TaskRepository } from './repositories/types';
-import { validateCangyuan3DInput, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
+import { getCangyuanMusicModelProfile, validateCangyuan3DInput, validateCangyuanMusicInput, type Cangyuan3DOptions, type CangyuanMediaKind, type CangyuanMediaTask, type CangyuanMediaTaskInput, type CangyuanMediaTaskStatus, type CangyuanMusicOptions } from '../packages/contracts/cangyuan-media';
 import { cangyuanMediaBaseUrl } from './cangyuan-provider';
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from './providers';
 import { getProviderWithKey, getRuntimeModel } from './store';
@@ -42,9 +42,11 @@ export function createCangyuanMediaTaskService(dependencies: CangyuanMediaTaskSe
     if (!runtime) throw new Error('请选择已启用的音乐或三维模型');
     if (runtime.provider.type !== 'openai-compatible') throw new Error('请选择兼容接口的服务商模型');
     if (runtime.provider.creativeTaskProtocol !== 'cangyuan-creative-v1') throw new Error('请为服务商启用音乐与三维任务接口，再选择模型');
-    const requiredCapability = options.kind === 'music' ? 'music-generate' : '3d-generate';
+    const musicProfile = options.kind === 'music' ? getCangyuanMusicModelProfile(runtime.model.rawId) : null;
+    const isSoundEffect = musicProfile?.family === 'suno-sfx' || musicProfile?.family === 'elevenlabs-sfx';
+    const requiredCapability = options.kind === 'music' ? isSoundEffect ? 'sound-effect' : 'music-generate' : '3d-generate';
     if (!runtime.model.capabilities.includes(requiredCapability)) {
-      throw new Error(`所选模型不支持${options.kind === 'music' ? '音乐' : '三维'}生成能力`);
+      throw new Error(`所选模型不支持${options.kind === 'music' ? isSoundEffect ? '音效' : '音乐' : '三维'}生成能力`);
     }
 
     const idempotencyKey = `cangyuan:${options.kind}:${runtime.provider.id}:${options.idempotencyKey?.trim() || newId()}`;

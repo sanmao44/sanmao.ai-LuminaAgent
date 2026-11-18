@@ -210,7 +210,7 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     capabilities.push('music-generate');
   }
   if (/(?:sound[-_ ]?effects?|\bsfx\b|foley)/i.test(text)) {
-    capabilities.push('sound-effect', 'music-generate');
+    capabilities.push('sound-effect');
   }
   // Some OpenAI-compatible model registries return only an id and omit
   // endpoint metadata. Keep discovery consistent with the shared model-kind

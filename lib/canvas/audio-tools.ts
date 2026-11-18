@@ -28,7 +28,19 @@ export function canvasAudioSpeechHistory(
 export function canvasAudioMusicModels(models: RegistryModel[], providers: ProviderConnection[]) {
   const taskProviders = providers.filter((provider) => provider.type === 'openai-compatible' && provider.creativeTaskProtocol === 'cangyuan-creative-v1');
   return filterModelsByActiveProviders(models, taskProviders, { capability: 'music-generate' })
-    .filter((model) => getCangyuanMusicModelProfile(model.rawId) !== null);
+    .filter((model) => {
+      const profile = getCangyuanMusicModelProfile(model.rawId);
+      return profile !== null && profile.family !== 'suno-sfx' && profile.family !== 'elevenlabs-sfx';
+    });
+}
+
+export function canvasAudioSoundEffectModels(models: RegistryModel[], providers: ProviderConnection[]) {
+  const taskProviders = providers.filter((provider) => provider.type === 'openai-compatible' && provider.creativeTaskProtocol === 'cangyuan-creative-v1');
+  return filterModelsByActiveProviders(models, taskProviders, { capability: 'sound-effect' })
+    .filter((model) => {
+      const profile = getCangyuanMusicModelProfile(model.rawId);
+      return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+    });
 }
 
 export function canvasAudioTranscriptionModels(models: RegistryModel[], providers: ProviderConnection[]) {
@@ -53,6 +65,7 @@ export function canvasMusicTaskSnapshot(task: CangyuanMediaTask): CanvasAudioMus
   return {
     id: task.id,
     modelId: task.modelId,
+    providerModel: task.providerModel,
     modelName: task.modelName,
     ...(task.input.prompt ? { prompt: task.input.prompt } : {}),
     status: task.status,

@@ -385,6 +385,7 @@ export type CanvasAudioMusicDraft = {
 export type CanvasAudioMusicTask = {
   id: string;
   modelId: string;
+  providerModel?: string;
   modelName: string;
   prompt?: string;
   status: CangyuanMediaTaskStatus;
