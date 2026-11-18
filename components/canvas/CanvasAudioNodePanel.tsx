@@ -785,7 +785,7 @@ export default function CanvasAudioNodePanel({
           <div>
             <b>{activeMode === "speech" ? "配音模型" : activeMode === "music" ? "音乐模型" : "转写模型"}</b>
             <ModelPicker
-              models={activeMode === "speech" ? models : activeMode === "music" ? musicModels : transcriptionModels}
+              models={activeMode === "speech" ? speechModels : activeMode === "music" ? musicModels : transcriptionModels}
               capability={activeMode === "speech" ? "speech" : activeMode === "music" ? "music-generate" : "transcription"}
               value={activeMode === "speech" ? speechModelId : activeMode === "music" ? selectedMusicModel?.id || "" : selectedTranscriptionModel?.id || ""}
               onChange={(modelId) => activeMode === "speech"
@@ -796,7 +796,7 @@ export default function CanvasAudioNodePanel({
               defaultProviderId={defaultProviderId}
               defaultProviderName={defaultProviderName}
               placeholder={activeMode === "speech"
-                ? models.some((model) => model.enabled && model.published && model.capabilities.includes("speech")) ? undefined : "尚未启用配音模型"
+                ? speechModels.length ? undefined : "尚未启用配音模型"
                 : activeMode === "music" ? musicModels.length ? undefined : "尚未启用音乐模型" : transcriptionModels.length ? undefined : "尚未启用转写模型"}
               automaticHint={activeMode === "speech" ? "按默认服务商选择可用配音模型，无在线模型时使用本机语音" : undefined}
               triggerLabelMode="model"

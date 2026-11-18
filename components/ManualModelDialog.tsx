@@ -82,6 +82,7 @@ export default function ManualModelDialog({
               <div className="segmented manual-model-kind manual-model-audio-task" aria-label="音频模型用途">
                 <button type="button" className={form.audioTask === "speech" ? "active" : ""} onClick={() => onChange({ audioTask: "speech" })}>配音</button>
                 <button type="button" className={form.audioTask === "music-generate" ? "active" : ""} onClick={() => onChange({ audioTask: "music-generate" })}>音乐生成</button>
+                <button type="button" className={form.audioTask === "sound-effect" ? "active" : ""} onClick={() => onChange({ audioTask: "sound-effect" })}>音效</button>
                 <button type="button" className={form.audioTask === "transcription" ? "active" : ""} onClick={() => onChange({ audioTask: "transcription" })}>语音转写</button>
               </div>
             </div>

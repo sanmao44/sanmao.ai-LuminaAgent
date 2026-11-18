@@ -7,7 +7,7 @@ export type BulkModelStateResult = {
   updatedCount: number;
 };
 
-export type ManualModelAudioTask = 'speech' | 'music-generate' | 'transcription';
+export type ManualModelAudioTask = 'speech' | 'music-generate' | 'sound-effect' | 'transcription';
 
 export type ManualProviderModelInput = {
   rawId: string;

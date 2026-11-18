@@ -18,6 +18,7 @@ test('all five Cangyuan speech models are inferred into the speech picker while 
     const inferred = inferModel(rawId, 'cangyuan');
     assert.equal(inferred.kind, 'audio', rawId);
     assert.ok(inferred.capabilities.includes('speech'), rawId);
+    assert.ok(inferred.classification?.purposes.includes('speech'), rawId);
     return {
       id: `cangyuan-speech-${index}`,
       providerId: provider.id,
@@ -32,6 +33,7 @@ test('all five Cangyuan speech models are inferred into the speech picker while 
   const asr = inferModel('mu1-muse-asr', 'cangyuan');
   assert.equal(asr.kind, 'audio');
   assert.ok(asr.capabilities.includes('transcription'));
+  assert.deepEqual(asr.classification?.purposes, ['transcription']);
   models.push({
     id: 'cangyuan-asr',
     providerId: provider.id,

@@ -161,7 +161,7 @@ import { waitForEditorTaskLog } from '@/lib/image-editor/editor-task-recovery';
 import { cropSourceRect } from '@/lib/image-editor/local-image-layout';
 import { renderLocalImage } from '@/lib/image-editor/local-image-renderer';
 import { isManualModelProvider, modelKindLabel, providerPlatformLabel, providerTypeLabel } from '@/lib/provider-presentation';
-import { modelLibraryCategoryLabel, modelMatchesLibraryCategory } from '@/lib/model-library-categories';
+import { modelClassificationHint, modelClassificationLabel, modelLibraryCategoryLabel, modelMatchesLibraryCategory } from '@/lib/model-library-categories';
 import { buildChatFilePreviewContent, chatFilePreviewKindLabel, chatFileTypeLabel, formatFileSize, getChatFilePreviewContent, isOfficeArtifactChatFile, isPreviewableChatFile, isVideoChatFile } from '@/lib/chat-file-preview';
 import { buildGalleryItems } from '@/lib/creation/gallery-items';
 import { storeImages } from '@/lib/image-storage-client';
@@ -2897,7 +2897,9 @@ export default function Page() {
             video: quickFilteredModels.filter((model)=>model.kind === 'video').length,
             speech: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'speech')).length,
             music: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'music')).length,
+            'sound-effect': quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'sound-effect')).length,
             transcription: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'transcription')).length,
+            conversation: quickFilteredModels.filter((model)=>modelMatchesLibraryCategory(model, 'conversation')).length,
             '3d': quickFilteredModels.filter((model)=>model.kind === '3d').length,
             unknown: quickFilteredModels.filter((model)=>model.kind === 'unknown').length
         }), [
@@ -8468,7 +8470,7 @@ export default function Page() {
     function renderModelCard(model) {
         const inUse = model.enabled && model.published;
         const favorite = modelFavorites.includes(model.id);
-        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap === 'music-generate' ? '音乐生成' : cap === 'transcription' ? '语音转写' : cap === '3d-generate' ? '三维生成' : cap;
+        const capabilityLabel = (cap)=>cap === 'chat' ? '对话' : cap === 'vision' ? '识图' : cap === 'edit' ? '改图' : cap === 'reference' ? '参考图' : cap === 'typography' ? '文字' : cap === 'generate' ? '生图' : cap === 'upscale' ? '超分' : cap === 'web-search' ? '原生联网' : cap === 'video-generate' ? '视频生成' : cap === 'video-edit' ? '视频编辑' : cap === 'video-extend' ? '视频扩展' : cap === 'video-first-frame' ? '首帧' : cap === 'video-reference' ? '多图参考' : cap === 'video-audio' ? '音频' : cap === 'speech' ? '配音' : cap === 'music-generate' ? '音乐生成' : cap === 'sound-effect' ? '音效' : cap === 'audio-conversation' ? '音频对话' : cap === 'transcription' ? '语音转写' : cap === '3d-generate' ? '三维生成' : cap;
         return /*#__PURE__*/ _jsxs("article", {
             className: `model-card surface ${inUse ? 'in-use' : ''}`,
             children: [
@@ -8515,6 +8517,11 @@ export default function Page() {
                                 model.source === 'manual' && /*#__PURE__*/ _jsx("span", {
                                     className: "model-source-badge",
                                     children: "手动"
+                                }),
+                                modelClassificationLabel(model) && /*#__PURE__*/ _jsx("span", {
+                                    className: "model-classification-badge",
+                                    title: modelClassificationHint(model),
+                                    children: modelClassificationLabel(model)
                                 }),
                                 model.billing && /*#__PURE__*/ _jsx("span", {
                                     className: `billing-badge ${model.billing}`,
@@ -12708,8 +12715,16 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         '音乐'
                                                     ],
                                                     [
+                                                        'sound-effect',
+                                                        '音效'
+                                                    ],
+                                                    [
                                                         'transcription',
                                                         '语音转写'
+                                                    ],
+                                                    [
+                                                        'conversation',
+                                                        '音频对话'
                                                     ],
                                                     [
                                                         '3d',
@@ -12759,7 +12774,9 @@ meta: `${activeProviderModels.filter((model)=>model.providerId === provider.id &
                                                         group.some((model)=>model.kind === 'video') ? '视频' : '',
                                                         group.some((model)=>modelMatchesLibraryCategory(model, 'speech')) ? '配音' : '',
                                                         group.some((model)=>modelMatchesLibraryCategory(model, 'music')) ? '音乐' : '',
+                                                        group.some((model)=>modelMatchesLibraryCategory(model, 'sound-effect')) ? '音效' : '',
                                                         group.some((model)=>modelMatchesLibraryCategory(model, 'transcription')) ? '转写' : '',
+                                                        group.some((model)=>modelMatchesLibraryCategory(model, 'conversation')) ? '音频对话' : '',
                                                         group.some((model)=>model.kind === '3d') ? '三维' : '',
                                                         group.some((model)=>model.kind === 'unknown') ? '待归类' : ''
                                                     ].filter(Boolean).join(' · ');

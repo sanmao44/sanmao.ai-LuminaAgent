@@ -1558,6 +1558,10 @@ export default function SuperCanvas() {
   }, []);
   const flushAutomaticProjectCheckpoints = useCallback(async () => {
     autoCheckpointTimerRef.current = null;
+    if (autoCheckpointIntervalMinutesRef.current === -1) {
+      autoCheckpointQueueRef.current.clear();
+      return;
+    }
     let nextDelayMs: number | null = null;
     const pending = [...autoCheckpointQueueRef.current.entries()];
     for (const [key, checkpoint] of pending) {
@@ -1578,6 +1582,10 @@ export default function SuperCanvas() {
         autoCheckpointIntervalMinutesRef.current,
         now,
       );
+      if (delayMs === null) {
+        autoCheckpointQueueRef.current.clear();
+        return;
+      }
       if (delayMs > 0) {
         nextDelayMs = nextDelayMs === null ? delayMs : Math.min(nextDelayMs, delayMs);
         continue;
@@ -1621,6 +1629,7 @@ export default function SuperCanvas() {
     autoCheckpointFlushRef.current = flushAutomaticProjectCheckpoints;
   }, [flushAutomaticProjectCheckpoints]);
   const queueAutomaticProjectCheckpoint = useCallback((projectId: string, canvasId: string, triggerIds: readonly string[]) => {
+    if (autoCheckpointIntervalMinutesRef.current === -1) return;
     const key = `${projectId}:${canvasId}`;
     const queued = autoCheckpointQueueRef.current.get(key) || { projectId, canvasId, triggerIds: new Set<string>() };
     triggerIds.forEach((triggerId) => queued.triggerIds.add(triggerId));
@@ -1632,6 +1641,11 @@ export default function SuperCanvas() {
     autoCheckpointIntervalMinutesRef.current = value;
     setAutoCheckpointIntervalMinutes(value);
     if (autoCheckpointTimerRef.current !== null) window.clearTimeout(autoCheckpointTimerRef.current);
+    autoCheckpointTimerRef.current = null;
+    if (value === -1) {
+      autoCheckpointQueueRef.current.clear();
+      return;
+    }
     if (autoCheckpointQueueRef.current.size) {
       autoCheckpointTimerRef.current = window.setTimeout(() => autoCheckpointFlushRef.current(), 900);
     }
@@ -2409,6 +2423,7 @@ export default function SuperCanvas() {
         snapEnabled?: unknown;
         depthQuality?: unknown;
         autoCheckpointIntervalMinutes?: unknown;
+        autoCheckpointSettingsVersion?: unknown;
       } | null;
       if (
         CONNECTION_STYLE_OPTIONS.some(
@@ -2419,7 +2434,9 @@ export default function SuperCanvas() {
       if (typeof raw?.snapEnabled === "boolean") setSnapEnabled(raw.snapEnabled);
       if (typeof raw?.edgesVisible === "boolean") setEdgesVisible(raw.edgesVisible);
       setDepthQuality(normalizeDepthQuality(raw?.depthQuality));
-      const checkpointInterval = normalizeAutoProjectCheckpointIntervalMinutes(raw?.autoCheckpointIntervalMinutes);
+      const checkpointInterval = raw?.autoCheckpointSettingsVersion === 1
+        ? normalizeAutoProjectCheckpointIntervalMinutes(raw.autoCheckpointIntervalMinutes)
+        : DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES;
       autoCheckpointIntervalMinutesRef.current = checkpointInterval;
       setAutoCheckpointIntervalMinutes(checkpointInterval);
     } catch {
@@ -2432,7 +2449,7 @@ export default function SuperCanvas() {
     try {
       window.localStorage.setItem(
         CANVAS_SETTINGS_KEY,
-        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes }),
+        JSON.stringify({ connectionStyle, edgesVisible, snapEnabled, depthQuality, autoCheckpointIntervalMinutes, autoCheckpointSettingsVersion: 1 }),
       );
     } catch {
       /* 设置保存失败不应阻断画布 */

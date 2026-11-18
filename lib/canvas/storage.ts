@@ -744,17 +744,25 @@ export async function saveCanvasProjects(projects: CanvasProject[], activeId: st
 }
 
 export async function createCanvasProject(project: CanvasProject, document: CanvasDocument) {
-  storageConflict = false;
-  const latest = readCanvasProjects();
-  if (latest.some((item) => item.id === project.id)) return false;
-  // Write the document before publishing its index row, so a failed media-heavy save cannot create an empty project.
-  if (!(await persistProjectIdentity([project, ...latest], readCreativeProjects(), new Map([
-    [`${CANVAS_PROJECT_PREFIX}${project.id}`, JSON.stringify(normalizeDocument(document))],
-    [CANVAS_ACTIVE_KEY, JSON.stringify(project.id)],
-  ]))).saved) return false;
-  try { window.sessionStorage.setItem(CANVAS_TAB_ACTIVE_KEY, project.id); } catch {}
-  emitWorkspaceChange();
-  return true;
+  const documentEntry = [`${CANVAS_PROJECT_PREFIX}${project.id}`, JSON.stringify(normalizeDocument(document))] as const;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    storageConflict = false;
+    const latest = readCanvasProjects();
+    if (latest.some((item) => item.id === project.id)) return false;
+    // Keep the document and index atomic; retry only when another tab changed
+    // the compared metadata between our cache read and the IndexedDB commit.
+    const identity = await persistProjectIdentity([project, ...latest], readCreativeProjects(), new Map([
+      [documentEntry[0], documentEntry[1]],
+      [CANVAS_ACTIVE_KEY, JSON.stringify(project.id)],
+    ]));
+    if (identity.saved) {
+      try { window.sessionStorage.setItem(CANVAS_TAB_ACTIVE_KEY, project.id); } catch {}
+      emitWorkspaceChange();
+      return true;
+    }
+    if (!storageConflict) return false;
+  }
+  return false;
 }
 
 export async function renameCanvasProject(id: string, name: string) {

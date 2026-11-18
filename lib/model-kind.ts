@@ -26,6 +26,7 @@ const SPEECH_MODEL_PATTERN = /(?:^|[-_.\/\s+:])(?:tts|text[-_ ]?to[-_ ]?speech|s
 const SPEECH_HOST_PATTERN = /whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text|sense[-_ ]?voice/;
 const AUDIO_TRANSCRIPTION_PATTERN = /whisper|transcri|asr(?![a-z])|\bstt\b|speech[-_ ]?to[-_ ]?text/;
 const MUSIC_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:music(?:[-_ ]?(?:gen(?:eration)?|create|maker))?|song[-_ ]?(?:gen(?:eration)?|create)|text[-_ ]?to[-_ ]?music|suno|su2[-_ ]?suno|lyria|udio|ace[-_ ]?step|riffusion|mureka|melody[-_ ]?generation)(?:[^a-z0-9]|$)/;
+const SOUND_EFFECT_PATTERN = /(?:sound[-_ ]?effects?|sfx|foley)(?:[^a-z0-9]|$)/;
 const THREE_D_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:3d(?:[-_ ]?(?:gen(?:eration)?|create|model|asset))?|text[-_ ]?to[-_ ]?3d|image[-_ ]?to[-_ ]?3d|mesh(?:[-_ ]?generation)?|tripo(?:3d|sr)?|trellis|rodin|meshy|instant[-_ ]?mesh|stable[-_ ]?fast[-_ ]?3d|unique[-_ ]?3d|craftsman)(?:[^a-z0-9]|$)|(?:hunyuan|qwen)[-_ ]?3d(?:[-_.]|$)/;
 
 /**
@@ -60,6 +61,10 @@ export function isMusicGenerationModelId(value: unknown) {
   return MUSIC_GENERATION_PATTERN.test(String(value ?? '').toLowerCase());
 }
 
+export function isSoundEffectModelId(value: unknown) {
+  return SOUND_EFFECT_PATTERN.test(String(value ?? '').toLowerCase());
+}
+
 export function isThreeDGenerationModelId(value: unknown) {
   return THREE_D_GENERATION_PATTERN.test(String(value ?? '').toLowerCase());
 }
@@ -73,6 +78,8 @@ export function inferModelKind({ rawId = '', displayName = '', capabilities = []
   const text = `${rawId} ${displayName}`.toLowerCase();
   if (capabilities.includes('3d-generate')) return '3d';
   if (capabilities.includes('music-generate')) return 'audio';
+  if (capabilities.includes('sound-effect')) return 'audio';
+  if (capabilities.includes('audio-conversation')) return 'audio';
   if (capabilities.includes('transcription') || isAudioTranscriptionModelId(text)) return 'audio';
   if (isSpeechModelId(text)) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-')) || VIDEO_FAMILY_PATTERN.test(text)) return 'video';
@@ -81,6 +88,7 @@ export function inferModelKind({ rawId = '', displayName = '', capabilities = []
   if (isNonConversationalModelId(text)) return 'unknown';
   if (isThreeDGenerationModelId(text)) return '3d';
   if (isMusicGenerationModelId(text)) return 'audio';
+  if (isSoundEffectModelId(text)) return 'audio';
   if (capabilities.includes('generate') || capabilities.includes('upscale') || /image|imagen|flux|sdxl|stable[-_ ]?diffusion|dall[-_ ]?e|ideogram|recraft|seedream|nano[-_ ]?banana|pixart|kolors|midjourney|upscal|super[-_ ]?resolution|real[-_ ]?esrgan|swinir/.test(text)) return 'image';
   const chatFamily = /(?:gpt|codex|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command[-_ ]?r|o[134](?:[-_.]|$)|sonar|perplexity|intern|step[-_.]?\d|(?:hiy|hy)\d*|hunyuan|chatglm|yi|baichuan|minimax|longcat|ernie|doubao|phi|gemma|nemotron|jamba|cohere|aya|llava|pixtral|granite|smollm|falcon|wizardlm|agnes(?:[-_.]|$))/.test(text);
   const chatRole = /\b(?:instruct|instruction|chat|thinking|reasoning|coder|assistant)\b/.test(text);
@@ -104,6 +112,8 @@ export function resolveModelKind(
   if (selectedKind !== 'unknown') return selectedKind;
   if (capabilities.includes('3d-generate')) return '3d';
   if (capabilities.includes('music-generate')) return 'audio';
+  if (capabilities.includes('sound-effect')) return 'audio';
+  if (capabilities.includes('audio-conversation')) return 'audio';
   if (capabilities.includes('speech')) return 'audio';
   if (capabilities.includes('transcription')) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-'))) return 'video';

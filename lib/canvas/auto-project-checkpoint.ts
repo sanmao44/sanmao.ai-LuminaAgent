@@ -1,14 +1,15 @@
 import type { CanvasDocument, CanvasNode } from './types';
 
-export type AutoProjectCheckpointIntervalMinutes = 0 | 1 | 5 | 15;
+export type AutoProjectCheckpointIntervalMinutes = -1 | 0 | 1 | 5 | 15;
 
-export const DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES: AutoProjectCheckpointIntervalMinutes = 0;
+export const DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES: AutoProjectCheckpointIntervalMinutes = -1;
 
 export const AUTO_PROJECT_CHECKPOINT_INTERVAL_OPTIONS: Array<{
   value: AutoProjectCheckpointIntervalMinutes;
   label: string;
   description: string;
 }> = [
+  { value: -1, label: '关闭', description: '不自动保存版本快照' },
   { value: 0, label: '每次生成', description: '每次生成完成后保存版本快照' },
   { value: 1, label: '1 分钟', description: '间隔内完成的生成合并为一个版本快照' },
   { value: 5, label: '5 分钟', description: '间隔内完成的生成合并为一个版本快照' },
@@ -16,7 +17,7 @@ export const AUTO_PROJECT_CHECKPOINT_INTERVAL_OPTIONS: Array<{
 ];
 
 export function normalizeAutoProjectCheckpointIntervalMinutes(value: unknown): AutoProjectCheckpointIntervalMinutes {
-  return value === 1 || value === 5 || value === 15
+  return value === -1 || value === 0 || value === 1 || value === 5 || value === 15
     ? value
     : DEFAULT_AUTO_PROJECT_CHECKPOINT_INTERVAL_MINUTES;
 }
@@ -27,6 +28,7 @@ export function automaticProjectCheckpointDelay(
   intervalMinutes: AutoProjectCheckpointIntervalMinutes,
   now: number,
 ) {
+  if (intervalMinutes === -1) return null;
   if (intervalMinutes === 0) return 0;
 
   let latestCheckpointAt: number | null = null;

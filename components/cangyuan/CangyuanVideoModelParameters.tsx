@@ -3,7 +3,7 @@
 import SelectMenu from '@/components/SelectMenu';
 import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
 import type { CangyuanVideoModelSpec, CangyuanVideoParameterSpec, VideoModelParameterValue, VideoModelParameterValues } from '@/packages/contracts/video-generation';
-import { cangyuanVideoParameterDescription, cangyuanVideoParameterLabel, cangyuanVideoParameterValueLabel, getCangyuanVideoAdvancedParameters, getCangyuanVideoParameterSuggestions } from '@/lib/cangyuan-video-model-catalog';
+import { cangyuanVideoModelConstraintNotes, cangyuanVideoParameterDescription, cangyuanVideoParameterEnumLabel, cangyuanVideoParameterLabel, getCangyuanVideoAdvancedParameters, getCangyuanVideoParameterSuggestions } from '@/lib/cangyuan-video-model-catalog';
 import styles from './CangyuanVideoModelParameters.module.css';
 
 type Props = {
@@ -91,7 +91,7 @@ function ModelParameterField({
         onChange={(next) => onValueChange(next || undefined)}
         options={[
           { value: '', label: '请选择' },
-          ...enumValues.map((item) => ({ value: item, label: cangyuanVideoParameterValueLabel(parameter.name, item) })),
+          ...enumValues.map((item) => ({ value: item, label: cangyuanVideoParameterEnumLabel(parameter.name, item) })),
         ]}
         ariaLabel={label}
       />
@@ -169,20 +169,26 @@ function ModelParameterField({
 
 export default function CangyuanVideoModelParameters({ spec, values, onChange }: Props) {
   const parameters = getCangyuanVideoAdvancedParameters(spec);
-  if (!parameters.length) return null;
+  const notes = cangyuanVideoModelConstraintNotes(spec);
 
   return <section className={styles.panel} aria-label="当前型号的更多设置">
     <div className={styles.heading}>
       <strong>更多设置</strong>
-      <small>只显示当前型号文档支持的选项</small>
+      <small>{parameters.length ? '只显示当前型号文档支持的选项' : '官方文档暂未列出额外可调参数'}</small>
     </div>
-    <div className={styles.grid}>
-      {parameters.map((parameter) => <ModelParameterField
-        key={parameter.name}
-        parameter={parameter}
-        value={values[parameter.name]}
-        onValueChange={(value) => onChange(setParameterValue(values, parameter.name, value))}
-      />)}
-    </div>
+    {parameters.length > 0
+      ? <div className={styles.grid}>
+        {parameters.map((parameter) => <ModelParameterField
+          key={parameter.name}
+          parameter={parameter}
+          value={values[parameter.name]}
+          onValueChange={(value) => onChange(setParameterValue(values, parameter.name, value))}
+        />)}
+      </div>
+      : <p className={styles.noParameters}>此型号没有额外可调参数，按基础设置生成。</p>}
+    {notes.map((note, index) => <div className={styles.notes} key={`${note.title}-${index}`}>
+      <strong>{note.title}</strong>
+      <ul>{note.items.map((item) => <li key={item}>{item}</li>)}</ul>
+    </div>)}
   </section>;
 }

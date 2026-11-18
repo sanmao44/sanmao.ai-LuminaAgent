@@ -32,6 +32,18 @@ test('keeps video audio support out of standalone audio model categories', () =>
   assert.equal(categories.modelMatchesLibraryCategory(video, 'music'), false);
 });
 
+test('separates sound effects and audio dialogue from music generation', () => {
+  const soundEffect = model('audio', ['sound-effect', 'music-generate']);
+  const conversation = model('audio', ['audio-conversation']);
+
+  assert.equal(categories.modelMatchesLibraryCategory(soundEffect, 'sound-effect'), true);
+  assert.equal(categories.modelMatchesLibraryCategory(soundEffect, 'music'), false);
+  assert.equal(categories.modelMatchesLibraryCategory(conversation, 'conversation'), true);
+  assert.equal(categories.modelMatchesLibraryCategory(conversation, 'speech'), false);
+  assert.equal(categories.modelLibraryCategoryLabel(soundEffect), '音效模型');
+  assert.equal(categories.modelLibraryCategoryLabel(conversation), '音频对话模型');
+});
+
 test('preserves legacy audio records as speech and reports multi-task audio explicitly', () => {
   assert.equal(categories.modelMatchesLibraryCategory(model('audio'), 'speech'), true);
   assert.equal(categories.modelMatchesLibraryCategory(model('audio'), 'transcription'), false);

@@ -199,6 +199,21 @@ test('a stale project list cannot remove a newly created canvas or its image nod
   assert.equal(storage.loadCanvasDocument('b').nodes[0].id, 'b-image');
 });
 
+test('creating a canvas retries after another tab updates the project index', async () => {
+  const { storage, project, empty, indexedDB } = await fixture();
+  const competingProject = { ...project('other'), projectId: 'other-creative' };
+
+  indexedDB.beforeNextReadWrite = () => {
+    indexedDB.seed('canvas-state', 'canvas:projects', [project('a'), competingProject]);
+    indexedDB.seed('canvas-state', 'canvas:active', 'other');
+    indexedDB.seed('canvas-state', 'meta:creative-projects', []);
+  };
+
+  assert.equal(await storage.createCanvasProject(project('new'), empty), true);
+  assert.deepEqual(storage.readCanvasProjects().map((item) => item.id), ['new', 'a', 'other']);
+  assert.deepEqual(storage.loadCanvasDocument('new'), empty);
+});
+
 test('a winning IndexedDB index survives a concurrent first legacy migration', async () => {
   const { storage, project, imageDocument, indexedDB } = await fixture({ initialize: false });
   const staleProjects = [{ ...project('stale'), projectId: 'stale-project' }];

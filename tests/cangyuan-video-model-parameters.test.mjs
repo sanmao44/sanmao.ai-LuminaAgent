@@ -65,7 +65,34 @@ test('video model settings stay hidden when the current model has no advanced fi
     values: {},
     onChange: () => undefined,
   }));
-  assert.equal(markup, '');
+  assert.match(markup, /官方文档暂未列出额外可调参数/);
+  assert.match(markup, /此型号没有额外可调参数/);
+});
+
+test('video model settings expose official material and parameter constraints in Chinese', () => {
+  const markup = renderToStaticMarkup(createElement(CangyuanVideoModelParameters, {
+    spec: {
+      publicModel: 'documented-video',
+      params: [{ name: 'prompt', type: 'string' }],
+      sections: [{
+        title: '参数组合与素材要求',
+        variant: 'list',
+        items: [
+          '可以只提供首帧；提供尾帧时必须同时提供首帧。',
+          '首尾帧不能与参考图、参考视频或参考音频同时使用。',
+          'resolution 不支持 4k。',
+        ],
+      }],
+    },
+    values: {},
+    onChange: () => undefined,
+  }));
+
+  assert.match(markup, /素材与参数限制/);
+  assert.match(markup, /可以只提供首帧；若提供尾帧，必须同时提供首帧/);
+  assert.match(markup, /首尾帧模式与参考图、参考视频、参考音频互斥/);
+  assert.match(markup, /不支持以下画面清晰度：4K/);
+  assert.doesNotMatch(markup, /resolution 不支持 4k/);
 });
 
 test('video model help text hides raw API keys and presents localized guidance', () => {
@@ -83,9 +110,9 @@ test('video model help text hides raw API keys and presents localized guidance',
     onChange: () => undefined,
   }));
 
-  assert.match(markup, /向左摇镜、推近、环绕/);
-  assert.match(markup, /不确定时保留模型默认值/);
-  assert.doesNotMatch(markup, /duration。|pan_left|zoom_in|asset_id|asset:\/\/|Active/);
+  assert.match(markup, /自由文本，不是固定选项列表/);
+  assert.match(markup, /素材编号/);
+  assert.doesNotMatch(markup, /duration。|pan_left|zoom_in/);
 });
 
 test('Muse controls present documented recommendations in Chinese and keep official wire values', () => {
@@ -119,6 +146,11 @@ test('video ratio and resolution values have Chinese hints while retaining docum
   assert.equal(cangyuanVideoParameterValueLabel('resolution', '480P'), '480p（标清）');
   assert.equal(cangyuanVideoParameterValueLabel('resolution', '720p'), '720p（高清）');
   assert.equal(cangyuanVideoParameterValueLabel('aspect_ratio', 'custom-ratio'), 'custom-ratio');
+});
+
+test('unknown documented enum values are marked for official verification instead of being silently translated', () => {
+  const { cangyuanVideoParameterEnumLabel } = load('./lib/cangyuan-video-model-catalog');
+  assert.equal(cangyuanVideoParameterEnumLabel('style_preset', 'vendor_style_x'), '待按官方说明核实（vendor_style_x）');
 });
 
 test('untyped generate_audio fields stay hidden until the wire contract is documented', () => {

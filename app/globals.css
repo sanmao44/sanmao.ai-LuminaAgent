@@ -3472,6 +3472,8 @@ html[data-theme="dark"] .models-page .model-kind-tabs button.active b{
 .models-page .model-card-delete{position:absolute;right:76px;top:10px;width:26px;height:26px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--danger);display:grid;place-items:center}
 .models-page .model-card-delete:hover{border-color:var(--danger);background:var(--danger-soft)}
 .models-page .model-source-badge{background:var(--warning-soft,var(--panel-3));color:var(--warning,var(--text-2));border:1px solid color-mix(in srgb,var(--warning,#d99a21) 38%,var(--line))}
+.models-page .model-classification-badge{background:var(--panel-2);color:var(--muted);border:1px solid var(--line)}
+.models-page .model-classification-badge[title*="待复核"]{background:var(--warning-soft,var(--panel-3));color:var(--warning,var(--text-2));border-color:color-mix(in srgb,var(--warning,#d99a21) 38%,var(--line))}
 .models-page .model-type-control{
   grid-template-columns:58px minmax(120px,220px);
   gap:7px;

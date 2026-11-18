@@ -109,12 +109,13 @@ test('Agent checkpoint keys are stable per run, canvas, action and resulting sta
 });
 
 test('automatic checkpoint interval settings normalize to supported choices', () => {
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(-1), -1);
   assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(0), 0);
   assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(1), 1);
   assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(5), 5);
   assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(15), 15);
-  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(30), 0);
-  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes('5'), 0);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes(30), -1);
+  assert.equal(checkpoint.normalizeAutoProjectCheckpointIntervalMinutes('5'), -1);
 });
 
 test('automatic checkpoint delay uses the latest checkpoint for the same canvas only', () => {
@@ -129,4 +130,5 @@ test('automatic checkpoint delay uses the latest checkpoint for the same canvas 
   assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', 5, 700_000), 0);
   assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', 0, 400_000), 0);
   assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-c', 15, 0), 0);
+  assert.equal(checkpoint.automaticProjectCheckpointDelay(versions, 'canvas-a', -1, 500_000), null);
 });
