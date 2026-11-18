@@ -10,7 +10,7 @@ import ModelPicker from "@/components/ModelPicker";
 import SelectMenu from "@/components/SelectMenu";
 import { SPEECH_VOICE_PREVIEW_TEXT, getSpeechModelProfile, type SpeechOutputFormat } from "@/packages/contracts/audio-synthesis";
 import type { AudioTranscriptionResponseFormat } from "@/packages/contracts/audio-transcription";
-import type { CangyuanMediaTask, CangyuanMusicOptions } from "@/packages/contracts/cangyuan-media";
+import { getCangyuanMusicModelProfile, type CangyuanMediaTask, type CangyuanMusicOptions } from "@/packages/contracts/cangyuan-media";
 import { speechVoiceOptions } from "@/components/audio/voice-options";
 import { speechOutputFormatLabel } from "@/components/audio/speech-format-options";
 import { buildCanvasSpeechRequest } from "@/components/canvas/audio-speech-request";
@@ -58,6 +58,7 @@ export default function CanvasAudioNodePanel({
   onDurationChange,
   onNotify,
   models,
+  providers,
   defaultProviderId,
   defaultProviderName,
   defaultModelId,
@@ -107,8 +108,7 @@ export default function CanvasAudioNodePanel({
     : data.speechGeneration?.modelName || "尚未生成";
   const selectedMusicModel = musicModels.find((model) => model.id === musicDraft.modelId) || musicModels[0];
   const selectedTranscriptionModel = transcriptionModels.find((model) => model.id === transcriptionDraft.modelId) || transcriptionModels[0];
-  const musicProfile = selectedMusicModel ? getSpeechModelProfile(selectedMusicModel.rawId) : null;
-  const audioMusicProfile = selectedMusicModel ? importCangyuanMusicProfile(selectedMusicModel.rawId) : null;
+  const musicProfile = selectedMusicModel ? getCangyuanMusicModelProfile(selectedMusicModel.rawId) : null;
 
   useEffect(() => {
     setSpeechText(node.data.speechDraft?.text ?? node.data.speechGeneration?.text ?? "");
@@ -134,6 +134,41 @@ export default function CanvasAudioNodePanel({
   }, [voicePreviewUrl]);
 
   useEffect(() => {
+    const task = node.data.musicTask;
+    if (!task || !["pending", "queued", "running", "waiting"].includes(task.status)) return;
+    let disposed = false;
+    let timer = 0;
+    let controller: AbortController | null = null;
+    const poll = async () => {
+      controller = new AbortController();
+      try {
+        const response = await fetch(`/api/cangyuan/music/tasks/${encodeURIComponent(task.id)}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
+        if (!response.ok || !payload?.task) throw new Error(payload?.error || "音乐任务状态暂时无法读取。");
+        const snapshot = canvasMusicTaskSnapshot(payload.task);
+        if (disposed) return;
+        onMusicTaskChange(node.id, snapshot);
+        if (["pending", "queued", "running", "waiting"].includes(snapshot.status)) {
+          timer = window.setTimeout(() => void poll(), 5000);
+        }
+      } catch (error) {
+        if (disposed || controller?.signal.aborted) return;
+        setMusicError(error instanceof Error ? error.message : "音乐任务状态读取失败。");
+        timer = window.setTimeout(() => void poll(), 5000);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 5000);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [node.id, node.data.musicTask?.id, node.data.musicTask?.status, onMusicTaskChange]);
+
+  useEffect(() => {
     if (!voicePreviewUrl) return;
     setVoicePreviewUrl("");
   }, [speechModelId, voice, speechFormat, speechSpeed]);
@@ -147,6 +182,110 @@ export default function CanvasAudioNodePanel({
       speed: next.speed ?? speechSpeed,
       updatedAt: Date.now(),
     });
+  }
+
+  function saveTranscriptionDraft(next: Partial<CanvasAudioTranscriptionDraft> = {}) {
+    const draft: CanvasAudioTranscriptionDraft = {
+      ...transcriptionDraft,
+      ...next,
+      updatedAt: Date.now(),
+    };
+    setTranscriptionDraft(draft);
+    onTranscriptionDraftChange(node.id, draft);
+  }
+
+  function saveMusicDraft(next: Partial<CanvasAudioMusicDraft> = {}) {
+    const draft: CanvasAudioMusicDraft = {
+      ...musicDraft,
+      ...next,
+      prompt: next.prompt ?? musicDraft.prompt,
+      options: next.options ?? musicDraft.options,
+      updatedAt: Date.now(),
+    };
+    setMusicDraft(draft);
+    onMusicDraftChange(node.id, draft);
+  }
+
+  function chooseTranscriptionFile(file: File | undefined) {
+    if (!file) return;
+    setTranscriptionError("");
+    const allowed = /\.(mp3|wav|ogg|m4a|flac|webm|pcm)$/i.test(file.name);
+    if (!allowed || file.size <= 0 || file.size > TRANSCRIPTION_MAX_BYTES) {
+      setTranscriptionError("请选择有效音频文件，大小需大于 0 且不超过 50 MiB。");
+      return;
+    }
+    setTranscriptionFile(file);
+  }
+
+  async function fileForTranscription() {
+    if (transcriptionFile) return transcriptionFile;
+    if (!data.url) throw new Error("请先导入音频素材，或选择一个音频文件。");
+    let source: URL;
+    try {
+      source = new URL(String(data.url), window.location.origin);
+    } catch {
+      throw new Error("当前音频地址无效，请重新导入音频文件。");
+    }
+    if (source.origin !== window.location.origin) throw new Error("当前音频来自外部地址，请重新选择本地音频文件进行转写。");
+    const response = await fetch(source.href, { cache: "no-store" });
+    if (!response.ok) throw new Error("无法读取当前音频，请重新选择本地音频文件。");
+    const blob = await response.blob();
+    if (!blob.size || blob.size > TRANSCRIPTION_MAX_BYTES) throw new Error("音频文件需大于 0 且不超过 50 MiB。");
+    return new File([blob], String(data.name || "画布音频.wav"), { type: blob.type || String(data.mimeType || "audio/wav") });
+  }
+
+  async function transcribeAudio() {
+    if (!selectedTranscriptionModel || transcriptionBusy) return;
+    setTranscriptionError("");
+    setTranscriptionBusy(true);
+    try {
+      const file = await fileForTranscription();
+      const form = new FormData();
+      form.set("file", file);
+      form.set("modelId", selectedTranscriptionModel.id);
+      const language = transcriptionDraft.language === "__custom"
+        ? transcriptionDraft.customLanguage?.trim() || ""
+        : transcriptionDraft.language?.trim() || "";
+      if (language) form.set("language", language);
+      if (transcriptionDraft.prompt?.trim()) form.set("prompt", transcriptionDraft.prompt.trim());
+      form.set("responseFormat", transcriptionDraft.responseFormat || "verbose_json");
+      form.set("temperature", String(transcriptionDraft.temperature ?? 0));
+      const response = await fetch("/api/audio/transcriptions", { method: "POST", body: form, cache: "no-store" });
+      const payload = await response.json().catch(() => null) as { result?: Record<string, unknown>; error?: string } | null;
+      if (!response.ok || !payload?.result) throw new Error(payload?.error || `转写失败（${response.status}）`);
+      const result = canvasTranscriptionResult(payload.result, file.name);
+      onTranscriptionChange(node.id, result);
+      onNotify("音频转写完成");
+    } catch (error) {
+      setTranscriptionError(error instanceof Error ? error.message : "音频转写失败，请重试。");
+    } finally {
+      setTranscriptionBusy(false);
+    }
+  }
+
+  async function generateMusic() {
+    if (!selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0) return;
+    setMusicError("");
+    setMusicBusy(true);
+    try {
+      const input = buildCanvasMusicRequest(selectedMusicModel.id, selectedMusicModel.rawId, musicDraft.prompt, musicDraft.options);
+      const response = await fetch("/api/cangyuan/music", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify(input),
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
+      if (!response.ok || !payload?.task) throw new Error(payload?.error || `音乐任务提交失败（${response.status}）`);
+      const task = canvasMusicTaskSnapshot(payload.task);
+      onMusicTaskChange(node.id, task);
+      if (payload.task.status === "failed") throw new Error(payload.task.error || "音乐任务提交失败。");
+      onNotify("音乐任务已提交");
+    } catch (error) {
+      setMusicError(error instanceof Error ? error.message : "音乐任务提交失败，请重试。");
+    } finally {
+      setMusicBusy(false);
+    }
   }
 
   function replaceVoicePreviewUrl(url: string) {
@@ -265,7 +404,13 @@ export default function CanvasAudioNodePanel({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="canvas-audio-panel-main">
-        <section className="canvas-audio-speech" aria-label="文本转配音">
+        <div className="canvas-audio-panel-workbench">
+          <nav className="canvas-audio-mode-tabs" aria-label="音频工具">
+            <button type="button" className={activeMode === "speech" ? "active" : ""} aria-pressed={activeMode === "speech"} onClick={() => setActiveMode("speech")}>配音</button>
+            <button type="button" className={activeMode === "music" ? "active" : ""} aria-pressed={activeMode === "music"} onClick={() => setActiveMode("music")}>音乐</button>
+            <button type="button" className={activeMode === "transcription" ? "active" : ""} aria-pressed={activeMode === "transcription"} onClick={() => setActiveMode("transcription")}>转写</button>
+          </nav>
+        {activeMode === "speech" && <section className="canvas-audio-speech" aria-label="文本转配音">
           <div className="canvas-audio-speech-heading">
             <div>
               <label htmlFor={`canvas-audio-speech-${node.id}`}>文本配音</label>
@@ -404,7 +549,87 @@ export default function CanvasAudioNodePanel({
           <small>试听使用固定短句，会按当前模型正常计费，不保存到记录。{supportedFormat === "pcm" ? "切换格式后可播放试听。" : ""}</small>
           {voicePreviewUrl && supportedFormat !== "pcm" && <CanvasAudioPlayer src={voicePreviewUrl} name="音色试听" compact />}
         </details>
-        </section>
+        </section>}
+        {activeMode === "transcription" && <section className="canvas-audio-speech canvas-audio-transcription" aria-label="音频转写">
+          <div className="canvas-audio-speech-heading">
+            <div><label>音频转文字</label><small>{transcriptionFile?.name || (hasAudio ? String(data.name || "使用当前节点音频") : "选择要识别的音频文件")}</small></div>
+            <button type="button" className="canvas-audio-speech-copy" onClick={() => transcriptionInputRef.current?.click()} disabled={transcriptionBusy}>选择文件</button>
+          </div>
+          <div className="canvas-audio-transcription-options">
+            <SelectMenu
+              value={transcriptionDraft.language || ""}
+              ariaLabel="录音语言"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={TRANSCRIPTION_LANGUAGES}
+              onChange={(value) => saveTranscriptionDraft({ language: value })}
+              disabled={transcriptionBusy}
+            />
+            {transcriptionDraft.language === "__custom" && <input value={transcriptionDraft.customLanguage || ""} maxLength={30} placeholder="填写语言代码，例如 it" onChange={(event) => saveTranscriptionDraft({ customLanguage: event.target.value })} disabled={transcriptionBusy} />}
+            <SelectMenu
+              value={transcriptionDraft.responseFormat || "verbose_json"}
+              ariaLabel="转写结果格式"
+              className="canvas-audio-option-select"
+              menuClassName="canvas-audio-option-menu"
+              portalZIndex={CANVAS_Z_INDEX.modalPopover}
+              options={TRANSCRIPTION_FORMATS}
+              onChange={(value) => saveTranscriptionDraft({ responseFormat: value as AudioTranscriptionResponseFormat })}
+              disabled={transcriptionBusy}
+            />
+          </div>
+          <textarea
+            value={transcriptionDraft.prompt || ""}
+            maxLength={12000}
+            rows={4}
+            placeholder="可选：填写人名、品牌或行业术语，帮助提高识别准确度"
+            onChange={(event) => saveTranscriptionDraft({ prompt: event.target.value })}
+            disabled={transcriptionBusy}
+          />
+          <details className="canvas-audio-advanced">
+            <summary>识别稳定性</summary>
+            <div className="canvas-audio-transcription-temperature">
+              <input type="range" min="0" max="1" step="0.05" value={transcriptionDraft.temperature ?? 0} onChange={(event) => saveTranscriptionDraft({ temperature: Number(event.target.value) })} disabled={transcriptionBusy} />
+              <output>{(transcriptionDraft.temperature ?? 0) === 0 ? "最稳定" : (transcriptionDraft.temperature ?? 0).toFixed(2)}</output>
+              <small>默认最稳定；提高后结果会更灵活。</small>
+            </div>
+          </details>
+          {transcriptionError && <p className="canvas-audio-error" role="alert">{transcriptionError}</p>}
+          <small className="canvas-audio-input-note">支持 MP3、WAV、OGG、M4A、FLAC、WebM、PCM，最大 50 MiB</small>
+        </section>}
+        {activeMode === "music" && <section className="canvas-audio-speech canvas-audio-music" aria-label="音乐生成">
+          <div className="canvas-audio-speech-heading">
+            <div><label htmlFor={`canvas-audio-music-${node.id}`}>音乐创作描述</label><small>{musicProfile?.promptRequired ? "描述曲风、情绪、乐器与场景" : "按所选模型填写创作描述或工作流素材"}</small></div>
+            {musicProfile && <span className="canvas-audio-speech-count">{musicDraft.prompt.length}{musicProfile.promptMaxLength ? ` / ${musicProfile.promptMaxLength}` : " 字"}</span>}
+          </div>
+          <textarea
+            id={`canvas-audio-music-${node.id}`}
+            value={musicDraft.prompt}
+            maxLength={musicProfile?.promptMaxLength}
+            rows={6}
+            placeholder="描述希望生成的音乐、声音或处理目标…"
+            onChange={(event) => {
+              const prompt = event.target.value;
+              setMusicError("");
+              saveMusicDraft({ prompt });
+            }}
+            disabled={musicBusy}
+          />
+          {musicProfile && <CangyuanMusicOptionsFields
+            profile={musicProfile}
+            options={musicDraft.options}
+            onChange={(options: CangyuanMusicOptions) => saveMusicDraft({ options })}
+            onUploadStateChange={(fieldId, uploading) => setUploadingMusicFields((current) => {
+              const next = new Set(current);
+              if (uploading) next.add(fieldId);
+              else next.delete(fieldId);
+              return next;
+            })}
+          />}
+          {!musicModels.length && <p className="canvas-audio-input-note">当前没有可用的音乐生成模型，请先在模型库启用支持音乐生成的模型。</p>}
+          {musicError && <p className="canvas-audio-error" role="alert">{musicError}</p>}
+        </section>}
+        </div>
         <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
           <div className="canvas-audio-panel-intro">
             <div className="canvas-audio-panel-intro-copy">

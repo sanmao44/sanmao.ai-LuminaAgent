@@ -1,6 +1,6 @@
 import type { CangyuanMediaTask } from '../../packages/contracts/cangyuan-media';
 import { getCangyuanMusicModelProfile, validateCangyuanMusicInput, type CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
-import type { CanvasAudioDraft, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasDocument } from './types';
+import type { CanvasAudioDraft, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasDocument, CanvasGenerationStatus } from './types';
 import { filterModelsByActiveProviders } from '../provider-availability';
 import type { ProviderConnection, RegistryModel } from '../types';
 
@@ -88,7 +88,7 @@ export function updateCanvasAudioMusicTaskDocument(document: CanvasDocument, nod
     if (node.id !== nodeId || node.type !== 'media' || node.data.kind !== 'audio') return node;
     if (JSON.stringify(node.data.musicTask) === JSON.stringify(task)) return node;
     changed = true;
-    const status = task.status === 'succeeded' ? 'completed'
+    const status: CanvasGenerationStatus = task.status === 'succeeded' ? 'completed'
       : task.status === 'failed' || task.status === 'cancelled' ? 'failed'
         : task.status === 'queued' ? 'queued' : 'running';
     const statusLabel = status === 'completed' ? '音乐已完成' : status === 'failed' ? '音乐生成失败' : '音乐生成中';

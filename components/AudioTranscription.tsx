@@ -147,7 +147,7 @@ export default function AudioTranscription({ state, onOpenModels, onNotify }: { 
         {language === '__custom' && <label className="cangyuan-speech-field"><span>语言代码</span><input value={customLanguage} onChange={(event) => setCustomLanguage(event.target.value)} placeholder="例如 it（意大利语）" maxLength={30} /></label>}
         <details className={styles.details}><summary>识别提示与更多设置</summary><div className={styles.advanced}>
           <label className="cangyuan-music-text-field"><span>专有名词提示（可选）</span><textarea rows={3} value={prompt} maxLength={12000} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：人名、品牌名、行业术语或口头禅" /><small>帮助准确识别，填写原音频中可能出现的词语。</small></label>
-          <div className="cangyuan-speech-field"><span>结果内容</span><SelectMenu value={format} onChange={setFormat} ariaLabel="转写结果格式" options={AUDIO_TRANSCRIPTION_FORMATS} className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" /></div>
+          <div className="cangyuan-speech-field"><span>结果内容</span><SelectMenu value={format} onChange={setFormat} ariaLabel="转写结果格式" options={[...AUDIO_TRANSCRIPTION_FORMATS]} className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" /></div>
           <label className={styles.temperature}><span>识别稳定性</span><input type="range" min={0} max={1} step={0.05} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} /><output>{temperature === 0 ? '最稳定' : temperature.toFixed(2)}</output><small>默认最稳定；提高后结果会更灵活。</small></label>
         </div></details>
         {error && <p className="cangyuan-task-error" role="alert">{error}</p>}
