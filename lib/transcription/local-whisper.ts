@@ -715,13 +715,30 @@ function toSrtTime(seconds: number) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')},${String(fraction).padStart(3, '0')}`;
 }
 
+function formatSubtitleText(value: string) {
+  const text = cleanText(value).replace(/[，,]/gu, ' ');
+  return text
+    .replace(/\p{P}/gu, (punctuation, offset: number, source: string) => {
+      if (['、', '“', '”', '＂', '"', '%'].includes(punctuation)) return punctuation;
+      const previous = Array.from(source.slice(0, offset)).at(-1) || '';
+      const next = Array.from(source.slice(offset + punctuation.length))[0] || '';
+      if ((punctuation === '.' || punctuation === '．') && /[\p{L}\p{N}]/u.test(previous) && /[\p{L}\p{N}]/u.test(next)) return punctuation;
+      if ((punctuation === ':' || punctuation === '：' || punctuation === '-' || punctuation === '－') && /\p{N}/u.test(previous) && /\p{N}/u.test(next)) return punctuation;
+      return /[\p{L}\p{N}”＂"]/u.test(previous) && /[\p{L}\p{N}]/u.test(next) ? ' ' : '';
+    })
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
 /** Serialize timestamped segments without asking a language model to rewrite their timings. */
 export function formatSrt(segments: readonly TimestampedTranscriptSegment[]) {
-  const cues = segments
-    .filter((segment) => Number.isFinite(segment.start) && Number.isFinite(segment.end) && segment.end > segment.start && cleanText(segment.text))
-    .map((segment, index) => {
-      const text = cleanText(segment.text).replace(/(\d)\s+%/gu, '$1%');
-      return `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${text}`;
-    });
+  const captions = segments.flatMap((segment) => {
+    if (!Number.isFinite(segment.start) || !Number.isFinite(segment.end) || segment.end <= segment.start || !cleanText(segment.text)) return [];
+    const text = formatSubtitleText(segment.text).replace(/(\d)\s+%/gu, '$1%');
+    return text ? [{ ...segment, text }] : [];
+  });
+  const cues = captions.map((segment, index) => (
+    `${index + 1}\r\n${toSrtTime(segment.start)} --> ${toSrtTime(segment.end)}\r\n${segment.text}`
+  ));
   return cues.length ? `${cues.join('\r\n\r\n')}\r\n` : '';
 }

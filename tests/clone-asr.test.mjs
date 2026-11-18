@@ -104,6 +104,17 @@ test('SRT serialization keeps ASR timings and emits stable cue numbering and tim
   ]), /准确率90%以上/u);
 });
 
+test('SRT punctuation uses spaces for commas and preserves only enumeration marks, double quotes, and semantic number separators', () => {
+  const srt = transcriptionModule.formatSrt([
+    { start: 0, end: 2, text: '你好，世界。屏幕里不要出现标点！保留、并列词和“引号”。版本SANMAO.AI是3.5万，时间10:30。' },
+  ]);
+
+  const subtitle = srt.split('\r\n')[2];
+  assert.equal(subtitle, '你好 世界 屏幕里不要出现标点 保留、并列词和“引号” 版本SANMAO.AI是3.5万 时间10:30');
+  assert.doesNotMatch(subtitle, /[，,。！？!?；;]/u);
+  assert.doesNotMatch(subtitle, /(?<!\p{N})[:：]|[:：](?!\p{N})/u);
+});
+
 test('reference text becomes an explicit Whisper decoder prefix', () => {
   const encodedCalls = [];
   const decoderInputIds = transcriptionModule.buildWhisperDecoderInputIds({

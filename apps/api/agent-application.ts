@@ -414,11 +414,14 @@ async function transcribeAudioAttachment(
   }
   const referenceText = [...referenceParts.values()].join('\n\n').trim().slice(0, 12_000);
   const referenceDocumentCount = referenceParts.size;
-  onProgress('正在加载本地语音识别模型，首次使用会自动下载并缓存…');
+  onProgress('正在准备语音识别…');
   const result = await generateAudioSubtitle({
     audio: { artifactId: audio.artifactId, name: audio.name, mimeType: audio.mimeType || 'audio/mpeg', ...(audio.size ? { size: audio.size } : {}) },
     ...(referenceText ? { referenceText } : {}),
   }, {
+    getCloudTranscriber: transcription.getCloudTranscriber,
+    alignCloudTranscript: transcription.alignCloudTranscript,
+    applyReferenceText: transcription.applyReferenceText,
     transcribeAudio: async ({ artifactId, referenceText: promptText, onProgress: stageProgress }) => {
       const stored = await transcription.readArtifact(artifactId);
       if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
@@ -445,7 +448,7 @@ async function transcribeAudioAttachment(
     },
   }, (stage) => {
     onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并整理字幕时间戳…');
-  });
+  }, signal);
   const descriptor = result.file;
   return {
     file: descriptor,

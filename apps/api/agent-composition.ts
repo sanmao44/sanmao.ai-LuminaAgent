@@ -20,6 +20,8 @@ import {
   artifactStore,
 } from '@/lib/artifacts';
 import { transcribeLocalAudioFile, formatSrt } from '@/lib/transcription/local-whisper';
+import { transcribeMoarkAudioFile } from '@/lib/transcription/moark-asr';
+import { alignTranscriptTextToLocalTiming, applyReferenceTextToTranscript } from '@/lib/transcription/transcript-timing-alignment';
 import { getStorageRoots, persistImageBuffer } from '@/lib/image-storage';
 import {
   getPublicState,
@@ -29,6 +31,7 @@ import {
   getRuntimeModel,
   getRuntimeModelCandidates,
   getRuntimeIntentClassifierModel,
+  getRuntimeMoarkAudioProvider,
 } from '@/lib/store';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { getProviderPreset } from '@/lib/provider-presets';
@@ -139,6 +142,14 @@ export type AgentApplicationInfrastructure = {
     readArtifact: typeof artifactStore.read;
     saveArtifact: typeof artifactStore.save;
     transcribeAudioFile: typeof transcribeLocalAudioFile;
+    getCloudTranscriber: () => Promise<((input: {
+      artifactId: string;
+      referenceText?: string;
+      signal?: AbortSignal;
+      onProgress?: (stage: 'loading-model' | 'transcribing') => void;
+    }) => ReturnType<typeof transcribeLocalAudioFile>) | null>;
+    alignCloudTranscript: typeof alignTranscriptTextToLocalTiming;
+    applyReferenceText: typeof applyReferenceTextToTranscript;
     formatSrt: typeof formatSrt;
   };
   models: {
@@ -238,6 +249,18 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
       readArtifact: artifactStore.read,
       saveArtifact: artifactStore.save,
       transcribeAudioFile: transcribeLocalAudioFile,
+      getCloudTranscriber: async () => {
+        const provider = await getRuntimeMoarkAudioProvider();
+        if (!provider) return null;
+        return async ({ artifactId, referenceText, signal, onProgress }) => {
+          const stored = await artifactStore.read(artifactId);
+          if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
+          onProgress?.('transcribing');
+          return transcribeMoarkAudioFile(stored.filePath, provider, { referenceText, signal });
+        };
+      },
+      alignCloudTranscript: alignTranscriptTextToLocalTiming,
+      applyReferenceText: applyReferenceTextToTranscript,
       formatSrt,
     },
     models: { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, getRuntimeIntentClassifierModel, filterModelsByActiveProviders, getProviderPreset },
