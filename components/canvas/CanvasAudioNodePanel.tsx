@@ -4,7 +4,7 @@ import type { ProviderConnection, RegistryModel } from "@/lib/types";
 import { selectAutomaticModel } from "@/lib/model-selection";
 import { formatCanvasAudioDuration } from "@/lib/canvas/media";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
-import { canvasAudioMusicModels, canvasAudioSoundEffectModels, canvasAudioSpeechModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
+import { canvasAudioMusicModels, canvasAudioMusicTaskStatusLabel, canvasAudioSoundEffectModels, canvasAudioSpeechModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import ModelPicker from "@/components/ModelPicker";
 import SelectMenu from "@/components/SelectMenu";
@@ -31,13 +31,6 @@ const TRANSCRIPTION_LANGUAGES = [
 const TRANSCRIPTION_FORMATS = [
   { value: "verbose_json", label: "文字与分段时间" }, { value: "json", label: "标准文字" }, { value: "text", label: "纯文本" },
 ];
-
-function musicTaskStatusLabel(status: CanvasAudioMusicTask["status"]) {
-  if (status === "succeeded") return "已完成";
-  if (status === "failed" || status === "cancelled") return "失败";
-  if (status === "queued" || status === "pending") return "排队中";
-  return "生成中";
-}
 
 export type CanvasAudioNodePanelProps = {
   node: CanvasNode;
@@ -191,7 +184,7 @@ export default function CanvasAudioNodePanel({
       dialogueText: node.data.speechDraft?.dialogueText,
     });
     setSpeechError("");
-  }, [node.id, node.data.speechDraft?.text, node.data.speechDraft?.voice, node.data.speechDraft?.modelId, node.data.speechDraft?.format, node.data.speechDraft?.speed, node.data.speechDraft?.voiceId, node.data.speechDraft?.dialogueText, node.data.speechGeneration?.text, node.data.speechGeneration?.voice, node.data.speechGeneration?.requestedModelId, node.data.speechGeneration?.format, node.data.speechGeneration?.speed]);
+  }, [node.id, node.data.speechDraft, node.data.speechGeneration]);
 
   useEffect(() => {
     setTranscriptionDraft(node.data.transcriptionDraft || {});
@@ -738,7 +731,7 @@ export default function CanvasAudioNodePanel({
               return next;
             })}
           />}
-          {!(activeMode === "sound-effect" ? soundEffectModels : musicModels).length && <p className="canvas-audio-input-note">当前没有可用的{musicTaskKindName}模型，请先在模型库启用对应能力的模型。</p>}
+          {!(activeMode === "sound-effect" ? soundEffectModels : musicModels).length && <p className="canvas-audio-input-note">当前没有已接入可运行接口的{musicTaskKindName}模型。启用模型前，请确认对应服务商已完成该任务类型的接口适配。</p>}
           {musicError && <p className="canvas-audio-error" role="alert">{musicError}</p>}
         </section>}
         </div>
@@ -816,7 +809,7 @@ export default function CanvasAudioNodePanel({
             <div className="canvas-audio-generation-list">
               {musicHistory.map((musicTask) => <article key={musicTask.id}>
                 <p>{musicTask.prompt || (cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || "")) === "音效" ? "音效处理任务" : "音乐处理任务")}</p>
-                <small>{cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || ""))} · {musicTask.modelName} · {musicTaskStatusLabel(musicTask.status)} · {new Date(musicTask.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
+                <small>{cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || ""))} · {musicTask.modelName} · {canvasAudioMusicTaskStatusLabel(musicTask.status)} · {new Date(musicTask.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
                 {musicTask.error && <small className="canvas-audio-error">{musicTask.error}</small>}
                 {musicTask.outputs.map((output, index) => output.url ? <div className="canvas-audio-music-output" key={`${musicTask.id}-${index}`}>
                   <b>{output.name || output.title || output.artifactType?.toUpperCase() || `结果 ${index + 1}`}</b>
@@ -854,8 +847,8 @@ export default function CanvasAudioNodePanel({
               defaultProviderName={defaultProviderName}
               placeholder={activeMode === "speech"
                 ? speechModels.length ? undefined : "尚未启用配音模型"
-                : activeMode === "music" ? musicModels.length ? undefined : "尚未启用音乐模型"
-                  : activeMode === "sound-effect" ? soundEffectModels.length ? undefined : "尚未启用音效模型"
+                : activeMode === "music" ? musicModels.length ? undefined : "暂无已接入的音乐模型"
+                  : activeMode === "sound-effect" ? soundEffectModels.length ? undefined : "暂无已接入的音效模型"
                     : transcriptionModels.length ? undefined : "尚未启用转写模型"}
               automaticHint={activeMode === "speech" ? "按默认服务商选择可用配音模型，无在线模型时使用本机语音" : undefined}
               triggerLabelMode="model"
@@ -864,7 +857,7 @@ export default function CanvasAudioNodePanel({
               disabled={generatingSpeech || transcriptionBusy || musicBusy}
               className="canvas-audio-model-picker"
             />
-            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" || activeMode === "sound-effect" ? currentMusicTask ? `最近${musicTaskKindName}任务：${musicTaskStatusLabel(currentMusicTask.status)}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
+            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" || activeMode === "sound-effect" ? currentMusicTask ? `最近${musicTaskKindName}任务：${canvasAudioMusicTaskStatusLabel(currentMusicTask.status)}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
           </div>
         </div>
         {activeMode === "speech" && <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()} disabled={generatingSpeech}>{hasAudio ? "替换音频" : "导入音频"}</button>}

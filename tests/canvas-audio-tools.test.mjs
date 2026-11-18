@@ -19,6 +19,31 @@ test('canvas audio draft preserves all speech controls', () => {
   });
 });
 
+test('canvas audio draft persists changes to advanced speech options', () => {
+  const initial = tools.updateCanvasAudioDraftDocument(audioDocument(), 'audio-1', {
+    text: '旁白', voice: 'Ursa', modelId: 'tts-1', format: 'mp3', speed: 1,
+  });
+  const advanced = {
+    text: '旁白', voice: 'Ursa', modelId: 'tts-1', format: 'mp3', speed: 1,
+    applyTextNormalization: 'on', engine: 'v2', languageCode: 'zh', language: 'Chinese',
+    seed: 7, similarityBoost: 0.8, stability: 0.4, voiceId: 'voice-123', emotion: 'calm',
+    instruct: '温柔自然', dialogue: [{ text: '你好', voice: 'Sage' }], dialogueText: 'Sage | 你好',
+  };
+  const updated = tools.updateCanvasAudioDraftDocument(initial, 'audio-1', advanced);
+
+  assert.notEqual(updated, initial);
+  assert.deepEqual(updated.nodes[0].data.speechDraft, advanced);
+  assert.equal(tools.updateCanvasAudioDraftDocument(updated, 'audio-1', { ...advanced, updatedAt: 99 }), updated);
+});
+
+test('canvas music task status distinguishes cancellation from failure', () => {
+  assert.equal(tools.canvasAudioMusicTaskStatusLabel('cancelled'), '已取消');
+  assert.equal(tools.canvasAudioMusicTaskStatusLabel('failed'), '失败');
+  const cancelled = { id: 'task-cancelled', modelId: 'music-1', providerModel: 'lyria-3.5', modelName: '音乐模型', status: 'cancelled', outputs: [], createdAt: '2026-11-18T00:00:00.000Z' };
+  const updated = tools.updateCanvasAudioMusicTaskDocument(audioDocument(), 'audio-1', cancelled);
+  assert.equal(updated.nodes[0].data.statusLabel, '音乐任务已取消');
+});
+
 test('canvas speech model discovery excludes incompatible and transcription-only models', () => {
   const models = [
     { id: 'tts-compatible', providerId: 'compatible', rawId: 'vendor-tts', kind: 'audio', enabled: true, published: true, capabilities: ['speech'] },
