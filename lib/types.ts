@@ -80,6 +80,8 @@ export type ProviderConnection = {
   authHeader?: string;
   authPrefix?: string;
   status: ProviderStatus;
+  /** Safe public flag indicating whether an API credential is configured. */
+  apiKeyConfigured?: boolean;
   /** Set only after a real authenticated provider check succeeds. */
   credentialVerifiedAt?: string;
   enabledModelCount: number;

@@ -256,6 +256,22 @@ test('text-only cloud transcripts reuse local timing and aborts do not start a l
   assert.equal(localStarted, false);
 });
 
+test('ordinary audio conversation uses cloud text without transcribing again for local subtitle timing', async () => {
+  const calls = [];
+  const result = await application.recognizeAudio({
+    audio: { artifactId: 'audio-id', name: 'voice.mp3', mimeType: 'audio/mpeg' },
+  }, {
+    getCloudTranscriber: async () => async () => ({
+      text: '云端识别的会议内容', words: [], segments: [], model: 'SenseVoiceSmall',
+    }),
+    transcribeAudio: async () => { calls.push('local'); throw new Error('conversation mode must not load local timing'); },
+  });
+
+  assert.deepEqual(calls, []);
+  assert.equal(result.engine, 'cloud');
+  assert.equal(result.transcript.text, '云端识别的会议内容');
+});
+
 test('audio transcription fails without usable timed speech and rejects expired attachment ids', async () => {
   const ports = {
     transcribeAudio: async () => ({ text: '', words: [], segments: [], model: 'test-model' }),

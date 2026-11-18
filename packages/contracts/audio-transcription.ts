@@ -7,8 +7,47 @@ export const AUDIO_TRANSCRIPTION_RESPONSE_FORMATS = Object.freeze([
 export type AudioTranscriptionResponseFormat = typeof AUDIO_TRANSCRIPTION_RESPONSE_FORMATS[number];
 
 export type AudioTranscriptionModelSelection = {
+  source: 'local';
+} | {
+  source: 'moark';
+  modelId: 'SenseVoiceSmall';
+} | {
+  source: 'provider';
+  modelId: string;
+} | {
+  /** Accepted for compatibility with older direct transcription callers. */
+  source?: undefined;
   modelId: string;
 };
+
+export const LOCAL_AUDIO_TRANSCRIPTION_MODEL_ID = 'local-whisper';
+export const MOARK_AUDIO_TRANSCRIPTION_MODEL_ID = 'moark-sensevoice-small';
+
+export function audioTranscriptionSelectionForChoice(modelId: string): AudioTranscriptionModelSelection {
+  if (modelId === LOCAL_AUDIO_TRANSCRIPTION_MODEL_ID) return { source: 'local' };
+  if (modelId === MOARK_AUDIO_TRANSCRIPTION_MODEL_ID) return { source: 'moark', modelId: 'SenseVoiceSmall' };
+  return { source: 'provider', modelId };
+}
+
+export function parseAudioTranscriptionModelSelection(value: unknown): AudioTranscriptionModelSelection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const selection = value as Record<string, unknown>;
+  if (selection.source === 'local') return { source: 'local' };
+  if (selection.source === 'moark' && selection.modelId === 'SenseVoiceSmall') {
+    return { source: 'moark', modelId: 'SenseVoiceSmall' };
+  }
+  if (selection.source === 'provider' && typeof selection.modelId === 'string') {
+    const modelId = selection.modelId.trim();
+    return modelId && modelId.length <= 240 ? { source: 'provider', modelId } : null;
+  }
+  // Older clients sent only { modelId } for a registered ASR model.
+  if (selection.source === undefined && typeof selection.modelId === 'string') {
+    const modelId = selection.modelId.trim();
+    if (!modelId || modelId.length > 240) return null;
+    return audioTranscriptionSelectionForChoice(modelId);
+  }
+  return null;
+}
 
 export type AudioTranscriptionRequest = {
   modelId: string;

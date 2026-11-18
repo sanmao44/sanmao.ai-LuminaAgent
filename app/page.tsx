@@ -22,6 +22,7 @@ import LocalEditEditor from '@/components/MaskEditor';
 import VideoStudio from '@/components/VideoStudio';
 import CangyuanMediaStudio from '@/components/CangyuanMediaStudio';
 import AgentTranscriptionModelControl, { resolveAgentTranscriptionModelSelection, useAgentTranscriptionModelSelection } from '@/components/audio/AgentTranscriptionModelControl';
+import { audioTranscriptionSelectionForChoice } from '@/packages/contracts/audio-transcription';
 import SelectMenu from '@/components/SelectMenu';
 import JimengProviderCard from '@/components/JimengProviderCard';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
@@ -2811,7 +2812,7 @@ export default function Page() {
     ]);
     const agentAudioFile = agentFiles.find((file)=>isAgentAudioAttachment(file));
     const agentAudioFileKey = agentAudioFile ? `${agentAudioFile.id}:${agentAudioFile.artifactId || ''}` : '';
-    const agentTranscriptionSelection = useAgentTranscriptionModelSelection(state, agentAudioFileKey);
+    const agentTranscriptionSelection = useAgentTranscriptionModelSelection(state, agentAudioFileKey, agentInput);
     const availableIntentClassifiers = useMemo(()=>activeProviderModels.filter((m)=>isIntentClassifierModel(m) && m.enabled && m.published && m.kind === 'chat'), [
         activeProviderModels
     ]);
@@ -6915,6 +6916,7 @@ export default function Page() {
                     role: item.role,
                     content: conversationMessageText(item),
                     references: item.id === latestUserId ? referencesForRequest : [],
+                    ...(item.id === latestUserId && item.audioTask === 'subtitle' ? { audioTask: 'subtitle' as const } : {}),
                     ...(item.id === latestUserId && item.audioTranscriptionModelId ? { audioTranscriptionModelId: item.audioTranscriptionModelId } : {}),
                     files: item.id === latestUserId ? (item.files || []).map((file)=>({
                             name: file.name,
@@ -6971,7 +6973,9 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: modelOverride,
-                    ...(latestUserMessage?.audioTranscriptionModelId ? { audioTranscription: { modelId: latestUserMessage.audioTranscriptionModelId } } : {}),
+                    ...(latestUserMessage?.audioTask === 'subtitle' && latestUserMessage.audioTranscriptionModelId
+                        ? { audioTranscription: audioTranscriptionSelectionForChoice(latestUserMessage.audioTranscriptionModelId) }
+                        : {}),
                     imageModelId: retryImageModelId,
                     ...(message.task === 'one_take_video_prompt' && message.durationSeconds !== undefined ? { task: message.task, durationSeconds: message.durationSeconds } : {}),
                     webMode: agentWebMode,
@@ -7121,8 +7125,9 @@ export default function Page() {
         if (refs.some((reference)=>reference.pending)) return notify('引用素材正在准备，请稍候片刻再发送');
         const files = overrideRefs ? [] : agentFiles.filter((file)=>isAgentAudioAttachment(file) || refs.some((reference)=>reference.id === file.id && reference.kind !== 'text'));
         const audioFile = files.find((file)=>isAgentAudioAttachment(file));
-        const transcriptionSelection = resolveAgentTranscriptionModelSelection(agentTranscriptionSelection.models, agentTranscriptionSelection.modelId);
-        if (audioFile && transcriptionSelection.required && !transcriptionSelection.modelId) return notify('请先选择字幕转写模型');
+        const transcriptionSelection = resolveAgentTranscriptionModelSelection(agentTranscriptionSelection.options, agentTranscriptionSelection.modelId);
+        const subtitleRequested = Boolean(audioFile && agentTranscriptionSelection.subtitleRequested);
+        if (subtitleRequested && agentTranscriptionSelection.requiresSelection) return notify('请先选择转写方式');
         const oneTakeDuration = task === 'one_take_video_prompt'
             ? normalizeOneTakeDuration(durationSeconds)
             : undefined;
@@ -7154,7 +7159,8 @@ export default function Page() {
             imageModelId: activeAgentImageModelId,
             references: refs,
             files,
-            ...(audioFile && transcriptionSelection.modelId ? { audioTranscriptionModelId: transcriptionSelection.modelId } : {}),
+            ...(subtitleRequested ? { audioTask: 'subtitle' as const } : {}),
+            ...(subtitleRequested && transcriptionSelection.modelId ? { audioTranscriptionModelId: transcriptionSelection.modelId } : {}),
             followUp: followUp || undefined
         };
         const pendingId = uid('msg');
@@ -7260,6 +7266,7 @@ export default function Page() {
                         ? `${followUpRequestContent(m.content, m.followUp)}${githubInstallWireHint ? `\n[本轮安装目标仓库：${githubInstallWireHint}]` : ''}`
                         : conversationMessageText(m),
                     references: m.id === latestUserId ? referencesForRequest : [],
+                    ...(m.id === latestUserId && m.audioTask === 'subtitle' ? { audioTask: 'subtitle' as const } : {}),
                     ...(m.id === latestUserId && m.audioTranscriptionModelId ? { audioTranscriptionModelId: m.audioTranscriptionModelId } : {}),
                     files: m.id === latestUserId ? (m.files || []).map((file)=>({
                             name: file.name,
@@ -7290,7 +7297,7 @@ export default function Page() {
                     persona: sessionId === activeChatIdRef.current ? agentPersonaRef.current : (chatSessions.find((session)=>session.id === sessionId)?.persona || ''),
                     referenceImages: referenceRecords,
                     model: activeAgentModelId,
-                    ...(audioFile && transcriptionSelection.modelId ? { audioTranscription: { modelId: transcriptionSelection.modelId } } : {}),
+                    ...(subtitleRequested && transcriptionSelection.modelId ? { audioTranscription: audioTranscriptionSelectionForChoice(transcriptionSelection.modelId) } : {}),
                     imageModelId: activeAgentImageModelId,
                     task,
                     ...(oneTakeDuration !== undefined ? { durationSeconds: oneTakeDuration } : {}),
@@ -9129,9 +9136,12 @@ export default function Page() {
                                                     }
                                                 }),
                                                 agentAudioFileKey && /*#__PURE__*/ _jsx(AgentTranscriptionModelControl, {
-                                                    models: agentTranscriptionSelection.models,
+                                                    options: agentTranscriptionSelection.options,
                                                     value: agentTranscriptionSelection.modelId,
-                                                    onChange: agentTranscriptionSelection.onChange
+                                                    subtitleRequested: agentTranscriptionSelection.subtitleRequested,
+                                                    requiresSelection: agentTranscriptionSelection.requiresSelection,
+                                                    onChange: agentTranscriptionSelection.onChange,
+                                                    onToggleSubtitle: agentTranscriptionSelection.onToggleSubtitle
                                                 }),
                                                 agentAudioUpload && /*#__PURE__*/ _jsxs("div", {
                                                     className: "agent-audio-upload-progress",
@@ -9335,8 +9345,8 @@ export default function Page() {
                                                         }),
                                                         /*#__PURE__*/ _jsx(AgentSendButton, {
                                                                     busy: activeAgentBusy,
-                                                                    disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending) || agentTranscriptionSelection.requiresSelection && !agentTranscriptionSelection.modelId,
-                                                                    title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : agentTranscriptionSelection.requiresSelection && !agentTranscriptionSelection.modelId ? '请先选择字幕转写模型' : '发送',
+                                                                    disabled: activeAgentBusy ? false : !agentInput.trim() && !agentFiles.length && !agentRefs.length || agentMessageSelectionActive || agentRefs.some((ref)=>ref.pending) || agentTranscriptionSelection.requiresSelection,
+                                                                    title: activeAgentBusy ? '停止当前回答' : agentMessageSelectionMode ? '请先完成或取消删除选择' : shareSelectionMode ? '请先完成或取消分享选择' : agentRefs.some((ref)=>ref.pending) ? '参考图准备完成后才能发送' : agentTranscriptionSelection.requiresSelection ? '请先选择转写方式' : '发送',
                                                                     Icon: Icon,
                                                                     onSend: ()=>void sendAgent(),
                                                                     onStop: ()=>void stopAgent()

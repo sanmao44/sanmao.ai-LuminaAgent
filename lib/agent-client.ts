@@ -33,6 +33,7 @@ export type AgentClientMessage = {
   /** New structured references; string[] remains accepted for old sessions. */
   references?: CreativeReference[] | string[];
   files?: AgentClientFile[];
+  audioTask?: "subtitle";
   audioTranscriptionModelId?: string;
 };
 

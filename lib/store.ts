@@ -18,7 +18,7 @@ import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 
-type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
+type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount' | 'apiKeyConfigured'> & {
   encryptedApiKey: string;
   encryptedVideoApiKey?: string;
 };
@@ -304,6 +304,7 @@ export async function getPublicState(): Promise<PublicState> {
       authHeader: p.authHeader || 'Authorization',
        authPrefix: p.authPrefix ?? 'Bearer ',
        status: p.status,
+      apiKeyConfigured: Boolean(key.trim()),
        credentialVerifiedAt: p.credentialVerifiedAt,
        lastSyncedAt: p.lastSyncedAt,
       createdAt: p.createdAt,
@@ -589,7 +590,8 @@ export async function getRuntimeMoarkAudioProvider() {
     .filter((provider) => {
       let hostname = '';
       try { hostname = new URL(provider.baseUrl).hostname.toLowerCase(); } catch {}
-      return provider.platform === 'gitee' || hostname === 'moark.com' || hostname.endsWith('.moark.com');
+      return isProviderModelLibraryEnabled(provider)
+        && (provider.platform === 'gitee' || hostname === 'moark.com' || hostname.endsWith('.moark.com'));
     })
     .sort((left, right) => {
       const moarkHost = (provider: StoredProvider) => {

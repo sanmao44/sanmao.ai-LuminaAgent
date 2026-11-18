@@ -418,6 +418,34 @@ test('audio attachments generate a timestamped SRT artifact locally without a ch
   assert.equal(agent.modelCalls.length, 0);
 });
 
+test('ordinary audio conversation transcribes for chat context without requiring a model choice or creating subtitles', async () => {
+  const selections = [];
+  const agent = harness({
+    getCloudTranscriber: async (selection) => {
+      selections.push(selection);
+      return async () => ({
+        text: '会议从十点开始',
+        words: [],
+        segments: [{ start: 0, end: 2, text: '会议从十点开始' }],
+        model: 'SenseVoiceSmall',
+      });
+    },
+  });
+  const result = await agent.post([{
+    role: 'user',
+    content: '这段音频说了什么？',
+    files: [{ name: 'meeting.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact', size: 1024 }],
+  }]);
+
+  assert.deepEqual(selections, [undefined]);
+  assert.equal(agent.savedSubtitleArtifacts.length, 0);
+  assert.equal(agent.modelCalls.length, 1);
+  const userMessage = agent.modelCalls[0].payload.messages.find((message) => message.role === 'user');
+  assert.match(userMessage.content, /音频转写文本，仅供理解本轮音频内容/);
+  assert.match(userMessage.content, /会议从十点开始/);
+  assert.equal(result.message, '已经完成。');
+});
+
 test('chat audio subtitle requests pass the selected ASR model to transcription and report its source', async () => {
   const selections = [];
   const agent = harness({
@@ -440,10 +468,30 @@ test('chat audio subtitle requests pass the selected ASR model to transcription 
     audioTranscription: { modelId: 'selected-asr' },
   });
 
-  assert.deepEqual(selections, [{ modelId: 'selected-asr' }]);
+  assert.deepEqual(selections, [{ source: 'provider', modelId: 'selected-asr' }]);
   assert.equal(agent.transcriptionCalls.length, 0);
   assert.match(result.message, /识别模型：Selected ASR；识别来源：云端识别/);
   assert.match(result.model, /云端识别 · Selected ASR/);
+});
+
+test('explicit subtitle mode with local selection does not invoke a cloud transcriber', async () => {
+  const selections = [];
+  const agent = harness({
+    noChatModel: true,
+    getCloudTranscriber: async (selection) => { selections.push(selection); return null; },
+  });
+  const result = await agent.post([{
+    role: 'user',
+    content: '',
+    audioTask: 'subtitle',
+    audioTranscriptionModelId: 'local-whisper',
+    files: [{ name: 'meeting.mp3', mimeType: 'audio/mpeg', artifactId: 'audio-artifact', size: 1024 }],
+  }]);
+
+  assert.deepEqual(selections, [{ source: 'local' }]);
+  assert.equal(agent.transcriptionCalls.length, 1);
+  assert.equal(agent.savedSubtitleArtifacts.length, 1);
+  assert.equal(result.files[0].name, 'meeting.srt');
 });
 
 test('chat audio subtitle rejects a malformed explicit ASR model selection', async () => {

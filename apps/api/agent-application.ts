@@ -54,7 +54,8 @@ import { applicationJson as createApplicationJson } from '@/apps/api/agent-appli
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
-import type { AudioTranscriptionModelSelection } from '@/packages/contracts/audio-transcription';
+import { audioTranscriptionSelectionForChoice, parseAudioTranscriptionModelSelection, type AudioTranscriptionModelSelection } from '@/packages/contracts/audio-transcription';
+import { isAudioSubtitleRequest } from '@/packages/agent-core/audio-subtitle-intent';
 import { classifyDesktopInstruction, desktopCompletionGap as evaluateDesktopCompletion, desktopInputMatchesRequestedText, isDesktopAppLaunchTool, isDesktopObservationTool, isDesktopScreenshotTool, isDesktopTextInputTool, isDesktopTypingTool, normalizeDesktopToolName, type DesktopCompletionGap, type DesktopExecutionEvidence } from '@/packages/agent-core/desktop-instruction-policy';
 
 async function safeDiscoverMcpForRequest(discover: AgentMcpDiscovery, options: Parameters<AgentMcpDiscovery>[0]) {
@@ -116,7 +117,7 @@ type ClientFile = {
   artifactId?: string;
   downloadUrl?: string;
 };
-type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: ClientFile[]; audioTranscriptionModelId?: string };
+type ClientMessage = { role: 'user' | 'assistant'; content: string; references?: CreativeReference[] | string[]; files?: ClientFile[]; audioTask?: 'subtitle'; audioTranscriptionModelId?: string };
 type GeneratedFile = {
   name: string;
   mimeType: string;
@@ -349,7 +350,7 @@ function videoDownloadSessionConsentQuestion(url: string, status: string, error:
 
 import { createAgentStream, type AgentStreamMetadata, type AgentStreamSettlement, type AgentUpstreamResponse } from '@/apps/api/agent-stream';
 import { applicationStream, type AgentApplicationOutput } from '@/apps/api/agent-application-contract';
-import { generateAudioSubtitle, type AudioTranscriptionEngine } from '@/apps/api/audio-transcription-application';
+import { generateAudioSubtitle, recognizeAudio, type AudioTranscriptionEngine, type AudioTranscriptionPorts } from '@/apps/api/audio-transcription-application';
 function toChatContent(message: ClientMessage, allowVideo = false): string | ChatContentPart[] {
   const refs = normalizeCreativeReferences(message.references, 16).map((reference) => (
     reference.kind === 'text' && reference.text
@@ -403,7 +404,8 @@ async function transcribeAudioAttachment(
   onProgress: (message: string) => void,
   signal: AbortSignal,
   modelSelection?: AudioTranscriptionModelSelection,
-): Promise<AudioSubtitleResult | null> {
+  mode: 'conversation' | 'subtitle' = 'subtitle',
+): Promise<(AudioSubtitleResult | (Awaited<ReturnType<typeof recognizeAudio>> & { referenceDocumentCount: number })) | null> {
   const audio = (message.files || []).find((file) => isAudioClientFile(file) && file.artifactId);
   if (!audio?.artifactId) return null;
   const referenceParts = new Map<string, string>();
@@ -418,11 +420,12 @@ async function transcribeAudioAttachment(
   const referenceText = [...referenceParts.values()].join('\n\n').trim().slice(0, 12_000);
   const referenceDocumentCount = referenceParts.size;
   onProgress('正在准备语音识别…');
-  const result = await generateAudioSubtitle({
+  const transcribeInput = {
     audio: { artifactId: audio.artifactId, name: audio.name, mimeType: audio.mimeType || 'audio/mpeg', ...(audio.size ? { size: audio.size } : {}) },
     ...(referenceText ? { referenceText } : {}),
     ...(modelSelection ? { modelSelection } : {}),
-  }, {
+  };
+  const transcribePorts: AudioTranscriptionPorts = {
     getCloudTranscriber: transcription.getCloudTranscriber,
     alignCloudTranscript: transcription.alignCloudTranscript,
     applyReferenceText: transcription.applyReferenceText,
@@ -439,7 +442,7 @@ async function transcribeAudioAttachment(
             onProgress('正在准备本地语音识别模型…');
             stageProgress?.('loading-model');
           } else if (progress.stage === 'transcribing') {
-            onProgress('正在识别语音并整理字幕时间戳…');
+            onProgress(mode === 'subtitle' ? '正在识别语音并整理字幕时间戳…' : '正在识别音频内容…');
             stageProgress?.('transcribing');
           }
         },
@@ -450,9 +453,17 @@ async function transcribeAudioAttachment(
       const saved = await transcription.saveArtifact({ kind: 'file', name, mimeType, data: Buffer.from(data) });
       return { id: saved.id, name: saved.name, mimeType: saved.mimeType, size: saved.size, downloadUrl: saved.downloadUrl };
     },
-  }, (stage) => {
-    onProgress(stage === 'loading-model' ? '正在准备本地语音识别模型…' : '正在识别语音并整理字幕时间戳…');
-  }, signal);
+  };
+  const reportStage = (stage: 'loading-model' | 'transcribing') => {
+    onProgress(stage === 'loading-model'
+      ? '正在准备本地语音识别模型…'
+      : mode === 'subtitle' ? '正在识别语音并整理字幕时间戳…' : '正在识别音频内容…');
+  };
+  if (mode === 'conversation') {
+    const result = await recognizeAudio(transcribeInput, transcribePorts, reportStage, signal);
+    return { ...result, referenceDocumentCount };
+  }
+  const result = await generateAudioSubtitle(transcribeInput, transcribePorts, reportStage, signal);
   const descriptor = result.file;
   return {
     file: descriptor,
@@ -568,6 +579,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ...(typeof m.audioTranscriptionModelId === 'string' && m.audioTranscriptionModelId.trim()
           ? { audioTranscriptionModelId: m.audioTranscriptionModelId.trim().slice(0, 240) }
           : {}),
+        ...(m.audioTask === 'subtitle' ? { audioTask: 'subtitle' as const } : {}),
         references: normalizeCreativeReferences(m.references, 16),
         // inline 文本文件继续带 content；Office/ZIP artifact 只保留元数据与 id。
         files: Array.isArray(m.files)
@@ -579,37 +591,33 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       }));
     if (!messages.length) return applicationJson({ error: '消息不能为空。' }, { status: 400 });
 
-    // Subtitle generation is a local capability. Resolve it before chat-model
-    // selection so a user can use the first-run Whisper download without a
-    // configured provider API key.
     const latestMessage = latestUser(messages);
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
-      const messageSelection = typeof latestMessage.audioTranscriptionModelId === 'string' && latestMessage.audioTranscriptionModelId.trim()
-        ? { modelId: latestMessage.audioTranscriptionModelId.trim() }
-        : undefined;
-      const hasSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription') || Boolean(messageSelection);
-      const audioTranscription = body.audioTranscription;
-      let modelSelection: AudioTranscriptionModelSelection | undefined = messageSelection;
-      if (hasSelection) {
-        const modelId = Object.prototype.hasOwnProperty.call(body, 'audioTranscription')
-          ? audioTranscription && typeof audioTranscription === 'object' && !Array.isArray(audioTranscription)
-            ? (audioTranscription as Record<string, unknown>).modelId
-            : undefined
-          : messageSelection?.modelId;
-        if (typeof modelId !== 'string' || !modelId.trim() || modelId.trim().length > 240) {
+      const bodyHasTranscriptionSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription');
+      const shouldGenerateSubtitle = latestMessage.audioTask === 'subtitle'
+        || isAudioSubtitleRequest(latestMessage.content)
+        || bodyHasTranscriptionSelection;
+      if (shouldGenerateSubtitle) {
+        const messageSelectionId = latestMessage.audioTranscriptionModelId?.trim();
+        const messageSelection = messageSelectionId
+          ? audioTranscriptionSelectionForChoice(messageSelectionId)
+          : undefined;
+        const modelSelection = bodyHasTranscriptionSelection
+          ? parseAudioTranscriptionModelSelection(body.audioTranscription)
+          : messageSelection;
+        if (bodyHasTranscriptionSelection && !modelSelection) {
           return applicationJson({ error: '字幕转写模型选择无效，请重新选择。' }, { status: 400 });
         }
-        modelSelection = { modelId: modelId.trim() };
-      }
-      const audioSubtitle = await transcribeAudioAttachment(
-        latestMessage,
-        transcriptionInfrastructure,
-        (message) => reportProgress({ stage: 'artifact', message }),
-        requestController.signal,
-        modelSelection,
-      );
-      if (audioSubtitle) {
+        const audioSubtitle = await transcribeAudioAttachment(
+          latestMessage,
+          transcriptionInfrastructure,
+          (message) => reportProgress({ stage: 'artifact', message }),
+          requestController.signal,
+          modelSelection || undefined,
+          'subtitle',
+        );
+        if (audioSubtitle && 'file' in audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
           ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；会用其中的专名提示识别，并谨慎校正与参考稿上下文高度匹配的错字，无法确认处保留识别原文。时间戳仍来自音频识别，并非按参考稿逐字强制对齐，字幕建议人工核对。`
           : '未附带参考文档；如需辅助识别专有名词，可同时上传短术语表。';
@@ -651,6 +659,24 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           deliverable: 'TEXT',
           toolSupport: true,
         });
+        }
+      } else {
+        const audioRecognition = await transcribeAudioAttachment(
+          latestMessage,
+          transcriptionInfrastructure,
+          (message) => reportProgress({ stage: 'artifact', message }),
+          requestController.signal,
+          undefined,
+          'conversation',
+        );
+        if (audioRecognition && 'transcript' in audioRecognition) {
+          const transcript = audioRecognition.transcript.text.trim();
+          const audioName = latestMessage.files?.find((file) => isAudioClientFile(file) && file.artifactId)?.name || '音频附件';
+          const audioContext = transcript
+            ? `[音频转写文本，仅供理解本轮音频内容：${audioName}]\n${transcript}`
+            : `[音频附件 ${audioName} 未识别到可用语音]`;
+          latestMessage.content = [latestMessage.content.trim(), audioContext].filter(Boolean).join('\n\n');
+        }
       }
     }
 

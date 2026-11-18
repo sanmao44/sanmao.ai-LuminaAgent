@@ -69,3 +69,13 @@ test('speech capability includes models from every active provider', () => {
   const visible = availability.filterModelsByActiveProviders(speechModels, providers, { capability: 'speech' });
   assert.deepEqual(visible.map((model) => model.id), ['provider-a-tts', 'provider-b-tts']);
 });
+
+test('transcription capability can be filtered independently from speech synthesis', () => {
+  const audioModels = [
+    { id: 'asr', providerId: 'enabled', enabled: true, published: true, capabilities: ['transcription'] },
+    { id: 'tts', providerId: 'enabled', enabled: true, published: true, capabilities: ['speech'] },
+  ];
+
+  const visible = availability.filterModelsByActiveProviders(audioModels, providers, { capability: 'transcription' });
+  assert.deepEqual(visible.map((model) => model.id), ['asr']);
+});

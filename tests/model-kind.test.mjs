@@ -75,8 +75,10 @@ test('classifies TTS and ASR families as audio without eating realtime chat audi
   for (const rawId of ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts', 'cosyvoice-v2', 'elevenlabs-multilingual-v2', 'fish-speech-1.5', 'mimo-audio-7b']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'speech-to-text-v1', 'mu1-muse-asr']) {
+  for (const rawId of ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'speech-to-text-v1', 'mu1-muse-asr', 'SenseVoiceSmall']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+    assert.equal(modelKind.isAudioTranscriptionModelId(rawId), true, rawId);
+    assert.equal(modelKind.isSpeechModelId(rawId), false, rawId);
   }
   for (const rawId of ['gpt-4o-audio-preview', 'gpt-4o-realtime-preview']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
@@ -114,7 +116,7 @@ test('认出国内平台把 TTS 关键词黏在词尾或带厂商前缀的配音
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['iic/SenseVoiceSmall', 'qwen3-omni-flash']) {
+  for (const rawId of ['qwen3-omni-flash']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
 });
@@ -137,11 +139,11 @@ test('向量 / 重排 / OCR 不再被当成对话模型，ASR 单独归为音频
   for (const rawId of [
     'Qwen3-Embedding-8B', 'Qwen3-Reranker-4B', 'bge-reranker-v2-m3', 'bge-m3', 'qwen3.5-ocr',
     'HunyuanOCR', 'DeepSeek-OCR',
-    'SenseVoiceSmall', 'clip-vit', 'resnet-50', 'YOLOv8', 'jina-embeddings-v4',
+    'clip-vit', 'resnet-50', 'YOLOv8', 'jina-embeddings-v4',
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'unknown', rawId);
   }
-  for (const rawId of ['GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3']) {
+  for (const rawId of ['GLM-ASR', 'FunASR', 'TeleASR-MultiDialect', 'whisper-large-v3', 'SenseVoiceSmall', 'iic/SenseVoiceSmall']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
   // 正常对话模型不能被误伤（这三个名字里都带容易误伤的片段）。

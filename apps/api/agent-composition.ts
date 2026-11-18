@@ -112,6 +112,14 @@ export type AgentNativeSearchResult = NativeSearchResult;
 export type AgentBrowserToolUse = BrowserToolUse;
 export type AgentMcpAuditDecision = McpAuditDecision;
 export const AGENT_BROWSER_EXECUTION_LIMITS = BROWSER_EXECUTION_LIMITS;
+
+type AudioTranscriberInput = {
+  artifactId: string;
+  referenceText?: string;
+  signal?: AbortSignal;
+  onProgress?: (stage: 'loading-model' | 'transcribing') => void;
+};
+type AudioTranscriber = (input: AudioTranscriberInput) => ReturnType<typeof transcribeLocalAudioFile>;
 export const agentStripNativeSearchProcess = stripNativeSearchProcess;
 export type AgentChatPayload = Parameters<typeof chatCompletion>[2];
 export type AgentChatProvider = Parameters<typeof chatCompletion>[0];
@@ -252,15 +260,27 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
       readArtifact: artifactStore.read,
       saveArtifact: artifactStore.save,
       transcribeAudioFile: transcribeLocalAudioFile,
-      getCloudTranscriber: async (selection) => {
-        if (selection?.modelId) {
-          const modelId = selection.modelId.trim();
+      getCloudTranscriber: async (selection): Promise<AudioTranscriber | null> => {
+        if (selection?.source === 'local') return null;
+
+        const moarkTranscriber = async (provider?: Awaited<ReturnType<typeof getRuntimeMoarkAudioProvider>>): Promise<AudioTranscriber> => {
+          const selectedProvider = provider || await getRuntimeMoarkAudioProvider();
+          if (!selectedProvider) throw new Error('未接入模力方舟转写服务。');
+          return async ({ artifactId, referenceText, signal, onProgress }: AudioTranscriberInput) => {
+            const stored = await artifactStore.read(artifactId);
+            if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
+            onProgress?.('transcribing');
+            return transcribeMoarkAudioFile(stored.filePath, selectedProvider, { referenceText, signal });
+          };
+        };
+
+        const providerModelTranscriber = async (modelId: string): Promise<AudioTranscriber> => {
           if (!modelId || modelId.length > 240) throw new Error('所选转写模型无效，请重新选择。');
           const candidates = await getRuntimeModelCandidates(modelId, 'audio');
           const runtime = candidates.find((candidate) => candidate.model.id === modelId && candidate.model.capabilities.includes('transcription'));
           if (!runtime) throw new Error('所选模型不可用或不支持音频转写，请在模型库检查其分类和能力。');
           if (runtime.provider.type !== 'openai-compatible') throw new Error('所选语音模型使用的接口协议尚未接入，请选择兼容语音转写接口的模型。');
-          return async ({ artifactId, referenceText, signal, onProgress }) => {
+          return async ({ artifactId, referenceText, signal, onProgress }: AudioTranscriberInput) => {
             const stored = await artifactStore.read(artifactId);
             if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
             onProgress?.('transcribing');
@@ -284,15 +304,16 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
               ...(result.language ? { language: result.language } : {}),
             };
           };
-        }
-        const provider = await getRuntimeMoarkAudioProvider();
-        if (!provider) return null;
-        return async ({ artifactId, referenceText, signal, onProgress }) => {
-          const stored = await artifactStore.read(artifactId);
-          if (!stored) throw new Error('音频附件已过期，请重新上传后再生成字幕。');
-          onProgress?.('transcribing');
-          return transcribeMoarkAudioFile(stored.filePath, provider, { referenceText, signal });
         };
+
+        if (selection?.source === 'moark') return moarkTranscriber();
+        if (selection) return providerModelTranscriber(selection.modelId);
+
+        const moarkProvider = await getRuntimeMoarkAudioProvider();
+        if (moarkProvider) return moarkTranscriber(moarkProvider);
+        const candidates = await getRuntimeModelCandidates('auto', 'audio');
+        const defaultModel = candidates.find((candidate) => candidate.model.capabilities.includes('transcription'));
+        return defaultModel ? providerModelTranscriber(defaultModel.model.id) : null;
       },
       alignCloudTranscript: alignTranscriptTextToLocalTiming,
       applyReferenceText: applyReferenceTextToTranscript,

@@ -21,7 +21,10 @@ export function supportedSpeechModels(state: PublicState | null) {
 }
 
 export function supportedTranscriptionModels(state: PublicState | null) {
-  return openAiCompatibleModels(state, 'transcription');
+  return openAiCompatibleModels(state, 'transcription').filter((model) => {
+    const provider = state?.providers.find((item) => item.id === model.providerId);
+    return provider?.apiKeyConfigured !== false;
+  });
 }
 
 export function supportedMusicModels(state: PublicState | null) {

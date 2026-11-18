@@ -154,6 +154,9 @@ export type AudioTranscriptionPorts = {
   }>;
 };
 
+export type AudioRecognitionPorts = Pick<AudioTranscriptionPorts,
+  'transcribeAudio' | 'getCloudTranscriber' | 'alignCloudTranscript' | 'applyReferenceText'>;
+
 function hasTimedSegments(result: LocalTranscriptionResult) {
   return result.segments.some((segment) => (
     Number.isFinite(segment.start)
@@ -165,9 +168,10 @@ function hasTimedSegments(result: LocalTranscriptionResult) {
 
 async function transcribeWithConfiguredProvider(
   input: { artifactId: string; referenceText?: string; modelSelection?: AudioTranscriptionModelSelection },
-  ports: AudioTranscriptionPorts,
+  ports: AudioRecognitionPorts,
   signal?: AbortSignal,
   onProgress?: (stage: 'loading-model' | 'transcribing') => void,
+  requireTiming = true,
 ) {
   const localInput = { ...input, ...(signal ? { signal } : {}), ...(onProgress ? { onProgress } : {}) };
   const transcribeLocally = async () => ({
@@ -191,6 +195,7 @@ async function transcribeWithConfiguredProvider(
   }
   if (hasTimedSegments(cloud)) return { transcript: ports.applyReferenceText?.(cloud, input.referenceText) || cloud, engine: 'cloud' as const };
   if (!cloud.text.trim()) return transcribeLocally();
+  if (!requireTiming) return { transcript: ports.applyReferenceText?.(cloud, input.referenceText) || cloud, engine: 'cloud' as const };
 
   const localTiming = await ports.transcribeAudio(localInput);
   if (signal?.aborted) throw signal.reason || new Error('Transcription cancelled');
@@ -206,18 +211,28 @@ function subtitleName(audioName: string) {
   return `${withoutExtension}.srt`;
 }
 
+export async function recognizeAudio(
+  input: AudioTranscriptionInput,
+  ports: AudioRecognitionPorts,
+  onProgress?: (stage: 'loading-model' | 'transcribing') => void,
+  signal?: AbortSignal,
+  options: { requireTiming?: boolean } = {},
+) {
+  if (!input.audio.artifactId.trim()) throw new Error('Audio attachment is missing or expired. Upload it again.');
+  return transcribeWithConfiguredProvider({
+    artifactId: input.audio.artifactId,
+    ...(input.referenceText?.trim() ? { referenceText: input.referenceText.trim().slice(0, 12_000) } : {}),
+    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+  }, ports, signal, onProgress, options.requireTiming ?? false);
+}
+
 export async function generateAudioSubtitle(
   input: AudioTranscriptionInput,
   ports: AudioTranscriptionPorts,
   onProgress?: (stage: 'loading-model' | 'transcribing') => void,
   signal?: AbortSignal,
 ) {
-  if (!input.audio.artifactId.trim()) throw new Error('Audio attachment is missing or expired. Upload it again.');
-  const { transcript, engine } = await transcribeWithConfiguredProvider({
-    artifactId: input.audio.artifactId,
-    ...(input.referenceText?.trim() ? { referenceText: input.referenceText.trim().slice(0, 12_000) } : {}),
-    ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
-  }, ports, signal, onProgress);
+  const { transcript, engine } = await recognizeAudio(input, ports, onProgress, signal, { requireTiming: true });
   const srt = ports.formatSrt(transcript.segments);
   if (!srt) throw new Error('No usable speech segments were recognized in the audio.');
   const saved = await ports.saveSubtitle({
