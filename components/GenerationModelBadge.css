@@ -1,0 +1,5 @@
+.generation-model-badge{display:inline-flex;align-items:center;gap:5px;max-width:min(176px,36vw);min-height:18px;padding:1px 6px;vertical-align:middle;border:1px solid color-mix(in srgb,hsl(var(--generation-model-hue,210) 64% 48%) 38%,var(--line));border-radius:999px;background:color-mix(in srgb,hsl(var(--generation-model-hue,210) 64% 48%) 11%,var(--panel-2));color:var(--text-2);font:inherit;line-height:1;white-space:nowrap}
+.generation-model-badge>i{flex:none;width:6px;height:6px;border-radius:50%;background:hsl(var(--generation-model-hue,210) 70% 46%)}
+.generation-model-badge>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.generation-model-badge.unresolved{border-color:var(--line);background:var(--panel-3)}
+.generation-model-badge.unresolved>i{background:var(--muted)}

@@ -214,6 +214,22 @@ test('creating a canvas retries after another tab updates the project index', as
   assert.deepEqual(storage.loadCanvasDocument('new'), empty);
 });
 
+test('deleting a canvas retries against the refreshed index and preserves a concurrently created canvas', async () => {
+  const { storage, project, empty, indexedDB } = await fixture();
+  assert.equal(await storage.createCanvasProject(project('b'), empty), true);
+  const competingProject = { ...project('other'), projectId: 'other-creative' };
+
+  indexedDB.beforeNextReadWrite = () => {
+    indexedDB.seed('canvas-state', 'canvas:projects', [project('a'), project('b'), competingProject]);
+    indexedDB.seed('canvas-state', 'canvas:active', 'other');
+    indexedDB.seed('canvas-state', 'meta:creative-projects', []);
+  };
+
+  assert.equal(await storage.deleteCanvasProject('a'), true);
+  assert.deepEqual(storage.readCanvasProjects().map((item) => item.id).sort(), ['b', 'other']);
+  assert.deepEqual(storage.loadCanvasDocument('other'), empty);
+});
+
 test('a winning IndexedDB index survives a concurrent first legacy migration', async () => {
   const { storage, project, imageDocument, indexedDB } = await fixture({ initialize: false });
   const staleProjects = [{ ...project('stale'), projectId: 'stale-project' }];

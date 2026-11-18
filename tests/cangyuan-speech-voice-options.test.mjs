@@ -41,6 +41,6 @@ test('ElevenLabs v4 translates each documented preset voice while preserving pro
     '爱丽丝', '玛蒂尔达', '威尔', '杰西卡', '埃里克', '克里斯', '布莱恩', '丹尼尔', '莉莉', '比尔',
   ]);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
-  assert.ok(options.every(({ description }) => description === '该音色暂无样音'));
+  assert.ok(options.every(({ description }) => description === '可播放本地样音，不消耗额度'));
   assert.equal(contracts.speechVoiceLabel('external-voice-id', 'elevenlabs-v4-tts'), '自定义音色');
 });

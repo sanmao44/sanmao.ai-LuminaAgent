@@ -69,7 +69,7 @@ function isSoundEffectTask(task: CangyuanMediaTask) {
   return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
 }
 
-function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | '3d-generate') {
+function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | 'sound-effect' | '3d-generate') {
   if (!state) return [];
   const providers = state.providers.filter(isCangyuanProvider);
   return filterModelsByActiveProviders(state.models, providers, { capability });
@@ -295,7 +295,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       return;
     }
     setMusicOptions({});
-  }, [creativeAudioModel?.id]);
+  }, [creativeAudioModel?.id, mode]);
 
   useEffect(() => {
     const profile = model3d ? getCangyuan3DModelProfile(model3d.rawId) : null;
@@ -412,13 +412,13 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   }
 
   async function submitMedia(kind: CangyuanMediaKind) {
-    const selectedModel = kind === 'music' ? musicModel : model3d;
+    const selectedModel = kind === 'music' ? creativeAudioModel : model3d;
     const prompt = (kind === 'music' ? musicPrompt : prompt3d).trim();
     const profile3d = kind === '3d' && selectedModel ? getCangyuan3DModelProfile(selectedModel.rawId) : null;
-    const promptRequired = kind === 'music' ? musicProfile?.promptRequired !== false : profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
+    const promptRequired = kind === 'music' ? creativeAudioProfile?.promptRequired !== false : profile3d?.modelId === 'tripo3d' || generationMode === 'text-to-3d';
     const requiresSingleImage = kind === '3d' && (profile3d?.family === 'trellis' || generationMode === 'image-to-3d');
     if (!selectedModel || promptRequired && !prompt || busy) return;
-    if (kind === 'music' && continuation && (selectedModel.rawId !== 'suno-extend-audio' || musicOptions.uploadUrl !== continuation.uploadUrl)) {
+    if (kind === 'music' && mode === 'music' && continuation && (selectedModel.rawId !== 'suno-extend-audio' || musicOptions.uploadUrl !== continuation.uploadUrl)) {
       setNotice({ kind: 'error', text: '请使用续写工作流和所选音频来源，或清除续写来源后继续。' });
       return;
     }
@@ -438,7 +438,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     try {
       let input: CangyuanMediaCreateInput;
       if (kind === 'music') {
-        const supportedOptions = musicProfile?.allowedOptions.reduce<CangyuanMusicOptions>((result, key) => {
+        const supportedOptions = creativeAudioProfile?.allowedOptions.reduce<CangyuanMusicOptions>((result, key) => {
           const value = (musicOptions as Record<string, unknown>)[key];
           if (value !== undefined) {
             Object.assign(result, { [key]: value });
@@ -590,9 +590,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
     });
   }
 
-  const availableCount = mode === 'speech' ? speechModels.length : mode === 'music' ? musicModels.length : models3d.length;
-  const selectedModel = mode === 'speech' ? speechModel : mode === 'music' ? musicModel : model3d;
-  const currentTasks = mode === 'music' ? sortedMusicTasks : sortedThreeTasks;
+  const availableCount = mode === 'speech' ? speechModels.length : mode === 'music' ? musicModels.length : mode === 'sound-effect' ? soundEffectModels.length : models3d.length;
+  const selectedModel = mode === 'speech' ? speechModel : isCreativeAudioMode ? creativeAudioModel : model3d;
+  const currentTasks = isCreativeAudioMode ? sortedMusicTasks : sortedThreeTasks;
   const isTripo = mode === '3d' && isTripoModel(model3d);
   const isLegacyTripo = mode === '3d' && isLegacyTripoModel(model3d);
   const isTrellis = mode === '3d' && isTrellisModel(model3d);
@@ -612,7 +612,8 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         <nav className="cangyuan-studio-tabs" aria-label="生成类型">
           <button type="button" className={mode === 'speech' ? 'active' : ''} aria-pressed={mode === 'speech'} onClick={() => { setMode('speech'); setNotice(null); }}>配音</button>
           <button type="button" className={mode === 'transcription' ? 'active' : ''} aria-pressed={mode === 'transcription'} onClick={() => { setMode('transcription'); setNotice(null); }}>转写</button>
-          <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐/音效</button>
+          <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐</button>
+          <button type="button" className={mode === 'sound-effect' ? 'active' : ''} aria-pressed={mode === 'sound-effect'} onClick={() => { setMode('sound-effect'); setNotice(null); }}>音效</button>
           <button type="button" className={mode === '3d' ? 'active' : ''} aria-pressed={mode === '3d'} onClick={() => { setMode('3d'); setNotice(null); }}>三维</button>
         </nav>
         <div className="cangyuan-studio-header-meta">
@@ -628,19 +629,19 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         mode === 'transcription' && publicState
           ? <AudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
           : <div className="cangyuan-studio-layout">
-          <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : mode === 'music' ? musicTaskKindName : '三维'}生成设置`}>
+          <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : isCreativeAudioMode ? creativeAudioKindName : '三维'}生成设置`}>
             <div className="cangyuan-form-heading">
               <div>
-                <h2>{mode === 'speech' ? '文本配音' : mode === 'music' ? `${musicTaskKindName}生成` : '三维生成'}</h2>
-                <p>{mode === 'speech' ? '提交文本并接收音频文件。' : mode === 'music' ? musicTaskKindName === '音效' ? '描述声音本身，任务完成后可试听或下载。' : '输入音乐创作描述，任务完成后可试听、下载或续作。' : '按所选模型公开的参数生成 GLB。'}</p>
+                <h2>{mode === 'speech' ? '文本配音' : isCreativeAudioMode ? `${creativeAudioKindName}生成` : '三维生成'}</h2>
+                <p>{mode === 'speech' ? '提交文本并接收音频文件。' : isCreativeAudioMode ? mode === 'sound-effect' ? '描述声音本身，任务完成后可试听或下载。' : '输入音乐创作描述，任务完成后可试听、下载或续作。' : '按所选模型公开的参数生成 GLB。'}</p>
               </div>
               <span className="cangyuan-capability-count">{availableCount} 个模型</span>
             </div>
 
             <span className="cangyuan-field-label">生成模型</span>
             <ModelPicker
-              models={mode === 'speech' ? speechModels : mode === 'music' ? musicModels : models3d}
-              value={mode === 'speech' ? speechModel?.id || 'auto' : mode === 'music' ? musicModel?.id || 'auto' : model3d?.id || 'auto'}
+              models={mode === 'speech' ? speechModels : mode === 'music' ? musicModels : mode === 'sound-effect' ? soundEffectModels : models3d}
+              value={mode === 'speech' ? speechModel?.id || 'auto' : isCreativeAudioMode ? creativeAudioModel?.id || 'auto' : model3d?.id || 'auto'}
               onChange={(value) => {
                 if (mode === 'speech') setSpeechModelId(value === 'auto' ? speechModels[0]?.id || '' : value);
                 else if (mode === 'music') {
@@ -648,6 +649,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   setMusicModelId(nextModel?.id || '');
                   if (continuation && nextModel?.rawId !== 'suno-extend-audio') clearContinuation();
                 }
+                else if (mode === 'sound-effect') setSoundEffectModelId(value === 'auto' ? soundEffectModels[0]?.id || '' : value);
                 else {
                   const nextModelId = value === 'auto' ? models3d[0]?.id || '' : value;
                   const nextModel = models3d.find((model) => model.id === nextModelId);
@@ -661,9 +663,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   }
                 }
               }}
-              capability={mode === 'speech' ? 'speech' : mode === 'music' ? 'music-generate' : '3d-generate'}
+              capability={mode === 'speech' ? 'speech' : mode === 'music' ? 'music-generate' : mode === 'sound-effect' ? 'sound-effect' : '3d-generate'}
               defaultProviderId={publicState?.settings.defaultProviderId}
-              defaultModelId={mode === 'speech' ? speechModels[0]?.id : mode === 'music' ? musicModels[0]?.id : models3d[0]?.id}
+              defaultModelId={mode === 'speech' ? speechModels[0]?.id : mode === 'music' ? musicModels[0]?.id : mode === 'sound-effect' ? soundEffectModels[0]?.id : models3d[0]?.id}
               placeholder="选择模型"
               triggerLabelMode="model"
               disabled={busy || availableCount === 0}
@@ -672,7 +674,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
 
             {availableCount === 0 ? (
               <div className="cangyuan-empty-models">
-                <p>没有可用的{mode === 'speech' ? '配音' : mode === 'music' ? '音乐或音效' : '三维'}模型。</p>
+                <p>没有可用的{mode === 'speech' ? '配音' : isCreativeAudioMode ? creativeAudioKindName : '三维'}模型。</p>
                 <span>请在模型库同步并启用具备对应能力的模型。</span>
                 {onOpenModels && <button type="button" onClick={onOpenModels}>打开模型库</button>}
               </div>
@@ -758,16 +760,16 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || speechVoiceChoice === 'custom' && !speechCustomVoice.trim() || speechProfile?.requiresVoiceId && !speechAdvanced.voiceId?.trim() || speechProfile?.supportsDialogue && (!speechAdvanced.dialogue?.length || Boolean(dialogueDraftError))} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : speechProfile?.supportsDialogue ? '生成对白' : '生成配音'}</button>
                 </div>
               </>
-            ) : mode === 'music' ? (
+            ) : isCreativeAudioMode ? (
               <>
-                {continuation && <div className="cangyuan-continuation-banner"><span>续写来源：{continuation.title}</span><button type="button" aria-label="清除续写来源" onClick={clearContinuation}>清除</button></div>}
-                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">{musicTaskKindName === '音效' ? '音效描述' : '音乐提示词'}{musicProfile?.promptRequired ? '（必填）' : '（可选）'}</label>
-                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={musicProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={musicProfile?.family === 'su2' ? '直接描述希望生成的音乐' : musicProfile?.family === 'suno-sfx' || musicProfile?.family === 'elevenlabs-sfx' ? '描述单个声音，例如关门声、雨打窗户' : musicProfile?.family === 'elevenlabs-music' ? '描述音乐内容、情绪与场景' : musicProfile?.family === 'suno-workflow' && !musicProfile.promptRequired ? '此工作流可根据来源素材处理，无需额外提示词' : '描述曲风、情绪、乐器与场景'} rows={8} />
-                <div className="cangyuan-field-foot"><span>{musicProfile?.family === 'su2' ? '仅使用提示词；每次固定生成 1 首' : musicProfile?.family === 'lyria' ? '一次生成 1 首；时长与节奏速度（每分钟拍数）为目标值，成片以实际结果为准' : musicProfile?.family === 'suno-sfx' ? '用于短音效，不是完整歌曲；结果可能包含多段音频' : musicProfile?.family === 'elevenlabs-sfx' ? '短音效用途；参数按所选型号的时长限制生效' : musicProfile?.family === 'elevenlabs-music' ? '默认时长 30 秒；高码率 MP3 会增加费用' : '歌词、风格与续作字段按所选型号发送'}</span><span>{musicProfile?.promptMaxLength ? `${musicPrompt.length}/${musicProfile.promptMaxLength}` : `${musicPrompt.length} 字`}</span></div>
-                {musicProfile && <CangyuanMusicOptionsFields profile={musicProfile} options={musicOptions} onChange={setMusicOptions} onUploadStateChange={handleMediaUploadState} />}
+                {mode === 'music' && continuation && <div className="cangyuan-continuation-banner"><span>续写来源：{continuation.title}</span><button type="button" aria-label="清除续写来源" onClick={clearContinuation}>清除</button></div>}
+                <label className="cangyuan-field-label" htmlFor="cangyuan-music-prompt">{mode === 'sound-effect' ? '音效描述' : '音乐提示词'}{creativeAudioProfile?.promptRequired ? '（必填）' : '（可选）'}</label>
+                <textarea id="cangyuan-music-prompt" className="cangyuan-prompt" value={musicPrompt} maxLength={creativeAudioProfile?.promptMaxLength} onChange={(event) => setMusicPrompt(event.target.value)} placeholder={creativeAudioProfile?.family === 'su2' ? '直接描述希望生成的音乐' : creativeAudioProfile?.family === 'suno-sfx' || creativeAudioProfile?.family === 'elevenlabs-sfx' ? '描述单个声音，例如关门声、雨打窗户' : creativeAudioProfile?.family === 'elevenlabs-music' ? '描述音乐内容、情绪与场景' : creativeAudioProfile?.family === 'suno-workflow' && !creativeAudioProfile.promptRequired ? '此工作流可根据来源素材处理，无需额外提示词' : mode === 'sound-effect' ? '描述想生成的声音效果' : '描述曲风、情绪、乐器与场景'} rows={8} />
+                <div className="cangyuan-field-foot"><span>{creativeAudioProfile?.family === 'su2' ? '仅使用提示词；每次固定生成 1 首' : creativeAudioProfile?.family === 'lyria' ? '一次生成 1 首；时长与节奏速度（每分钟拍数）为目标值，成片以实际结果为准' : creativeAudioProfile?.family === 'suno-sfx' ? '用于短音效，不是完整歌曲；结果可能包含多段音频' : creativeAudioProfile?.family === 'elevenlabs-sfx' ? '短音效用途；参数按所选型号的时长限制生效' : creativeAudioProfile?.family === 'elevenlabs-music' ? '默认时长 30 秒；高码率 MP3 会增加费用' : '歌词、风格与续作字段按所选型号发送'}</span><span>{creativeAudioProfile?.promptMaxLength ? `${musicPrompt.length}/${creativeAudioProfile.promptMaxLength}` : `${musicPrompt.length} 字`}</span></div>
+                {creativeAudioProfile && <CangyuanMusicOptionsFields profile={creativeAudioProfile} options={musicOptions} onChange={setMusicOptions} onUploadStateChange={handleMediaUploadState} />}
                 <div className="cangyuan-submit-row">
-                  <span>{musicModel?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || Boolean(musicProfile?.promptRequired && !musicPrompt.trim()) || !musicModel} onClick={() => void submitMedia('music')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : musicProfile?.family === 'suno-workflow' ? '运行音乐工具' : `生成${musicTaskKindName}`}</button>
+                  <span>{creativeAudioModel?.displayName || '请选择模型'}</span>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || uploadingMediaFields.size > 0 || Boolean(creativeAudioProfile?.promptRequired && !musicPrompt.trim()) || !creativeAudioModel} onClick={() => void submitMedia('music')}>{uploadingMediaFields.size > 0 ? '正在上传素材…' : busy ? '正在提交…' : creativeAudioProfile?.family === 'suno-workflow' ? '运行音乐工具' : `生成${creativeAudioKindName}`}</button>
                 </div>
               </>
             ) : (
@@ -850,14 +852,14 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           {mode !== 'speech' ? (
             <section className="cangyuan-studio-results" aria-label="生成任务">
               <div className="cangyuan-results-header">
-                <div><h2>{mode === 'music' ? '音乐任务' : '三维任务'}</h2><p>最近 {currentTasks.length} 条 · 状态自动更新</p></div>
-                <button type="button" className="cangyuan-refresh-button" aria-label="刷新任务列表" title="刷新任务列表" onClick={() => void loadTasks(mode === 'music' ? 'music' : '3d')}>刷新</button>
+                <div><h2>{mode === 'music' ? '音乐任务' : mode === 'sound-effect' ? '音效任务' : '三维任务'}</h2><p>最近 {currentTasks.length} 条 · 状态自动更新</p></div>
+                <button type="button" className="cangyuan-refresh-button" aria-label="刷新任务列表" title="刷新任务列表" onClick={() => void loadTasks(isCreativeAudioMode ? 'music' : '3d')}>刷新</button>
               </div>
               {selectedTasks.length === 0 ? (
                 <div className="cangyuan-task-empty"><strong>还没有生成任务</strong><span>提交一次生成后，任务与结果会显示在这里。</span></div>
               ) : (
                 <div className="cangyuan-task-list">
-                  {(mode === 'music' ? sortedMusicTasks : sortedThreeTasks).map((task) => (
+                  {(isCreativeAudioMode ? selectedTasks : sortedThreeTasks).map((task) => (
                     <article className="cangyuan-task-item" key={task.id}>
                       <div className="cangyuan-task-title-row">
                         <div><strong>{task.modelName}</strong><small>{formatCreatedAt(task.createdAt)}</small></div>
@@ -868,12 +870,12 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                       {isActiveTask(task) && <p className="cangyuan-task-progress">{mediaTaskProviderStatusLabel(task.providerStatus, task.status)}</p>}
                       {task.error && <p className="cangyuan-task-error" role="alert">{task.error}</p>}
                       {task.status === 'succeeded' && task.outputs.length === 0 && <p className="cangyuan-task-error">任务完成，但服务商没有返回结果地址。</p>}
-                      {task.outputs.map((output, index) => mode === 'music' ? (
+                      {task.outputs.map((output, index) => isCreativeAudioMode ? (
                         <MediaTaskAudioOutput
                           key={`${task.id}-${output.audioId || index}`}
                           output={output}
                           index={index}
-                          canContinue={Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
+                          canContinue={mode === 'music' && Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
                           onContinue={(selectedOutput) => chooseContinuation(task, selectedOutput)}
                         />
                       ) : (

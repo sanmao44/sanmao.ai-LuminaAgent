@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
@@ -12,8 +13,7 @@ test('available speech voice samples map to local audio without changing provide
     for (const voice of profile.suggestedVoices) {
       const sample = samples.getSpeechVoiceSample(model, voice);
       if (!sample) continue;
-      const relativePath = sample.url.replace(/^\//u, '').replaceAll('/', '\\');
-      const absolutePath = `${process.cwd()}\\public\\${relativePath}`;
+      const absolutePath = path.join(process.cwd(), 'public', sample.url.replace(/^\//u, ''));
       assert.equal(existsSync(absolutePath), true, `${absolutePath} should exist`);
       assert.ok(statSync(absolutePath).size > 44, `${absolutePath} should contain audio data`);
     }
@@ -31,7 +31,7 @@ test('ElevenLabs preset samples cover every documented static voice', () => {
   for (const voice of profile.suggestedVoices) {
     const sample = samples.getSpeechVoiceSample('elevenlabs-v4-tts', voice);
     assert.ok(sample, `${voice} should have a local sample mapping`);
-    const absolutePath = `${process.cwd()}\\public\\${sample.url.replace(/^\\//u, '').replaceAll('/', '\\\\')}`;
+    const absolutePath = path.join(process.cwd(), 'public', sample.url.replace(/^\//u, ''));
     assert.equal(existsSync(absolutePath), true, `${absolutePath} should exist`);
     assert.ok(statSync(absolutePath).size > 44, `${absolutePath} should contain audio data`);
   }

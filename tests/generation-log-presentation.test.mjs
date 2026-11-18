@@ -15,6 +15,15 @@ test("generation log presentation keeps media and source labels stable", () => {
   assert.equal(presentation.generationLogTitle({ mode: "generate", prompt: "  ## scene **test**  " }), "scene test");
 });
 
+test("model colors are stable per resolved model and ignore display-name changes", () => {
+  const first = { modelId: "provider-a:model-1", modelName: "Voice Model" };
+  const renamed = { modelId: "provider-a:model-1", modelName: "Voice Model v2" };
+  const other = { modelId: "provider-b:model-2", modelName: "Voice Model" };
+  assert.equal(presentation.generationLogModelHue(first), presentation.generationLogModelHue(renamed));
+  assert.notEqual(presentation.generationLogModelHue(first), presentation.generationLogModelHue(other));
+  assert.equal(presentation.generationLogModelHue({ requestedModelId: "auto", modelName: "" }), null);
+});
+
 test("audio work history includes only saved successful outputs and honors search and source filters", () => {
   const logs = [
     { id: "speech-1", mode: "audio", mediaKind: "audio", status: "success", source: "workspace", prompt: "Narration for launch", modelName: "Gemini TTS", audioUrl: "/api/storage/audio?name=one.mp3" },

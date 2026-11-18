@@ -775,17 +775,24 @@ export async function renameCanvasProject(id: string, name: string) {
 }
 
 export async function deleteCanvasProject(id: string) {
-  const latest = readCanvasProjects();
-  if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
-  const next = latest.filter((project) => project.id !== id);
-  const tombstones = readCanvasDeletionTombstones();
-  delete tombstones[id];
-  if (!(await persistProjectIdentity(next, readCreativeProjects(), new Map([
-    [`${CANVAS_PROJECT_PREFIX}${id}`, null],
-    [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
-  ]))).saved) return false;
-  emitWorkspaceChange();
-  return true;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    storageConflict = false;
+    const latest = readCanvasProjects();
+    if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
+    const next = latest.filter((project) => project.id !== id);
+    const tombstones = readCanvasDeletionTombstones();
+    delete tombstones[id];
+    const result = await persistProjectIdentity(next, readCreativeProjects(), new Map([
+      [`${CANVAS_PROJECT_PREFIX}${id}`, null],
+      [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
+    ]));
+    if (result.saved) {
+      emitWorkspaceChange();
+      return true;
+    }
+    if (!storageConflict) return false;
+  }
+  return false;
 }
 
 export function readCanvasUi<T extends Record<string, unknown>>() {

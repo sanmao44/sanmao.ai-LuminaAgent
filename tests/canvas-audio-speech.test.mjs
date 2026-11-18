@@ -52,8 +52,8 @@ test('canvas speech node offers model-directory voice, supported format, speed, 
   assert.match(markup, /MP3（通用播放）/);
   assert.match(markup, /FLAC（无损压缩）/);
   assert.match(markup, /语速/);
-  assert.match(markup, /播放本地通用示例样音/);
-  assert.match(markup, /不调用配音接口，不消耗额度/);
+  assert.match(markup, /选择已收录音色后可播放样音/);
+  assert.match(markup, /不调用配音接口、不消耗额度/);
   assert.doesNotMatch(markup, /沧元算力/);
 });
 
