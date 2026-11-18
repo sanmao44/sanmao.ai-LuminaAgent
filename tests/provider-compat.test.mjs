@@ -40,6 +40,19 @@ test('provider picker uses real local logos for visible providers', async () => 
     apiKeyUrl: 'https://a6api.ai/?auth=register&aff=XIcW',
     type: 'openai-compatible',
   });
+  const moark = presets.providerPresets.find((preset) => preset.value === 'gitee');
+  assert.deepEqual({ baseUrl: moark.baseUrl, apiKeyUrl: moark.apiKeyUrl, type: moark.type }, {
+    baseUrl: 'https://api.moark.com/v1',
+    apiKeyUrl: 'https://moark.com/serverless-api',
+    type: 'openai-compatible',
+  });
+  assert.equal(moark.notice, '免费体验令牌每日 100 次；常规 API 令牌需资源包授权');
+  const moarkConfig = presets.resolveProviderConfiguration({ platform: 'gitee' });
+  assert.deepEqual({ chatPath: moarkConfig.chatPath, authHeader: moarkConfig.authHeader, authPrefix: moarkConfig.authPrefix }, {
+    chatPath: '/chat/completions',
+    authHeader: 'Authorization',
+    authPrefix: 'Bearer ',
+  });
   assert.ok(presetsWithLogo.every((preset) => typeof preset.logo === 'string' && preset.logo.startsWith('/brand/providers/')) || presetsWithLogo.every((preset) => typeof preset.logo === 'string'));
   assert.match(providerPickerSource, /className=\{preset\.logo \? "platform-logo" : ""\}/);
   assert.match(providerPickerSource, /preset\.logo \? <img src=\{preset\.logo\} alt="" \/> : preset\.short\.slice\(0, 2\)/);
