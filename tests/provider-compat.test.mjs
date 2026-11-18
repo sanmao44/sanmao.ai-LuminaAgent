@@ -1461,7 +1461,7 @@ test('Cangyuan image generation forwards independent resolution, tier, and requi
     }), /不支持生成档位“8k”/);
     await assert.rejects(() => providers.generateImage(provider, 'flux-3-image', {
       prompt: '不支持的选项', seed: 'seed-42',
-    }), /参数 seed=seed-42/);
+    }), /不支持随机种子.*seed-42/);
     assert.equal(calls.length, 4);
   } finally {
     globalThis.fetch = previousFetch;

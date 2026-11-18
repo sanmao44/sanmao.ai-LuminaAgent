@@ -7,6 +7,8 @@ import ts from 'typescript';
 const sourceUrl = new URL('../lib/video-providers.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
 const cangyuanCapabilitiesSource = await readFile(new URL('../lib/cangyuan-video-capabilities.ts', import.meta.url), 'utf8');
+const cangyuanModelCatalogSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.ts', import.meta.url), 'utf8');
+const cangyuanGeneratedModelCatalogSource = await readFile(new URL('../lib/cangyuan-video-model-catalog.generated.ts', import.meta.url), 'utf8');
 const videoPlatformSource = await readFile(new URL('../lib/video-platform.ts', import.meta.url), 'utf8');
 const cangyuanProviderSource = await readFile(new URL('../lib/cangyuan-provider.ts', import.meta.url), 'utf8');
 const signedSource = await readFile(new URL('../lib/signed-media.ts', import.meta.url), 'utf8');
@@ -24,7 +26,10 @@ const signedCompiled = ts.transpileModule(signedSource
   fileName: new URL('../lib/signed-media.ts', import.meta.url).pathname,
 }).outputText;
 const signedModuleUrl = `data:text/javascript;base64,${Buffer.from(signedCompiled).toString('base64')}`;
-const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanCapabilitiesSource}\n${cangyuanProviderSource}\n${source
+const bundledSource = `const __signedMedia = await import(${JSON.stringify(signedModuleUrl)});\n${videoPlatformSource}\n${cangyuanGeneratedModelCatalogSource}\n${cangyuanModelCatalogSource
+  .replace("import { CANGYUAN_VIDEO_MODEL_CATALOG } from './cangyuan-video-model-catalog.generated';", '')}\n${cangyuanCapabilitiesSource
+  .replace("import { getCangyuanVideoModelSpec, getCangyuanVideoParameter } from './cangyuan-video-model-catalog';", '')
+  .replace("import { cangyuanVideoParameterLabel, cangyuanVideoParameterLabelByName, getCangyuanVideoAdvancedParameters } from './cangyuan-video-model-catalog';", '')}\n${cangyuanProviderSource}\n${source
   .replace(/import \{[^}]+\} from '\.\/video-platform';\r?\n/, '')
   .replace("import { isJimengCanvasCliAvailable, resolveJimengCanvasCliCommand } from './jimeng-cli';", "const isJimengCanvasCliAvailable = () => false; const resolveJimengCanvasCliCommand = (value) => value || 'dreamina-canvas';")
   .replace("import { buildCangyuanVideoPayload } from './cangyuan-video-capabilities';", '')
@@ -120,27 +125,19 @@ test('normalizes done results from common video URL fields', async () => {
   assert.equal(result.costUsd, 0.42);
 });
 
-test('Cangyuan video submission keeps unprofiled models to the model and prompt contract', async () => {
+test('Cangyuan video submission rejects models outside the official catalog', async () => {
   let request;
   globalThis.fetch = async (url, init) => {
     request = { url: String(url), init };
     return new Response(JSON.stringify({ task_id: 'cangyuan-task-1', status: 'queued' }), { status: 202, headers: { 'content-type': 'application/json' } });
   };
-  const result = await video.submitRemoteVideo(provider({
+  await assert.rejects(video.submitRemoteVideo(provider({
     platform: 'custom',
     videoTransport: 'cangyuan-videos',
     videoBaseUrl: 'https://api.cangyuan.example/v1',
     videoGenerationPath: undefined,
-  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'cangyuan-idem-1');
-
-  assert.equal(request.url, 'https://api.cangyuan.example/v1/videos');
-  assert.equal(request.init.headers['Idempotency-Key'], 'cangyuan-idem-1');
-  assert.deepEqual(JSON.parse(request.init.body), {
-    model: 'cangyuan-video-model',
-    prompt: 'a paper boat',
-  });
-  assert.equal(result.providerTaskId, 'cangyuan-task-1');
-  assert.equal(result.status, 'pending');
+  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'cangyuan-idem-1'), /未出现在当前官方目录/u);
+  assert.equal(request, undefined);
 });
 
 test('recognizes an existing Cangyuan API hostname when its provider was saved as a generic platform', async () => {
@@ -155,10 +152,16 @@ test('recognizes an existing Cangyuan API hostname when its provider was saved a
     videoTransport: undefined,
     videoBaseUrl: '',
     videoGenerationPath: undefined,
-  }), 'cangyuan-video-model', { prompt: 'a paper boat' }, 'legacy-cangyuan-idem');
+  }), 'sd20-seedance-2.0-fast', { prompt: 'a paper boat', seconds: 8, aspectRatio: '16:9' }, 'legacy-cangyuan-idem');
 
   assert.equal(request.url, 'https://ai.cangyuansuanli.cn/v1/videos');
-  assert.deepEqual(JSON.parse(request.init.body), { model: 'cangyuan-video-model', prompt: 'a paper boat' });
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'sd20-seedance-2.0-fast',
+    prompt: 'a paper boat',
+    duration: 8,
+    aspect_ratio: '16:9',
+    resolution: '480p',
+  });
   assert.equal(result.providerTaskId, 'legacy-cangyuan-task');
 });
 
