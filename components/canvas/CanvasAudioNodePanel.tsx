@@ -15,6 +15,7 @@ import { getCangyuanMusicModelProfile, type CangyuanMediaOutput, type CangyuanMe
 import { speechVoiceOptions } from "@/components/audio/voice-options";
 import { speechOutputFormatLabel } from "@/components/audio/speech-format-options";
 import VoiceSampleButton from "@/components/audio/VoiceSampleButton";
+import { isCangyuanProvider } from "@/lib/cangyuan-provider";
 import { buildCanvasSpeechRequest } from "@/components/canvas/audio-speech-request";
 import CangyuanMusicOptionsFields, { cangyuanMusicTaskKindName } from "@/components/cangyuan/CangyuanMusicOptionsFields";
 
@@ -122,6 +123,7 @@ export default function CanvasAudioNodePanel({
     ? speechModels.find((model) => model.id === speechModelId)
     : selectAutomaticModel(speechModels, defaultProviderId, defaultModelId);
   const speechProfile = getSpeechModelProfile(selectedModel?.rawId || "");
+  const speechSampleProviderKey = isCangyuanProvider(providers.find((provider) => provider.id === selectedModel?.providerId)) ? "cangyuan" : "";
   const speechFormats = speechProfile ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine) : [];
   const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine) : undefined;
   const speechTextLimit = speechProfile?.textMaxLength ?? SPEECH_TEXT_LIMIT;
@@ -504,9 +506,9 @@ export default function CanvasAudioNodePanel({
               portalZIndex={CANVAS_Z_INDEX.modalPopover}
               options={[
                 { value: "", label: "使用模型默认音色" },
-                ...speechVoiceOptions(speechProfile).map((option) => ({
+                ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
                   ...option,
-                  action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} optionAction />,
+                  action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
                 })),
                 { value: "custom", label: "自定义音色名称" },
               ]}
@@ -601,7 +603,7 @@ export default function CanvasAudioNodePanel({
           {speechProfile && <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={(next) => { setSpeechAdvanced(next); saveSpeechDraft(next); }} disabled={generatingSpeech} compact />}
           <div className="canvas-audio-voice-sample-row">
             {speechProfile && voice.trim()
-              ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} />
+              ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} providerKey={speechSampleProviderKey} />
               : <span className="voice-sample-unavailable">{speechProfile?.requiresVoiceId ? '已登记音色暂无本地样音' : speechProfile?.supportsDialogue ? '请为每句对白选择音色' : '选择已收录音色后可播放样音'}</span>}
             <small>本地样音不调用配音接口、不消耗额度；样音仅用于感受音色风格。</small>
           </div>

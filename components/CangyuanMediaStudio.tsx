@@ -201,6 +201,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
   const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
+  const speechSampleProviderKey = isCangyuanProvider(publicState?.providers.find((provider) => provider.id === speechModel?.providerId)) ? 'cangyuan' : '';
   const speechFormats = speechProfile ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine) : [];
   const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine) : undefined;
   const selectedSpeechFormat = speechFormats.includes(speechFormat) ? speechFormat : speechFormats[0];
@@ -691,15 +692,15 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         menuClassName="cangyuan-field-select-menu"
                         options={[
                           { value: '', label: '使用模型默认音色' },
-                          ...speechVoiceOptions(speechProfile).map((option) => ({
+                          ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
                             ...option,
-                            action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} optionAction />,
+                            action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
                           })),
                           { value: 'custom', label: '自定义音色名称' },
                         ]}
                         onChange={setSpeechVoiceChoice}
                       />
-                      {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} />}
+                      {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} providerKey={speechSampleProviderKey} />}
                     </div>}
                     {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom' && (
                       <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-custom-voice">

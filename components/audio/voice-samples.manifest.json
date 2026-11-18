@@ -1,0 +1,734 @@
+{
+  "gemini-tts": {
+    "Capella": {
+      "url": "/audio/voice-samples/gemini-tts/capella.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Capella",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:32:43.062Z",
+        "contentType": "audio/mpeg",
+        "bytes": 23616,
+        "sha256": "54cf31a7dfcbc4001da44b12e5df54e94e99294d0cb642484faff180563d4bfb"
+      }
+    },
+    "Ursa": {
+      "url": "/audio/voice-samples/gemini-tts/ursa.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Ursa",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:22.890Z",
+        "contentType": "audio/mpeg",
+        "bytes": 23040,
+        "sha256": "e78554c66b4444513e563451b4dacca0249e9b6ad5357393612b7f6c6b67f0bb"
+      }
+    },
+    "Vega": {
+      "url": "/audio/voice-samples/gemini-tts/vega.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Vega",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:23.430Z",
+        "contentType": "audio/mpeg",
+        "bytes": 24384,
+        "sha256": "2285d117174cdf5a4f3684596020163fefdbaf5b883a64e3b7fd79bb9689926c"
+      }
+    },
+    "Lyra": {
+      "url": "/audio/voice-samples/gemini-tts/lyra.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Lyra",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:25.051Z",
+        "contentType": "audio/mpeg",
+        "bytes": 23616,
+        "sha256": "7dfb4788c52843bf68fdba49add0e7b94f1e14c910504eb6494e766757a59b0d"
+      }
+    },
+    "Orbit": {
+      "url": "/audio/voice-samples/gemini-tts/orbit.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Orbit",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:26.799Z",
+        "contentType": "audio/mpeg",
+        "bytes": 24384,
+        "sha256": "1ad6ffeb608036cab93316e14ed51215795eda757e5b76d04ea02f402916d9d7"
+      }
+    },
+    "Dipper": {
+      "url": "/audio/voice-samples/gemini-tts/dipper.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Dipper",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:28.722Z",
+        "contentType": "audio/mpeg",
+        "bytes": 24576,
+        "sha256": "fd524fcb28b48ccd9e67b18b08311d3ddd4766221041cdc6f8b43afffdacc31e"
+      }
+    },
+    "Nova": {
+      "url": "/audio/voice-samples/gemini-tts/nova.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Nova",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:30.563Z",
+        "contentType": "audio/mpeg",
+        "bytes": 24384,
+        "sha256": "802052e7efdce3875721ad5ef3c4587d43a0e747dd394c9d9bec9b35871d04ef"
+      }
+    },
+    "Pegasus": {
+      "url": "/audio/voice-samples/gemini-tts/pegasus.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Pegasus",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:32.412Z",
+        "contentType": "audio/mpeg",
+        "bytes": 22656,
+        "sha256": "06a90b1645c5802c3a90ce5cedb0d48af44f3d696cb4aaba739f7d6410b0642e"
+      }
+    },
+    "Eclipse": {
+      "url": "/audio/voice-samples/gemini-tts/eclipse.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "gemini-tts",
+        "voiceId": "Eclipse",
+        "routeModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "responseModelId": "bb261422-0a8d-4039-b17b-3edbfd80860d",
+        "generatedAt": "2026-11-18T18:37:32.601Z",
+        "contentType": "audio/mpeg",
+        "bytes": 23616,
+        "sha256": "3b28a2378ac1fd0b5db4ccd901ea97c8c2e4fa7c102b3b47d707b83d425ea012"
+      }
+    }
+  },
+  "mu1-muse-tts": {
+    "alloy": {
+      "url": "/audio/voice-samples/mu1-muse-tts/alloy.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "alloy",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:37:47.073Z",
+        "contentType": "audio/mpeg",
+        "bytes": 22464,
+        "sha256": "d0f5c5157b86bc39d2525fc4bc170799df4a2e63902f4b4519c327238a849d2d"
+      }
+    },
+    "aria": {
+      "url": "/audio/voice-samples/mu1-muse-tts/aria.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "aria",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:37:47.135Z",
+        "contentType": "audio/mpeg",
+        "bytes": 16704,
+        "sha256": "219001b24ba127c432bdae2d960e060d1abd56a4bcb4e6df6c96bf2fe00c29c3"
+      }
+    },
+    "coral": {
+      "url": "/audio/voice-samples/mu1-muse-tts/coral.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "coral",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:37:55.245Z",
+        "contentType": "audio/mpeg",
+        "bytes": 18816,
+        "sha256": "859d07d123f4d0c57b9b4147fdc01c946516fd87ae657709b7713254da0a4ac7"
+      }
+    },
+    "nova": {
+      "url": "/audio/voice-samples/mu1-muse-tts/nova.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "nova",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:37:55.737Z",
+        "contentType": "audio/mpeg",
+        "bytes": 18240,
+        "sha256": "80583773681a2fd1f941bad33428bc83ac85108e70c56068555d4e297f7e2289"
+      }
+    },
+    "shimmer": {
+      "url": "/audio/voice-samples/mu1-muse-tts/shimmer.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "shimmer",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:38:07.846Z",
+        "contentType": "audio/mpeg",
+        "bytes": 16704,
+        "sha256": "149514c330e0edf2c0681d18f05505b325daab9d738dcdba3dea5eb63a8905b3"
+      }
+    },
+    "echo": {
+      "url": "/audio/voice-samples/mu1-muse-tts/echo.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "echo",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:38:18.580Z",
+        "contentType": "audio/mpeg",
+        "bytes": 14976,
+        "sha256": "a6b1cec9134df5fb172f65ad6ca13e326c99463af5deced8743b55cb74095da6"
+      }
+    },
+    "helio": {
+      "url": "/audio/voice-samples/mu1-muse-tts/helio.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "helio",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:38:43.904Z",
+        "contentType": "audio/mpeg",
+        "bytes": 14976,
+        "sha256": "c440aeddc02b113c6f0932739e52c9dc64355f6c868de65dd5c028556dffa30b"
+      }
+    },
+    "onyx": {
+      "url": "/audio/voice-samples/mu1-muse-tts/onyx.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "onyx",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:38:55.484Z",
+        "contentType": "audio/mpeg",
+        "bytes": 23040,
+        "sha256": "42dac4936d4cc4f89437bff6d18f899757f2490c2c65c50e2845a0d7d6c4eee4"
+      }
+    },
+    "fable": {
+      "url": "/audio/voice-samples/mu1-muse-tts/fable.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "mu1-muse-tts",
+        "voiceId": "fable",
+        "routeModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "responseModelId": "0d7b79a3-4f07-4e3c-9acf-1e1fdbd8a30e",
+        "generatedAt": "2026-11-18T18:39:02.646Z",
+        "contentType": "audio/mpeg",
+        "bytes": 20736,
+        "sha256": "39f405f33850a7f329a87beb8f9edf0a2b88d87f60ffbc740b5e35b799acab47"
+      }
+    }
+  },
+  "elevenlabs-v4-tts": {
+    "Rachel": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/rachel.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Rachel",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:04.534Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "80aee217e7d3d4e9069f45302231cdf45087b693b63bea8ce2db65e93e6895c7",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Aria": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/aria.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Aria",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:06.075Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "f972f1fe815e966820e5b8aa48cd994cd652bb963ac9a064df9884eaff99706a",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Roger": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/roger.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Roger",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:07.689Z",
+        "contentType": "audio/mpeg",
+        "bytes": 40585,
+        "sha256": "bc5d7796d2fa1305fa4dcb5924ee941946509c352d441d324d587c38a9a9c6d3",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Sarah": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/sarah.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Sarah",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:10.015Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "d795768449c8dde69f5961f4d913a336a1abcdc441131bd54b0985d65f466d81",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Laura": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/laura.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Laura",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:11.564Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "0a9da08d4224f593c9b7313f861ec56ed5d7c216f3453a547ac0b2980495fc63",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Charlie": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/charlie.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Charlie",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:13.116Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "50d915613882c1910e20356b12acfb39ad72467d85e73ef9ff7f9539a897da89",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "George": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/george.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "George",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:14.609Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "9c96fd6217d61bde8a73c9262e564fbfe64d03c1f0ee7036714a064205101415",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Callum": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/callum.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Callum",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:16.067Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "1c2bf58b956980a5f6ba1fc7821c33c892c13f0d1c12a0ba97b4cfbe27f8cbc8",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "River": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/river.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "River",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:17.727Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "084f6f5683d651e97e69d436dca54c5367e7661dbba26aff93b48c60fd3ea544",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Liam": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/liam.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Liam",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:19.197Z",
+        "contentType": "audio/mpeg",
+        "bytes": 39331,
+        "sha256": "1a7947ef6ca8f1e0ae88fe5f74e1dcb806c99436873195ba3d596de42f10bb53",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Charlotte": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/charlotte.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Charlotte",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:20.664Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "92a1917b94264623982f8eccff79b336879689030524a663c56d152cae91104c",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Alice": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/alice.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Alice",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:23.040Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "19acfb58d38762484ba9c668afd167e2ba7dc349eee1d505648c7e1de2ed47ff",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Matilda": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/matilda.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Matilda",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:24.750Z",
+        "contentType": "audio/mpeg",
+        "bytes": 44764,
+        "sha256": "1d9f6ee4dcae8dd941dcdc704e9bcaea77a55e55a1d2b787e1b64da96120a67d",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Will": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/will.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Will",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:26.393Z",
+        "contentType": "audio/mpeg",
+        "bytes": 40585,
+        "sha256": "fafe90370f9f07b0e7068b4b6c64dc6ec9b0c4800cb168ffbb2251f27c39941d",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Eric": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/eric.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Eric",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:34.357Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "b874e19091f78976ea6acae83fa55e34b90b9b93d733eff75bb8e65251c808cd",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Chris": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/chris.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Chris",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:35.757Z",
+        "contentType": "audio/mpeg",
+        "bytes": 39331,
+        "sha256": "0f4277876bf500a3a4f6674564ef2c145b74b2293b196a3f5ac25f728b67e96c",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Brian": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/brian.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Brian",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:37.286Z",
+        "contentType": "audio/mpeg",
+        "bytes": 40585,
+        "sha256": "37f3b1a07d442a6b765946c311e3cad3c843c8e8e2e5f1c5f415f179b2f3f383",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Daniel": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/daniel.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Daniel",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:38.842Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "d210c3343ca126fa9490b9e9ddc3ed7945f0bddf23c8bc93fd04355b6e2dd0b6",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Jessica": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/jessica.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Jessica",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:43.491Z",
+        "contentType": "audio/mpeg",
+        "bytes": 41838,
+        "sha256": "1c21e897d88b4973a146e5ba1d5b1e3371bc54de45e3dc1553c95bfb8c9c9fba",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Bill": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/bill.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Bill",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:45.391Z",
+        "contentType": "audio/mpeg",
+        "bytes": 43510,
+        "sha256": "f691ab093016a070d5410fdb069e8a3c67f552c5f85f0d5cb0585a18e3035c88",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    },
+    "Lily": {
+      "url": "/audio/voice-samples/elevenlabs-v4-tts/lily.mp3",
+      "text": "你好，这是一段音色试听。",
+      "note": "按对应模型与音色编号生成的样音",
+      "provenance": {
+        "provider": "沧元算力",
+        "providerKey": "cangyuan",
+        "modelId": "elevenlabs-v4-tts",
+        "voiceId": "Lily",
+        "routeModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "responseModelId": "0824637e-804c-4ab9-bc35-46f37534eaed",
+        "generatedAt": "2026-11-18T18:39:50.820Z",
+        "contentType": "audio/mpeg",
+        "bytes": 44764,
+        "sha256": "2812b1fd511c83c12cee05a584541ba06b3a42bcc1e7e05290250674ae212fde",
+        "requestOptions": {
+          "languageCode": "zh"
+        }
+      }
+    }
+  }
+}

@@ -9,12 +9,13 @@ let activeStop: (() => void) | null = null;
 type Props = {
   model: string;
   voice: string;
+  providerKey: string;
   compact?: boolean;
   optionAction?: boolean;
 };
 
-export default function VoiceSampleButton({ model, voice, compact = false, optionAction = false }: Props) {
-  const sample = getSpeechVoiceSample(model, voice);
+export default function VoiceSampleButton({ model, voice, providerKey, compact = false, optionAction = false }: Props) {
+  const sample = getSpeechVoiceSample(model, voice, providerKey);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
 
@@ -28,7 +29,7 @@ export default function VoiceSampleButton({ model, voice, compact = false, optio
   }, []);
 
   if (!sample) {
-    return <span className="voice-sample-unavailable" title="当前音色暂无通用样音">暂无样音</span>;
+    return <span className="voice-sample-unavailable" title="当前模型与服务商暂无对应样音">暂无样音</span>;
   }
   const sampleUrl = sample.url;
 

@@ -1,42 +1,30 @@
+import sampleManifest from './voice-samples.manifest.json';
+
 export type SpeechVoiceSample = {
   url: string;
   text: string;
   note: string;
   provenance: {
     provider: string;
+    providerKey: string;
     modelId: string;
     voiceId: string;
+    routeModelId: string;
+    responseModelId: string;
     generatedAt: string;
+    contentType: string;
+    bytes: number;
+    sha256: string;
+    requestOptions?: Readonly<Record<string, string | number>>;
   };
 };
 
 export const SAMPLE_TEXT = '你好，这是一段音色试听。';
 
-const SPEECH_VOICE_SAMPLES: Readonly<Record<string, Readonly<Record<string, SpeechVoiceSample>>>> = Object.freeze({
-  'elevenlabs-v4-tts': Object.freeze(Object.fromEntries(
-    ['Rachel', 'Aria', 'Roger', 'Sarah', 'Laura', 'Charlie', 'George', 'Callum', 'River', 'Liam', 'Charlotte', 'Alice', 'Matilda', 'Will', 'Jessica', 'Eric', 'Chris', 'Brian', 'Daniel', 'Lily', 'Bill'].map((voice) => [
-      voice,
-      {
-        url: `/audio/voice-samples/elevenlabs-v4-tts/${voice.toLowerCase()}.mp3`,
-        text: SAMPLE_TEXT,
-        note: '对应模型与音色编号生成的样音',
-        provenance: { provider: '沧元算力', modelId: 'elevenlabs-v4-tts', voiceId: voice, generatedAt: '2026-11-19' },
-      },
-    ]),
-  )),
-  'mu1-muse-tts': Object.freeze({
-    alloy: { url: '/audio/voice-samples/mu1-muse-tts/alloy.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'alloy', generatedAt: '2026-11-19' } },
-    aria: { url: '/audio/voice-samples/mu1-muse-tts/aria.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'aria', generatedAt: '2026-11-19' } },
-    coral: { url: '/audio/voice-samples/mu1-muse-tts/coral.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'coral', generatedAt: '2026-11-19' } },
-    nova: { url: '/audio/voice-samples/mu1-muse-tts/nova.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'nova', generatedAt: '2026-11-19' } },
-    shimmer: { url: '/audio/voice-samples/mu1-muse-tts/shimmer.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'shimmer', generatedAt: '2026-11-19' } },
-    echo: { url: '/audio/voice-samples/mu1-muse-tts/echo.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'echo', generatedAt: '2026-11-19' } },
-    fable: { url: '/audio/voice-samples/mu1-muse-tts/fable.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'fable', generatedAt: '2026-11-19' } },
-    helio: { url: '/audio/voice-samples/mu1-muse-tts/helio.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'helio', generatedAt: '2026-11-19' } },
-    onyx: { url: '/audio/voice-samples/mu1-muse-tts/onyx.mp3', text: SAMPLE_TEXT, note: '对应模型与音色编号生成的样音', provenance: { provider: '沧元算力', modelId: 'mu1-muse-tts', voiceId: 'onyx', generatedAt: '2026-11-19' } },
-  }),
-});
+const VERIFIED_PROVIDER_KEY = 'cangyuan';
+const SPEECH_VOICE_SAMPLES = sampleManifest as Readonly<Record<string, Readonly<Record<string, SpeechVoiceSample>>>>;
 
-export function getSpeechVoiceSample(publicModel: string, voice: string): SpeechVoiceSample | null {
+export function getSpeechVoiceSample(publicModel: string, voice: string, providerKey: string): SpeechVoiceSample | null {
+  if (String(providerKey || '') !== VERIFIED_PROVIDER_KEY) return null;
   return SPEECH_VOICE_SAMPLES[String(publicModel || '')]?.[String(voice || '')] || null;
 }
