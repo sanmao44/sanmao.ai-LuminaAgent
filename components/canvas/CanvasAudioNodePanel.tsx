@@ -676,52 +676,77 @@ export default function CanvasAudioNodePanel({
               </small>
             </details>
           )}
+          {data.transcription && <details className="canvas-audio-generation" open>
+            <summary>转写结果 · {data.transcription.sourceAudioName}</summary>
+            <p className="canvas-audio-transcript-text">{data.transcription.text || "未识别到可用文字。"}</p>
+            <small>{data.transcription.modelName}{data.transcription.language ? ` · ${data.transcription.language}` : " · 自动识别语言"} · {new Date(data.transcription.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
+            {Boolean(data.transcription.segments?.length) && <details className="canvas-audio-transcript-segments">
+              <summary>查看分段时间</summary>
+              <ol>{data.transcription.segments?.map((segment, index) => <li key={`${segment.start}-${index}`}><time>{Math.floor(segment.start / 60).toString().padStart(2, "0")}:{Math.floor(segment.start % 60).toString().padStart(2, "0")}–{Math.floor(segment.end / 60).toString().padStart(2, "0")}:{Math.floor(segment.end % 60).toString().padStart(2, "0")}</time><span>{segment.text}</span></li>)}</ol>
+            </details>}
+            <button type="button" className="canvas-audio-speech-copy" onClick={() => void navigator.clipboard.writeText(data.transcription?.text || "").then(() => onNotify("转写文字已复制")).catch(() => onNotify("复制失败，请检查剪贴板权限", "error"))} disabled={!data.transcription.text}>复制转写文字</button>
+          </details>}
+          {data.musicTask && <details className="canvas-audio-generation" open>
+            <summary>音乐任务 · {data.musicTask.status === "succeeded" ? "已完成" : data.musicTask.status === "failed" || data.musicTask.status === "cancelled" ? "失败" : "生成中"}</summary>
+            <p>{data.musicTask.prompt || "音乐处理任务"}</p>
+            <small>{data.musicTask.modelName} · {data.musicTask.providerStatus || data.musicTask.status}</small>
+            {data.musicTask.error && <small className="canvas-audio-error">{data.musicTask.error}</small>}
+            {data.musicTask.outputs.map((output, index) => output.url ? <div className="canvas-audio-music-output" key={`${data.musicTask?.id}-${index}`}>
+              <b>{output.name || output.title || output.artifactType?.toUpperCase() || `结果 ${index + 1}`}</b>
+              {output.artifactType === "audio" || !output.artifactType
+                ? <CanvasAudioPlayer src={output.url} name={output.name || output.title || "音乐结果"} compact />
+                : <small>此结果为 {output.artifactType.toUpperCase()} 文件，可下载保存。</small>}
+              <a href={output.url} target="_blank" rel="noreferrer" download>{output.artifactType === "audio" || !output.artifactType ? "下载音频" : `下载 ${output.artifactType.toUpperCase()}`}</a>
+            </div> : output.text ? <p key={`${data.musicTask?.id}-${index}`}>{output.text}</p> : null)}
+          </details>}
         </aside>
       </div>
       <div className="canvas-audio-panel-actions">
-        {speechError && <p className="canvas-audio-error" role="alert">{speechError}</p>}
-        <div className="canvas-audio-panel-service" title={speechServiceLabel}>
+        {(activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError}</p>}
+        <div className="canvas-audio-panel-service" title={activeMode === "speech" ? speechServiceLabel : activeMode === "music" ? selectedMusicModel?.displayName || "暂无音乐模型" : selectedTranscriptionModel?.displayName || "暂无转写模型"}>
           <span className="canvas-audio-panel-service-dot" aria-hidden="true" />
           <div>
-            <b>配音模型</b>
+            <b>{activeMode === "speech" ? "配音模型" : activeMode === "music" ? "音乐模型" : "转写模型"}</b>
             <ModelPicker
-              models={models}
-              capability="speech"
-              value={speechModelId}
-              onChange={(modelId) => {
-                setSpeechModelId(modelId);
-                setCustomVoiceSelected(false);
-                setSpeechError("");
-                saveSpeechDraft({ modelId });
-              }}
+              models={activeMode === "speech" ? models : activeMode === "music" ? musicModels : transcriptionModels}
+              capability={activeMode === "speech" ? "speech" : activeMode === "music" ? "music-generate" : "transcription"}
+              value={activeMode === "speech" ? speechModelId : activeMode === "music" ? selectedMusicModel?.id || "" : selectedTranscriptionModel?.id || ""}
+              onChange={(modelId) => activeMode === "speech"
+                ? (setSpeechModelId(modelId), setCustomVoiceSelected(false), setSpeechError(""), saveSpeechDraft({ modelId }))
+                : activeMode === "music"
+                  ? (setMusicError(""), saveMusicDraft({ modelId }))
+                  : (setTranscriptionError(""), saveTranscriptionDraft({ modelId }))}
               defaultProviderId={defaultProviderId}
               defaultProviderName={defaultProviderName}
-              placeholder={models.some((model) => model.enabled && model.published && model.capabilities.includes("speech")) ? undefined : "尚未启用配音模型"}
-              automaticHint="按默认服务商选择可用配音模型，无在线模型时使用本机语音"
+              placeholder={activeMode === "speech"
+                ? models.some((model) => model.enabled && model.published && model.capabilities.includes("speech")) ? undefined : "尚未启用配音模型"
+                : activeMode === "music" ? musicModels.length ? undefined : "尚未启用音乐模型" : transcriptionModels.length ? undefined : "尚未启用转写模型"}
+              automaticHint={activeMode === "speech" ? "按默认服务商选择可用配音模型，无在线模型时使用本机语音" : undefined}
               portalZIndex={CANVAS_Z_INDEX.modalPopover}
               dialogPortalZIndex={CANVAS_Z_INDEX.modelDialog}
-              disabled={generatingSpeech || previewingVoice}
+              disabled={generatingSpeech || previewingVoice || transcriptionBusy || musicBusy}
               className="canvas-audio-model-picker"
             />
-            <small>上次生成：{speechServiceLabel}</small>
+            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" ? data.musicTask ? `任务状态：${data.musicTask.status === "succeeded" ? "已完成" : ["failed", "cancelled"].includes(data.musicTask.status) ? "失败" : "生成中"}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
           </div>
         </div>
-        <button
-          type="button"
-          className="canvas-audio-panel-upload"
-          onClick={() => inputRef.current?.click()}
-          disabled={generatingSpeech}
-        >
-          {hasAudio ? "替换音频" : "导入音频"}
-        </button>
+        {activeMode === "speech" && <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()} disabled={generatingSpeech}>{hasAudio ? "替换音频" : "导入音频"}</button>}
         <button
           type="button"
           className="canvas-node-editor-generate canvas-audio-generate"
-          onClick={() => void generateSpeech()}
-          disabled={!speechText.trim() || generatingSpeech}
-          aria-busy={generatingSpeech}
+          onClick={() => activeMode === "speech" ? void generateSpeech() : activeMode === "music" ? void generateMusic() : void transcribeAudio()}
+          disabled={activeMode === "speech"
+            ? !speechText.trim() || generatingSpeech
+            : activeMode === "music"
+              ? !selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0
+              : !selectedTranscriptionModel || transcriptionBusy || transcriptionDraft.language === "__custom" && !transcriptionDraft.customLanguage?.trim() || !transcriptionFile && !hasAudio}
+          aria-busy={activeMode === "speech" ? generatingSpeech : activeMode === "music" ? musicBusy : transcriptionBusy}
         >
-          {generatingSpeech ? "正在生成…" : speechError ? "重新生成配音" : hasAudio ? "生成并替换" : "生成配音"}
+          {activeMode === "speech"
+            ? generatingSpeech ? "正在生成…" : speechError ? "重新生成配音" : hasAudio ? "生成并替换" : "生成配音"
+            : activeMode === "music"
+              ? musicBusy ? "正在提交…" : data.musicTask && ["pending", "queued", "running", "waiting"].includes(data.musicTask.status) ? "提交新任务" : "生成音乐"
+              : transcriptionBusy ? "正在识别…" : data.transcription ? "重新转写" : "开始转写"}
         </button>
       </div>
       <input
@@ -732,6 +757,16 @@ export default function CanvasAudioNodePanel({
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void onReplaceAudio(node.id, file);
+          event.currentTarget.value = "";
+        }}
+      />
+      <input
+        ref={transcriptionInputRef}
+        hidden
+        type="file"
+        accept={TRANSCRIPTION_ACCEPT}
+        onChange={(event) => {
+          chooseTranscriptionFile(event.target.files?.[0]);
           event.currentTarget.value = "";
         }}
       />
