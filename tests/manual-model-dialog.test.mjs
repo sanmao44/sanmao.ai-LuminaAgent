@@ -53,5 +53,5 @@ test('manual model dialog exposes audio and 3D categories', () => {
   }));
   assert.match(markup, /class="active"[^>]*>三维<\/button>/);
   assert.match(markup, />音频<\/button>/);
-  assert.match(markup, /按所选类型补齐通用能力/);
+  assert.match(markup, /音频用途不确定时可先标记为待确认/);
 });
