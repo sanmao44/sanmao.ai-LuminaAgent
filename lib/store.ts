@@ -7,7 +7,7 @@ import { modelSupportsCapabilities, selectAutomaticModel } from './model-selecti
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
 import { inferModelKind, isAudioTranscriptionModelId, isImageEditOnlyModel, isMusicGenerationModelId, isNonConversationalModelId, isSoundEffectModelId, isSpeechModelId, isThreeDGenerationModelId, resolveModelKind } from './model-kind';
-import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
+import { buildManualModelRecord, mergeProviderModelRecords, reconcileDiscoveredModelCapabilities } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
 import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
@@ -17,9 +17,9 @@ import { isRetiredAgnesModel } from './agnes';
 import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
-import type { ManualProviderModelInput } from '@/packages/contracts/model-library';
+import type { ManualModelAudioTask, ManualProviderModelInput } from '@/packages/contracts/model-library';
 import { classifyAudioModelPurpose } from './audio-model-classification';
-import type { AudioModelClassification } from '@/packages/contracts/model-classification';
+import type { AudioModelClassification, AudioModelPurpose } from '@/packages/contracts/model-classification';
 
 type StoredProvider = Omit<ProviderConnection, 'maskedKey' | 'enabledModelCount'> & {
   encryptedApiKey: string;
@@ -209,10 +209,10 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
   const audioModelText = `${rawId} ${hints.displayName || ''}`;
   const audioClassification = hints.classification || classifyAudioModelPurpose({ modelId: rawId, displayName: hints.displayName, declaredCapabilities: hints.capabilities, providerPlatform: platform });
-  const audioCapabilities = new Set<ModelCapability>(
-    (hints.capabilities || []).filter((capability) => ['speech', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'].includes(capability)),
-  );
-  for (const purpose of audioClassification.purposes) {
+  const audioCapabilities = new Set<ModelCapability>();
+  const hasReviewableAiSuggestion = audioClassification.source === 'local-ai-suggested' && audioClassification.requiresReview;
+  const classifiedPurposes = hasReviewableAiSuggestion ? [] : audioClassification.purposes;
+  for (const purpose of classifiedPurposes) {
     if (purpose === 'speech') audioCapabilities.add('speech');
     if (purpose === 'transcription') audioCapabilities.add('transcription');
     if (purpose === 'music') audioCapabilities.add('music-generate');
@@ -232,7 +232,7 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
     if (isSpeechModelId(audioModelText)) audioCapabilities.add('speech');
   }
   if (audioCapabilities.size) return { kind: 'audio', capabilities: [...audioCapabilities], classification: audioClassification };
-  if (/speech|voice|music|sound|asr|tts|transcri|sfx/i.test(audioModelText)) {
+  if (inferredKind === 'audio' || /audio|speech|voice|music|sound|asr|tts|transcri|sfx/i.test(audioModelText)) {
     return { kind: 'audio', capabilities: [], classification: audioClassification };
   }
   if (isThreeDGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('3d-generate')) {
@@ -271,7 +271,8 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities, classification: model.classification });
   const editOnly = isImageEditOnlyModel({ rawId: model.rawId, displayName: model.displayName });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
-  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !(editOnly && capability === 'generate'));
+  const audioTaskCapabilities: readonly ModelCapability[] = ['speech', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'];
+  const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !audioTaskCapabilities.includes(capability) && !(editOnly && capability === 'generate'));
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
   const nativeSearchDetection = model.nativeSearchDetection || inferred.nativeSearchDetection;
@@ -743,7 +744,8 @@ export async function replaceProviderModels(providerId: string, providerName: st
       const previous = existing.get(raw.id);
       if (previous) {
         const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined, classification: raw.classification });
-        return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, ...(raw.classification ? { classification: raw.classification } : {}), ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: Array.from(new Set([...(previous.capabilities || []), ...(raw.capabilities || []), ...inferred.capabilities])) }, platform);
+        const latestCapabilities = reconcileDiscoveredModelCapabilities(previous, [...(raw.capabilities || []), ...inferred.capabilities]);
+        return normalizeModel({ ...previous, providerName, displayName: raw.name?.split('/').pop() || previous.displayName, classification: previous.source === 'manual' ? previous.classification : inferred.classification, ...(raw.billing ? { billing: raw.billing } : {}), ...(raw.enabledByDefault !== undefined ? { enabledByDefault: raw.enabledByDefault } : {}), ...(raw.contextWindow !== undefined ? { contextWindow: raw.contextWindow } : {}), ...(raw.maxInputTokens !== undefined ? { maxInputTokens: raw.maxInputTokens } : {}), ...(raw.maxOutputTokens !== undefined ? { maxOutputTokens: raw.maxOutputTokens } : {}), ...(raw.nativeSearchProtocol ? { nativeSearchProtocol: raw.nativeSearchProtocol } : {}), ...(raw.nativeSearchDetection ? { nativeSearchDetection: raw.nativeSearchDetection } : {}), capabilities: latestCapabilities }, platform);
       }
       const inferred = inferModel(raw.id, platform, raw.nativeSearchProtocol, { displayName: raw.name, capabilities: raw.capabilities ? [...raw.capabilities] : undefined, classification: raw.classification });
       const enabledByDefault = isIntentClassifierEnabledByDefault(raw.id, raw.enabledByDefault);
@@ -778,20 +780,33 @@ export async function addManualProviderModel(providerId: string, input: ManualPr
     const displayName = typeof input.displayName === 'string' ? input.displayName.trim() || rawId : rawId;
     const selectedKind = input.kind === undefined || input.kind === 'auto' ? undefined : input.kind;
     if (selectedKind && !['chat', 'image', 'video', 'audio', '3d'].includes(selectedKind)) throw new Error('模型类型无效');
-    if (input.audioTask && !['speech', 'music-generate', 'sound-effect', 'transcription'].includes(input.audioTask)) throw new Error('音频用途无效');
+    if (input.audioTask && !['speech', 'music-generate', 'sound-effect', 'transcription', 'audio-conversation'].includes(input.audioTask)) throw new Error('音频用途无效');
     const inferred = inferModel(rawId, provider.platform, undefined, { displayName });
-    const audioTask = input.audioTask || (inferred.capabilities.includes('sound-effect')
-      ? 'sound-effect'
-      : inferred.capabilities.includes('music-generate')
-      ? 'music-generate'
-      : inferred.capabilities.includes('transcription')
-        ? 'transcription'
-        : 'speech');
+    const selectedAudioCapabilities: ModelCapability[] = input.audioTask
+      ? input.audioTask === 'sound-effect'
+        ? ['sound-effect', 'music-generate']
+        : [input.audioTask]
+      : inferred.capabilities.filter((capability) => ['speech', 'music-generate', 'sound-effect', 'transcription', 'audio-conversation'].includes(capability));
+    const selectedPurpose: AudioModelPurpose | null = input.audioTask === 'speech' ? 'speech'
+      : input.audioTask === 'transcription' ? 'transcription'
+        : input.audioTask === 'music-generate' ? 'music'
+          : input.audioTask === 'sound-effect' ? 'sound-effect'
+            : input.audioTask === 'audio-conversation' ? 'conversation'
+              : null;
     const selectedInference = selectedKind === 'audio'
       ? {
           ...inferred,
           kind: 'audio' as const,
-          capabilities: [...inferred.capabilities.filter((capability) => !['speech', 'music-generate', 'sound-effect', 'transcription'].includes(capability)), ...(audioTask === 'sound-effect' ? ['sound-effect', 'music-generate'] : [audioTask])],
+          capabilities: [...inferred.capabilities.filter((capability) => !['speech', 'music-generate', 'sound-effect', 'transcription', 'audio-conversation'].includes(capability)), ...selectedAudioCapabilities],
+          ...(selectedPurpose ? {
+            classification: {
+              purposes: [selectedPurpose],
+              source: 'manual' as const,
+              confidence: 'high' as const,
+              evidence: [{ kind: 'manual' as const, value: '用户手动选择模型用途' }],
+              requiresReview: false,
+            },
+          } : {}),
         }
       : inferred;
     const model = normalizeModel(buildManualModelRecord({

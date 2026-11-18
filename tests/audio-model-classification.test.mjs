@@ -30,11 +30,33 @@ test('Cangyuan official model profiles distinguish dialogue, music, and sound ef
   assert.deepEqual(music.classification?.purposes, ['music']);
 });
 
+test('generic audio models remain audio models without being routed to speech', () => {
+  const { inferModel } = createTsRequire(process.cwd())('./lib/store');
+  const result = inferModel('vendor-audio-v1');
+  assert.equal(result.kind, 'audio');
+  assert.deepEqual(result.capabilities, []);
+  assert.equal(result.classification?.requiresReview, true);
+});
+
 test('provider metadata separates speech, transcription, music, and sound effects', () => {
+  assert.deepEqual(classifier.classifyAudioModelPurpose({ modelId: 'a', declaredCapabilities: ['speech'] }).purposes, ['speech']);
   assert.deepEqual(classifier.classifyAudioModelPurpose({ modelId: 'a', declaredCapabilities: ['text-to-speech'] }).purposes, ['speech']);
   assert.deepEqual(classifier.classifyAudioModelPurpose({ modelId: 'b', declaredCapabilities: ['speech-to-text'] }).purposes, ['transcription']);
   assert.deepEqual(classifier.classifyAudioModelPurpose({ modelId: 'c', declaredCapabilities: ['music-generation'] }).purposes, ['music']);
   assert.deepEqual(classifier.classifyAudioModelPurpose({ modelId: 'd', declaredCapabilities: ['sound-effects'] }).purposes, ['sound-effect']);
+});
+
+test('official purpose resolves conflicting provider capability flags', () => {
+  const { inferModel } = createTsRequire(process.cwd())('./lib/store');
+  const result = inferModel('audio-model-v1', 'provider', undefined, {
+    classification: {
+      purposes: ['transcription'], source: 'official', confidence: 'high',
+      evidence: [{ kind: 'official', value: '语音转写' }], requiresReview: false,
+    },
+    capabilities: ['speech', 'transcription'],
+  });
+  assert.deepEqual(result.capabilities, ['transcription']);
+  assert.deepEqual(result.classification?.purposes, ['transcription']);
 });
 
 test('unknown audio models remain reviewable instead of entering a task panel', () => {

@@ -54,15 +54,36 @@ function declaredPurpose(value: string): AudioModelPurpose | null {
   if (!normalized) return null;
   if (/(?:sound effect|sound effects|sfx|foley|音效)/.test(normalized)) return 'sound-effect';
   if (/(?:transcription|speech to text|automatic speech recognition|\basr\b|\bstt\b|语音识别|转写)/.test(normalized)) return 'transcription';
-  if (/(?:text to speech|speech synthesis|voice synthesis|\btts\b|\bspeech\b|配音|语音合成)/.test(normalized)) return 'speech';
+  if (/(?:text to speech|speech synthesis|voice synthesis|\btts\b|配音|语音合成)/.test(normalized)) return 'speech';
   if (/(?:music generation|music generate|text to music|song generation|音乐生成|音乐)/.test(normalized)) return 'music';
   if (/(?:dialogue|conversation|audio chat|audio conversation|音频对话)/.test(normalized)) return 'conversation';
   return null;
 }
 
+function declaredCapabilityPurpose(value: string): AudioModelPurpose | null {
+  switch (value.trim().toLowerCase()) {
+    case 'speech': return 'speech';
+    case 'transcription': return 'transcription';
+    case 'music-generate': return 'music';
+    case 'sound-effect': return 'sound-effect';
+    case 'audio-conversation': return 'conversation';
+    default: return null;
+  }
+}
+
+function endpointPurpose(value: string): AudioModelPurpose | null {
+  const normalized = value.trim().toLowerCase();
+  if (/\/(?:audio\/)?(?:transcriptions?|transcribe)(?:\/|$)|\basr\b|speech[-_ ]?to[-_ ]?text/.test(normalized)) return 'transcription';
+  if (/\/(?:audio\/)?(?:speech|tts)(?:\/|$)|text[-_ ]?to[-_ ]?speech/.test(normalized)) return 'speech';
+  if (/\/(?:music\/)?(?:generations?|generate)(?:\/|$)/.test(normalized) && /music|song/.test(normalized)) return 'music';
+  if (/sound[-_ ]?effects?|\bsfx\b|foley/.test(normalized)) return 'sound-effect';
+  return null;
+}
+
 function purposesFromValues(values: readonly unknown[]) {
   return uniquePurposes(values.flatMap((value) => {
-    const purpose = declaredPurpose(String(value));
+    const text = String(value);
+    const purpose = declaredCapabilityPurpose(text) || declaredPurpose(text);
     return purpose ? [purpose] : [];
   }));
 }
@@ -125,9 +146,9 @@ export function classifyAudioModelPurpose(input: AudioModelClassificationInput):
     ]);
   }
 
-  const endpointPurpose = declaredPurpose(input.endpoint || '');
-  if (endpointPurpose) {
-    return buildResult([endpointPurpose], 'adapter', 'high', evidence('endpoint', [input.endpoint || '']));
+  const endpointClassification = endpointPurpose(input.endpoint || '') || declaredPurpose(input.endpoint || '');
+  if (endpointClassification) {
+    return buildResult([endpointClassification], 'adapter', 'high', evidence('endpoint', [input.endpoint || '']));
   }
 
   const text = metadataText(input);

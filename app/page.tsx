@@ -2479,7 +2479,7 @@ export default function Page() {
     const [syncingId, setSyncingId] = useState(null);
     const [providerForm, setProviderForm] = useState(emptyProviderForm);
     const [manualModelProvider, setManualModelProvider] = useState(null);
-    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto', audioTask: 'speech' });
+    const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto', audioTask: '' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
     const selectedProviderPreset = getProviderPreset(providerForm.platform);
     const providerModalOpen = providerEditor || !state.providers.length && !providerSetupDismissed;
@@ -5178,7 +5178,7 @@ export default function Page() {
     }
     function openManualModelDialog(provider) {
         setManualModelProvider(provider);
-        setManualModelForm({ rawId: '', displayName: '', kind: 'auto', audioTask: 'speech' });
+        setManualModelForm({ rawId: '', displayName: '', kind: 'auto', audioTask: '' });
     }
     function applyProviderPreset(platform) {
         const preset = getProviderPreset(platform);

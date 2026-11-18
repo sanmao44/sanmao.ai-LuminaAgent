@@ -176,6 +176,12 @@ test('detects distinct audio task capabilities from explicit provider metadata',
   assert.equal(models[3].capabilities.includes('speech'), true);
   assert.equal(models[3].capabilities.includes('transcription'), true);
   assert.deepEqual(models[4].capabilities, []);
+  assert.deepEqual(models[0].classification?.purposes, ['speech']);
+  assert.equal(models[0].classification?.source, 'provider-metadata');
+  assert.deepEqual(models[1].classification?.purposes, ['transcription']);
+  assert.deepEqual(models[2].classification?.purposes, ['music']);
+  assert.deepEqual(models[4].classification?.purposes, []);
+  assert.equal(models[4].classification?.requiresReview, true);
 });
 
 test('detects native task transport from endpoint metadata', () => {

@@ -10,7 +10,7 @@ export type ManualModelFormState = {
   rawId: string;
   displayName: string;
   kind: ManualModelKind;
-  audioTask: ManualModelAudioTask;
+  audioTask: ManualModelAudioTask | '';
 };
 
 type ManualModelDialogIcon = ComponentType<{ name: string; size?: number }>;
@@ -80,17 +80,19 @@ export default function ManualModelDialog({
             <div className="manual-model-kind-field">
               <span>音频用途</span>
               <div className="segmented manual-model-kind manual-model-audio-task" aria-label="音频模型用途">
+                <button type="button" className={form.audioTask === "" ? "active" : ""} onClick={() => onChange({ audioTask: "" })}>待确认</button>
                 <button type="button" className={form.audioTask === "speech" ? "active" : ""} onClick={() => onChange({ audioTask: "speech" })}>配音</button>
                 <button type="button" className={form.audioTask === "music-generate" ? "active" : ""} onClick={() => onChange({ audioTask: "music-generate" })}>音乐生成</button>
                 <button type="button" className={form.audioTask === "sound-effect" ? "active" : ""} onClick={() => onChange({ audioTask: "sound-effect" })}>音效</button>
                 <button type="button" className={form.audioTask === "transcription" ? "active" : ""} onClick={() => onChange({ audioTask: "transcription" })}>语音转写</button>
+                <button type="button" className={form.audioTask === "audio-conversation" ? "active" : ""} onClick={() => onChange({ audioTask: "audio-conversation" })}>音频对话</button>
               </div>
             </div>
           )}
         </div>
         <div className="manual-model-notice">
           <Icon name="agent" size={16} />
-          <p>手动登记只添加模型 ID 并按所选类型补齐通用能力；模型是否支持对应任务取决于上游模型和接口。登记后仍需启用并发布，服务商拒绝或不支持时会显示错误，不会自动替换成其他模型。</p>
+          <p>音频用途不确定时可先标记为待确认；模型用途以服务商能力和接口说明为准。登记后仍需启用并发布，服务商拒绝或不支持时会显示错误，不会自动替换成其他模型。</p>
         </div>
         <div className="form-actions">
           <button type="button" className="secondary-action" onClick={onClose}>取消</button>

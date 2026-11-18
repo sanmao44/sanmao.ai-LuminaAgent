@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
+import { createTsRequire } from "./ts-require.mjs";
 
 const canvas = await readFile(new URL("../components/canvas/CanvasWorkspace.tsx", import.meta.url), "utf8");
 const smartVariantDialog = await readFile(new URL("../components/canvas/CanvasSmartVariantDialog.tsx", import.meta.url), "utf8");
@@ -250,10 +251,11 @@ test("管线包含抽帧、拆解、配音、生图、生视频五步与三条�
 });
 
 test("模型库把 TTS 归类为配音模型并给出配音能力", () => {
-  assert.match(storeLib, /if \(isSpeechModelId\(id\) \|\| inferredKind === 'audio'\) return \{ kind: 'audio', capabilities: \['speech'\] \};/);
-  assert.match(storeLib, /!\['chat', 'image', 'video', 'audio', '3d'\]\.includes\(selectedKind\)/);
-  assert.match(match_types, /export type ModelKind = 'chat' \| 'image' \| 'video' \| 'audio' \| '3d' \| 'unknown';/);
-  assert.match(match_types, /\| 'speech'/);
+  const { inferModel } = createTsRequire(process.cwd())("./lib/store");
+  const model = inferModel("tts-voice-v1");
+  assert.equal(model.kind, "audio");
+  assert.deepEqual(model.capabilities, ["speech"]);
+  assert.deepEqual(model.classification?.purposes, ["speech"]);
 });
 
 test("高级设置里选的模型真的生效，降级都不静默，幂等键不复用旧成片", () => {

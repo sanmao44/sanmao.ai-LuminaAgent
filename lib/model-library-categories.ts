@@ -21,8 +21,9 @@ const audioTaskLabels: Record<(typeof audioTaskCapabilities)[number], string> = 
   'audio-conversation': '音频对话模型',
 };
 
-export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 'capabilities' | 'source'>, category: ModelLibraryCategory) {
+export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 'capabilities' | 'source' | 'classification'>, category: ModelLibraryCategory) {
   if (category === 'all') return true;
+  if (category === 'unknown') return model.kind === 'unknown' || (model.kind === 'audio' && Boolean(model.classification?.requiresReview));
   const capability = categoryCapabilities[category];
   if (capability) {
     if (category === 'music' && model.kind === 'audio' && model.capabilities.includes('sound-effect')) return false;
@@ -32,6 +33,7 @@ export function modelMatchesLibraryCategory(model: Pick<RegistryModel, 'kind' | 
     return category === 'speech'
       && model.kind === 'audio'
       && model.source !== 'discovered'
+      && !model.classification?.requiresReview
       && !audioTaskCapabilities.some((item) => model.capabilities.includes(item));
   }
   return model.kind === category;
@@ -51,9 +53,9 @@ export function modelLibraryCategoryLabel(model: Pick<RegistryModel, 'kind' | 'c
   const taskLabels = audioTaskCapabilities
     .filter((capability) => model.capabilities.includes(capability) && !(capability === 'music-generate' && model.capabilities.includes('sound-effect')))
     .map((capability) => audioTaskLabels[capability].replace('模型', ''));
-  if (!taskLabels.length) return model.source === 'discovered' ? '音频用途待确认' : audioTaskLabels.speech;
+  if (!taskLabels.length) return model.source === 'discovered' || classification?.requiresReview ? '音频用途待确认' : audioTaskLabels.speech;
   if (taskLabels.length > 1) return `多用途音频 · ${taskLabels.join(' / ')}`;
-  return audioTaskLabels[audioTaskCapabilities.find((capability) => model.capabilities.includes(capability))!];
+  return `${taskLabels[0]}模型`;
 }
 
 const classificationSourceLabels: Record<ModelClassificationSource, string> = {
