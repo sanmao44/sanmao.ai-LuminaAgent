@@ -35,6 +35,8 @@ export type CangyuanImageParameterProfile = {
   readonly seedMinimum?: number;
   readonly seedMaximum?: number;
   readonly requiresReference?: boolean;
+  readonly frameDurationMaximum?: number;
+  readonly supportsSvgOptions?: boolean;
   readonly advancedParameters?: readonly CangyuanImageAdvancedParameter[];
 };
 
@@ -195,7 +197,7 @@ const MODEL_PARAMETER_OVERRIDES: Readonly<Record<string, Pick<
   | "supportsStyle" | "supportsNegativePrompt" | "supportsLayerDecomposition"
   | "supportsPromptOptimization" | "supportsWatermarkSetting" | "supportsSafetyIdentifier" | "supportsMarkupImage"
   | "supportsNoParameter" | "safetyIdentifierMaxLength" | "seedWireType" | "seedMinimum" | "seedMaximum"
-  | "requiresReference" | "advancedParameters"
+  | "requiresReference" | "advancedParameters" | "frameDurationMaximum" | "supportsSvgOptions"
 >>> = Object.freeze({
   "doubao-seedream-5-5": { resolutionEnum: ["1k", "2k"], resolutionDefault: "1k" },
   "doubao-seedream-5-0-pro-x": { resolutionEnum: ["1K", "2K"], resolutionDefault: "1K" },
@@ -254,8 +256,8 @@ const MODEL_PARAMETER_OVERRIDES: Readonly<Record<string, Pick<
   "gpt-image-2.5-sunburst-az": { advancedParameters: ["output_compression", "moderation"] },
   "gpt-image-2.5-flare-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity"] },
   "gpt-image-2.5-sunburst-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity"] },
-  "gpt-image-2.6-flare-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
-  "gpt-image-2.6-sunburst-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-flare-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, supportsSvgOptions: true, frameDurationMaximum: 655350, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
+  "gpt-image-2.6-sunburst-o": { supportsMarkupImage: true, supportsSafetyIdentifier: true, safetyIdentifierMaxLength: 128, supportsSvgOptions: true, frameDurationMaximum: 655350, advancedParameters: ["output_compression", "moderation", "complexity", "frame_count", "frame_duration_ms"] },
   "gpt-image-2.6": { advancedParameters: ["frame_count", "frame_duration_ms"] },
   "gpt-image-2.6-flare-1k": { advancedParameters: ["frame_count", "frame_duration_ms"] },
   "gpt-image-2.6-flare-2k": { advancedParameters: ["frame_count", "frame_duration_ms"] },

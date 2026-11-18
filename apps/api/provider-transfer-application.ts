@@ -21,7 +21,7 @@ function parseProviderTransferBundle(value: unknown): ProviderTransferBundle {
   const textProtocols = ['chat-completions', 'responses', 'messages'];
   const videoTransports = ['auto', 'native-task', 'openai-videos', 'jimeng-cli', 'agnes-videos', 'cangyuan-videos'];
   const modelKinds = ['chat', 'image', 'video', 'audio', '3d', 'unknown'];
-  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'music-generate', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
+  const modelCapabilities = ['chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast', 'speech', 'transcription', 'music-generate', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend', 'video-first-frame', 'video-reference', 'video-input', 'video-audio'];
   const modelIds = new Set<string>();
   const providerIds = new Set<string>();
   const providerModelIds = new Set<string>();

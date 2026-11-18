@@ -47,13 +47,54 @@ const PARAMETER_HELP: Readonly<Record<string, string>> = Object.freeze({
   negative_prompt: '描述希望避免的画面元素或瑕疵。',
   script: '按剧本内容生成；适合需要明确对白或情节的创作。',
   script_url: '可填写模型能够访问的远程剧本链接。',
-  skill_preset: '留空时由模型根据画面描述选择运镜方式。',
+  skill_preset: '可选择建议运镜，也可用逗号组合多个；留空时根据画面描述决定。',
   speakers: '填写说话人姓名，顺序需与配音音色一致。',
   storyboard: '按镜头顺序填写分镜内容。',
   style: '描述想要的画面风格，也可以直接在画面描述中说明。',
   style_preset: '留空时由模型根据画面描述确定画风。',
-  voices: '按说话人顺序填写配音音色。',
+  voices: '可选择中文音色；多人对谈用逗号分隔，数量和顺序需与说话人一致。',
 });
+
+type VideoParameterOption = { value: string; label: string };
+
+const PARAMETER_OPTIONS: Readonly<Record<string, readonly VideoParameterOption[]>> = {
+  camera_movement: [
+    { value: 'pan_left', label: '向左摇镜' },
+    { value: 'zoom_in', label: '向前推进' },
+    { value: 'orbit', label: '环绕主体' },
+    { value: 'tracking_shot', label: '跟拍主体' },
+    { value: 'static', label: '固定机位' },
+  ],
+  language: [{ value: 'zh', label: '中文' }, { value: 'en', label: '英文' }],
+  skill_preset: [
+    { value: 'occlusion_wipe', label: '遮挡转场' },
+    { value: 'micro_drama_hook', label: '短剧悬念' },
+    { value: 'none', label: '不使用内置运镜' },
+  ],
+  style_preset: [
+    { value: 'cinematic_realistic', label: '电影写实' },
+    { value: '2d_anime', label: '二维动画' },
+    { value: '3d_xianxia', label: '三维仙侠' },
+    { value: 'american_comic', label: '美式漫画' },
+    { value: 'cyberpunk_neon', label: '霓虹赛博朋克' },
+    { value: 'cyberpunk_noir', label: '暗黑赛博朋克' },
+    { value: 'dark_ink_wuxia', label: '暗调水墨武侠' },
+    { value: 'ecommerce_ugc', label: '电商生活实拍' },
+    { value: 'none', label: '不使用内置画风' },
+  ],
+  voices: [
+    { value: 'alloy', label: '清亮女声一' },
+    { value: 'aria', label: '清亮女声二' },
+    { value: 'coral', label: '清亮女声三' },
+    { value: 'nova', label: '温暖女声一' },
+    { value: 'shimmer', label: '温暖女声二' },
+    { value: 'sage', label: '温暖女声三' },
+    { value: 'echo', label: '沉稳男声一' },
+    { value: 'helio', label: '沉稳男声二' },
+    { value: 'onyx', label: '沉稳男声三' },
+    { value: 'fable', label: '叙事男声' },
+  ],
+};
 
 const UI_HANDLED_PARAMETERS = new Set([
   'aspect_ratio', 'duration', 'first_image_url', 'last_image_url', 'model', 'mode', 'prompt', 'reference_audios',
@@ -89,6 +130,22 @@ export function cangyuanVideoParameterLabel(parameter: CangyuanVideoParameterSpe
 
 export function cangyuanVideoParameterLabelByName(name: string): string {
   return PARAMETER_LABELS[name] || '模型设置';
+}
+
+export function cangyuanVideoParameterValueLabel(name: string, value: string): string {
+  return PARAMETER_OPTIONS[name]?.find((option) => option.value === value)?.label
+    || (name === 'mode' ? ({ edit: '编辑视频', extend: '续写视频' } as Record<string, string>)[value] : undefined)
+    || value;
+}
+
+export function getCangyuanVideoParameterSuggestions(parameter: CangyuanVideoParameterSpec): VideoParameterOption[] {
+  const documented = Array.isArray(parameter.suggestions) ? parameter.suggestions : [];
+  if (documented.length) {
+    return documented.map((value) => ({ value, label: cangyuanVideoParameterValueLabel(parameter.name, value) }));
+  }
+  // These values are examples in the official text, not a closed set of allowed values.
+  return [...(PARAMETER_OPTIONS[parameter.name] || [])]
+    .filter((option) => parameter.description?.includes(option.value));
 }
 
 export function cangyuanVideoParameterDescription(parameter: CangyuanVideoParameterSpec): string | undefined {

@@ -5,7 +5,7 @@ import type { AppSettings, ModelCapability, ModelKind, ProviderConnection, Provi
 import { modelSupportsCapabilities, selectAutomaticModel } from './model-selection';
 import { inferNativeSearch } from './native-search-detection';
 import { isProviderModelLibraryEnabled } from './provider-availability';
-import { inferModelKind, isImageEditOnlyModel, isMusicGenerationModelId, isNonConversationalModelId, isSpeechModelId, isThreeDGenerationModelId, resolveModelKind } from './model-kind';
+import { inferModelKind, isAudioTranscriptionModelId, isImageEditOnlyModel, isMusicGenerationModelId, isNonConversationalModelId, isSpeechModelId, isThreeDGenerationModelId, resolveModelKind } from './model-kind';
 import { buildManualModelRecord, mergeProviderModelRecords } from './model-registry';
 import { buildPublicUpscaleModels } from './upscale-catalog';
 import { resolveProviderConfigDir } from './data-paths';
@@ -197,6 +197,9 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   if (isIntentClassifierModel({ rawId })) return { kind: 'chat', capabilities: ['chat'] };
   if (isMusicGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('music-generate')) {
     return { kind: 'audio', capabilities: ['music-generate'] };
+  }
+  if (isAudioTranscriptionModelId(rawId) || hints.capabilities?.includes('transcription')) {
+    return { kind: 'audio', capabilities: ['transcription'] };
   }
   if (isThreeDGenerationModelId(`${rawId} ${hints.displayName || ''}`) || hints.capabilities?.includes('3d-generate')) {
     return { kind: '3d', capabilities: ['3d-generate'] };

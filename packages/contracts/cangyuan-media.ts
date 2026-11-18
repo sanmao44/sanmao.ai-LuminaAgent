@@ -72,7 +72,7 @@ const SUNO_ADD_VOCALS_OPTIONS = Object.freeze([
   'uploadUrl', 'title', 'style_text', 'audioWeight', 'negativeTags', 'styleWeight', 'version', 'vocalGender', 'weirdnessConstraint',
 ] as const);
 const SUNO_COVER_AUDIO_OPTIONS = Object.freeze([
-  'uploadUrl', 'sourceTaskId', 'sourceAudioId', 'sourceTrack', 'title', 'style_text', 'instrumental', 'audioWeight',
+  'uploadUrl', 'sourceTaskId', 'sourceTrack', 'title', 'style_text', 'instrumental', 'audioWeight',
   'customMode', 'negativeTags', 'personaId', 'styleWeight', 'version', 'vocalGender', 'weirdnessConstraint',
 ] as const);
 const SUNO_COVER_GENERATE_OPTIONS = Object.freeze(['sourceTaskId'] as const);
@@ -207,7 +207,10 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
     options.audioUrl = options.audioUrl.trim();
     if (!isPublicHttpUrl(options.audioUrl)) throw new Error('audioUrl 必须是公网音频地址');
   }
-  if (options.stemType !== undefined && !['separate_vocal', 'split_stem', 'split_stem_advanced'].includes(options.stemType)) throw new Error('stemType 必须是 separate_vocal、split_stem 或 split_stem_advanced');
+  if (options.stemType !== undefined) {
+    options.stemType = options.stemType.trim();
+    if (!options.stemType) throw new Error('请选择音轨分离方式');
+  }
   if (options.stemName !== undefined && options.stemType !== 'split_stem_advanced') throw new Error('stemName 仅用于高级分轨');
   if (profile.modelId === 'suno-stem' && options.stemType === 'split_stem_advanced' && !options.stemName?.trim()) {
     throw new Error('高级分轨必须填写轨道名称');
@@ -247,8 +250,14 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
     const value = options[key];
     if (value !== undefined && (value < 0 || value > 1)) throw new Error(`${key} 必须在 0–1 之间`);
   }
-  if (options.version !== undefined && profile.family !== 'suno-sfx' && !['v6', 'v6-wild', 'v6-mini'].includes(options.version)) throw new Error('version 必须是 v6、v6-wild 或 v6-mini');
-  if (options.vocalGender !== undefined && options.vocalGender !== 'm' && options.vocalGender !== 'f') throw new Error('vocalGender 必须是 m 或 f');
+  if (options.version !== undefined) {
+    options.version = options.version.trim();
+    if (!options.version) throw new Error('生成版本不能为空');
+  }
+  if (options.vocalGender !== undefined) {
+    options.vocalGender = options.vocalGender.trim();
+    if (!options.vocalGender) throw new Error('人声类型不能为空');
+  }
   if (options.sound_tempo !== undefined && (options.sound_tempo < 1 || options.sound_tempo > 300)) throw new Error('sound_tempo 必须是 1–300 之间的数字');
 
   return { ...options, prompt };
@@ -261,7 +270,7 @@ export type CangyuanMusicOptions = {
   infillStartS?: string;
   infillEndS?: string;
   audioUrl?: string;
-  stemType?: 'separate_vocal' | 'split_stem' | 'split_stem_advanced';
+  stemType?: string;
   sourceTaskId?: string;
   sourceAudioId?: string;
   sourceTrack?: number;
@@ -285,7 +294,7 @@ export type CangyuanMusicOptions = {
   stemName?: string;
   styleWeight?: number;
   version?: string;
-  vocalGender?: 'm' | 'f';
+  vocalGender?: string;
   weirdnessConstraint?: number;
   sound_key?: string;
   sound_loop?: boolean;
@@ -311,9 +320,9 @@ export type Cangyuan3DOptions = {
   slatSamplingSteps?: number;
   faceLimit?: number;
   generateParts?: boolean;
-  geometryQuality?: 'standard' | 'detailed';
-  textureQuality?: 'standard' | 'detailed' | 'extreme' | 'fast';
-  textureVersion?: Cangyuan3DTextureVersion;
+  geometryQuality?: string;
+  textureQuality?: string;
+  textureVersion?: string;
   quad?: boolean;
 };
 
@@ -428,9 +437,9 @@ export function parseCangyuan3DOptions(value: unknown): Cangyuan3DOptions {
   if (input.generateParts !== undefined && typeof input.generateParts !== 'boolean') throw new Error('generateParts 必须是布尔值');
   if (input.quad !== undefined && typeof input.quad !== 'boolean') throw new Error('quad 必须是布尔值');
   if (input.faceLimit !== undefined && (typeof input.faceLimit !== 'number' || !Number.isInteger(input.faceLimit))) throw new Error('faceLimit 必须是整数');
-  if (input.geometryQuality !== undefined && input.geometryQuality !== 'standard' && input.geometryQuality !== 'detailed') throw new Error('geometryQuality 必须是 standard 或 detailed');
-  if (input.textureQuality !== undefined && !['standard', 'detailed', 'extreme', 'fast'].includes(String(input.textureQuality))) throw new Error('textureQuality 必须是 standard、detailed、extreme 或 fast');
-  if (input.textureVersion !== undefined && !['v3.5-20260815', 'v3.0-20250812', 'v2.5-20250123'].includes(String(input.textureVersion))) throw new Error('textureVersion 不是受支持的版本');
+  for (const key of ['geometryQuality', 'textureQuality', 'textureVersion'] as const) {
+    if (input[key] !== undefined && (typeof input[key] !== 'string' || !input[key].trim())) throw new Error(`${key} 必须是非空字符串`);
+  }
   if (input.textureSize !== undefined && (typeof input.textureSize !== 'string' || !input.textureSize.trim())) throw new Error('textureSize 必须是非空字符串');
   if (input.seed !== undefined && (typeof input.seed !== 'string' || !input.seed.trim())) throw new Error('seed 必须是非空字符串');
   if (input.meshSimplify !== undefined && (typeof input.meshSimplify !== 'number' || !Number.isFinite(input.meshSimplify) || input.meshSimplify < 0.9 || input.meshSimplify > 0.98)) throw new Error('meshSimplify 必须在 0.9–0.98 之间');

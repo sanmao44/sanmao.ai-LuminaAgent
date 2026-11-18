@@ -71,11 +71,14 @@ test('infers image and chat for unclassified models from their capabilities', ()
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', []), 'unknown');
 });
 
-test('classifies TTS families as audio without eating ASR or realtime chat audio', () => {
+test('classifies TTS and ASR families as audio without eating realtime chat audio', () => {
   for (const rawId of ['tts-1', 'tts-1-hd', 'gpt-4o-mini-tts', 'cosyvoice-v2', 'elevenlabs-multilingual-v2', 'fish-speech-1.5', 'mimo-audio-7b']) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['whisper-1', 'gpt-4o-audio-preview', 'gpt-4o-realtime-preview', 'speech-to-text-v1']) {
+  for (const rawId of ['whisper-1', 'gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'speech-to-text-v1', 'mu1-muse-asr']) {
+    assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
+  }
+  for (const rawId of ['gpt-4o-audio-preview', 'gpt-4o-realtime-preview']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
 });
@@ -93,6 +96,8 @@ test('classifies music and 3D generators independently from chat and image model
     assert.equal(modelKind.inferModelKind({ rawId }), '3d', rawId);
   }
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['music-generate'] }), 'audio');
+  assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['transcription'] }), 'audio');
+  assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['transcription']), 'audio');
   assert.equal(modelKind.inferModelKind({ rawId: 'vendor/model', capabilities: ['3d-generate'] }), '3d');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['music-generate']), 'audio');
   assert.equal(modelKind.resolveModelKind('unknown', 'unknown', ['3d-generate']), '3d');
@@ -109,7 +114,7 @@ test('认出国内平台把 TTS 关键词黏在词尾或带厂商前缀的配音
   ]) {
     assert.equal(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
-  for (const rawId of ['iic/SenseVoiceSmall', 'qwen3-omni-flash', 'gpt-4o-mini-transcribe']) {
+  for (const rawId of ['iic/SenseVoiceSmall', 'qwen3-omni-flash']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
 });

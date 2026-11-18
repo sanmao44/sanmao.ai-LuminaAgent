@@ -24,6 +24,7 @@ export function isImageEditOnlyModel({ rawId = '', displayName = '' }: ModelKind
 const SPEECH_MODEL_PATTERN = /(?:^|[-_.\/\s+:])(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|synthesis|model|generation|v\d)|speech|cosyvoice|elevenlabs|fish[-_ ]?speech|mimo[-_ ]?(?:tts|audio)|audio[-_ ]?speech|sovits|vits|xtts|melo[-_ ]?tts|index[-_ ]?tts|chat[-_ ]?tts|tele[-_ ]?tts|spark[-_ ]?tts|kitten[-_ ]?tts|voxcpm|mega[-_ ]?tts|f5[-_ ]?tts|qwen[-_ ]?tts|hunyuan[-_ ]?tts|kokoro|orpheus|higgs[-_ ]?audio|audiofly|vibevoice)/;
 /** 转写 / 实时语音这类模型虽然带 audio、speech 字样，但不是配音模型，必须排除。 */
 const SPEECH_HOST_PATTERN = /whisper|transcri|\basr\b|\bstt\b|realtime|audio[-_ ]?preview|speech[-_ ]?to[-_ ]?text|sense[-_ ]?voice/;
+const AUDIO_TRANSCRIPTION_PATTERN = /whisper|transcri|\basr\b|\bstt\b|speech[-_ ]?to[-_ ]?text/;
 const MUSIC_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:music(?:[-_ ]?(?:gen(?:eration)?|create|maker))?|song[-_ ]?(?:gen(?:eration)?|create)|text[-_ ]?to[-_ ]?music|suno|su2[-_ ]?suno|lyria|udio|ace[-_ ]?step|riffusion|mureka|melody[-_ ]?generation)(?:[^a-z0-9]|$)/;
 const THREE_D_GENERATION_PATTERN = /(?:^|[^a-z0-9])(?:3d(?:[-_ ]?(?:gen(?:eration)?|create|model|asset))?|text[-_ ]?to[-_ ]?3d|image[-_ ]?to[-_ ]?3d|mesh(?:[-_ ]?generation)?|tripo(?:3d|sr)?|trellis|rodin|meshy|instant[-_ ]?mesh|stable[-_ ]?fast[-_ ]?3d|unique[-_ ]?3d|craftsman)(?:[^a-z0-9]|$)|(?:hunyuan|qwen)[-_ ]?3d(?:[-_.]|$)/;
 
@@ -51,6 +52,10 @@ export function isSpeechModelId(value: unknown) {
   return SPEECH_MODEL_PATTERN.test(text) && !SPEECH_HOST_PATTERN.test(text);
 }
 
+export function isAudioTranscriptionModelId(value: unknown) {
+  return AUDIO_TRANSCRIPTION_PATTERN.test(String(value ?? '').toLowerCase());
+}
+
 export function isMusicGenerationModelId(value: unknown) {
   return MUSIC_GENERATION_PATTERN.test(String(value ?? '').toLowerCase());
 }
@@ -68,6 +73,7 @@ export function inferModelKind({ rawId = '', displayName = '', capabilities = []
   const text = `${rawId} ${displayName}`.toLowerCase();
   if (capabilities.includes('3d-generate')) return '3d';
   if (capabilities.includes('music-generate')) return 'audio';
+  if (capabilities.includes('transcription') || isAudioTranscriptionModelId(text)) return 'audio';
   if (isSpeechModelId(text)) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-')) || VIDEO_FAMILY_PATTERN.test(text)) return 'video';
   // 向量 / 重排 / OCR / 语音转写这类模型命中对话家族关键词（qwen3-embedding 里有 qwen），
@@ -99,6 +105,7 @@ export function resolveModelKind(
   if (capabilities.includes('3d-generate')) return '3d';
   if (capabilities.includes('music-generate')) return 'audio';
   if (capabilities.includes('speech')) return 'audio';
+  if (capabilities.includes('transcription')) return 'audio';
   if (capabilities.some((capability) => capability.startsWith('video-'))) return 'video';
   if (inferredKind !== 'unknown') return inferredKind;
   if (capabilities.includes('generate') || capabilities.includes('upscale')) return 'image';

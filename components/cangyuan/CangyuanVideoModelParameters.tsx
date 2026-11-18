@@ -1,9 +1,9 @@
 'use client';
 
-import { useId } from 'react';
 import SelectMenu from '@/components/SelectMenu';
+import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
 import type { CangyuanVideoModelSpec, CangyuanVideoParameterSpec, VideoModelParameterValue, VideoModelParameterValues } from '@/packages/contracts/video-generation';
-import { cangyuanVideoParameterDescription, cangyuanVideoParameterLabel, getCangyuanVideoAdvancedParameters } from '@/lib/cangyuan-video-model-catalog';
+import { cangyuanVideoParameterDescription, cangyuanVideoParameterLabel, cangyuanVideoParameterValueLabel, getCangyuanVideoAdvancedParameters, getCangyuanVideoParameterSuggestions } from '@/lib/cangyuan-video-model-catalog';
 import styles from './CangyuanVideoModelParameters.module.css';
 
 type Props = {
@@ -36,17 +36,15 @@ function ModelParameterField({
   parameter,
   value,
   onValueChange,
-  listId,
 }: {
   parameter: CangyuanVideoParameterSpec;
   value: VideoModelParameterValue | undefined;
   onValueChange: (value: VideoModelParameterValue | undefined) => void;
-  listId: string;
 }) {
   const label = cangyuanVideoParameterLabel(parameter);
   const help = cangyuanVideoParameterDescription(parameter);
   const enumValues = valueList(parameter.enum);
-  const suggestions = valueList(parameter.suggestions);
+  const suggestions = getCangyuanVideoParameterSuggestions(parameter);
 
   if (parameter.name === 'mute_voice' && parameter.type === 'string') {
     const selected = typeof value === 'string' ? value : '';
@@ -93,7 +91,7 @@ function ModelParameterField({
         onChange={(next) => onValueChange(next || undefined)}
         options={[
           { value: '', label: '请选择' },
-          ...enumValues.map((item) => ({ value: item, label: item })),
+          ...enumValues.map((item) => ({ value: item, label: cangyuanVideoParameterValueLabel(parameter.name, item) })),
         ]}
         ariaLabel={label}
       />
@@ -147,23 +145,29 @@ function ModelParameterField({
       onChange={(event) => onValueChange(event.target.value || undefined)}
       aria-label={label}
       placeholder={parameter.name === 'script' || parameter.name === 'storyboard' ? '在这里填写内容' : '可留空，按提示词或模型默认生成'}
+    /> : suggestions.length ? <CangyuanSuggestionInput
+      value={stringValue}
+      options={suggestions}
+      minLength={parameter.minLength}
+      maxLength={parameter.maxLength}
+      multiple={parameter.name === 'voices' || parameter.name === 'skill_preset'}
+      onChange={(next) => onValueChange(next || undefined)}
+      ariaLabel={label}
+      placeholder={parameter.name === 'voices' ? '选择音色，多人用逗号分隔' : '选择建议，也可自行填写'}
     /> : <input
       type={inputType}
       minLength={parameter.minLength}
       maxLength={parameter.maxLength}
-      list={suggestions.length ? listId : undefined}
       value={stringValue}
       onChange={(event) => onValueChange(event.target.value || undefined)}
       aria-label={label}
-      placeholder={suggestions.length ? '可输入或选择建议值' : '可选'}
+      placeholder="可选"
     />}
-    {suggestions.length > 0 && <datalist id={listId}>{suggestions.map((item) => <option key={item} value={item} />)}</datalist>}
     {help && <small>{help}</small>}
   </label>;
 }
 
 export default function CangyuanVideoModelParameters({ spec, values, onChange }: Props) {
-  const id = useId();
   const parameters = getCangyuanVideoAdvancedParameters(spec);
   if (!parameters.length) return null;
 
@@ -177,7 +181,6 @@ export default function CangyuanVideoModelParameters({ spec, values, onChange }:
         key={parameter.name}
         parameter={parameter}
         value={values[parameter.name]}
-        listId={`${id}-${parameter.name}`}
         onValueChange={(value) => onChange(setParameterValue(values, parameter.name, value))}
       />)}
     </div>

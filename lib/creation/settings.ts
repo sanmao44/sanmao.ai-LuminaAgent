@@ -3,7 +3,8 @@ import type { ImageModelParameters, ImageOutputFormat } from "@/packages/contrac
 import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
-import { getCangyuanImageModelProfile, type CangyuanImageAdvancedParameter } from "../cangyuan-image-capabilities";
+import { getCangyuanImageModelProfile } from "../cangyuan-image-capabilities";
+import type { CangyuanImageAdvancedParameter } from "../cangyuan-image-capabilities";
 import { isCangyuanProvider } from "../cangyuan-provider";
 
 export type ImageSizeMode = "system" | "custom";
@@ -75,6 +76,8 @@ export function imageModelParametersFromSettings(settings: ImageCreationSettings
     complexity: settings.complexity,
     frameCount: settings.frameCount,
     frameDurationMs: settings.frameDurationMs,
+    svgAuthorModel: settings.svgAuthorModel,
+    svgReasoningEffort: settings.svgReasoningEffort,
     chaos: settings.chaos,
     experimentalStyle: settings.experimentalStyle,
     hd: settings.hd,
@@ -365,7 +368,7 @@ export function normalizeImageCreationSettings(
   const style = cangyuanProfile?.supportsStyle && typeof raw.style === "string" && raw.style.trim()
     ? raw.style.trim()
     : undefined;
-  const negativePrompt = cangyuanProfile?.supportsNegativePrompt && typeof raw.negativePrompt === "string" && raw.negativePrompt.trim()
+  const negativePrompt = (cangyuanProfile?.supportsNegativePrompt || cangyuanProfile?.supportsNoParameter) && typeof raw.negativePrompt === "string" && raw.negativePrompt.trim()
     ? raw.negativePrompt.trim()
     : undefined;
   const layerDecomposition = cangyuanProfile?.supportsLayerDecomposition && typeof raw.layerDecomposition === "boolean"
@@ -406,7 +409,7 @@ export function normalizeImageCreationSettings(
     ? raw.complexity
     : undefined;
   const frameCount = advancedNumber("frame_count", raw.frameCount, 2, 16);
-  const frameDurationMs = advancedNumber("frame_duration_ms", raw.frameDurationMs, 20, 2000, 10);
+  const frameDurationMs = advancedNumber("frame_duration_ms", raw.frameDurationMs, 20, cangyuanProfile?.frameDurationMaximum ?? 2000, 10);
   const chaos = advancedNumber("chaos", raw.chaos, 0, 100);
   const experimentalStyle = advancedNumber("exp", raw.experimentalStyle, 0, 100);
   const hd = supportsAdvanced("hd") && typeof raw.hd === "boolean" ? raw.hd : undefined;
@@ -422,7 +425,7 @@ export function normalizeImageCreationSettings(
   const styleWeight = advancedNumber("sw", raw.styleWeight, 0, 1000, 10);
   const weird = advancedNumber("weird", raw.weird, 0, 3000, 50);
   const sizeMode = raw.sizeMode === "custom" ? "custom" : "system";
-  const outputFormat = raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg"
+  const outputFormat = !layerDecomposition && (raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg")
     ? raw.outputFormat
     : "png";
   const backgroundMode =
@@ -514,11 +517,17 @@ export function normalizeImageCreationSettings(
     ...(watermark !== undefined ? { watermark } : {}),
     ...(safetyIdentifier ? { safetyIdentifier } : {}),
     ...(markupImage ? { markupImage } : {}),
-    ...(outputCompression !== undefined && outputFormat !== "png" ? { outputCompression } : {}),
+    ...(outputCompression !== undefined && (outputFormat === "jpeg" || outputFormat === "webp") ? { outputCompression } : {}),
     ...(moderation ? { moderation } : {}),
     ...(complexity ? { complexity } : {}),
     ...(frameCount !== undefined && outputFormat === "gif" ? { frameCount } : {}),
     ...(frameDurationMs !== undefined && outputFormat === "gif" ? { frameDurationMs } : {}),
+    ...(outputFormat === "svg" && cangyuanProfile?.supportsSvgOptions && typeof raw.svgAuthorModel === "string" && raw.svgAuthorModel.trim()
+      ? { svgAuthorModel: raw.svgAuthorModel.trim() } : {}),
+    ...(outputFormat === "svg" && cangyuanProfile?.supportsSvgOptions
+      && (raw.svgReasoningEffort === "none" || raw.svgReasoningEffort === "minimal" || raw.svgReasoningEffort === "low"
+        || raw.svgReasoningEffort === "medium" || raw.svgReasoningEffort === "high" || raw.svgReasoningEffort === "xhigh" || raw.svgReasoningEffort === "max")
+      ? { svgReasoningEffort: raw.svgReasoningEffort } : {}),
     ...(chaos !== undefined ? { chaos } : {}),
     ...(experimentalStyle !== undefined ? { experimentalStyle } : {}),
     ...(hd !== undefined ? { hd } : {}),

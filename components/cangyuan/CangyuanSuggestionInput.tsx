@@ -3,17 +3,29 @@
 import { createPortal } from 'react-dom';
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
+import styles from './CangyuanSuggestionInput.module.css';
+
+export type CangyuanSuggestionOption = string | { value: string; label: string };
+
+export function getCangyuanSuggestionWireValue(options: readonly CangyuanSuggestionOption[], input: string, multiple = false): string {
+  const normalized = options.map((option) => typeof option === 'string' ? { value: option, label: option } : option);
+  const resolve = (item: string) => normalized.find((option) => option.label === item)?.value ?? item;
+  return multiple ? input.split(/[,，]/u).map((item) => resolve(item.trim())).join(',') : resolve(input);
+}
 
 type Props = {
   value: string;
-  options: string[];
+  options: readonly CangyuanSuggestionOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
   placeholder?: string;
   inputMode?: 'text' | 'decimal' | 'numeric';
+  minLength?: number;
+  maxLength?: number;
+  multiple?: boolean;
 };
 
-export default function CangyuanSuggestionInput({ value, options, onChange, ariaLabel, placeholder, inputMode = 'text' }: Props) {
+export default function CangyuanSuggestionInput({ value, options, onChange, ariaLabel, placeholder, inputMode = 'text', minLength, maxLength, multiple = false }: Props) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [menuStyle, setMenuStyle] = useState<Record<string, string | number>>({
@@ -28,7 +40,14 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
   const menuRef = useRef<HTMLDivElement>(null);
   const id = useId();
   const listId = `${id}-list`;
-  const filteredOptions = options.filter((option) => option.toLowerCase().includes(value.trim().toLowerCase()));
+  const normalizedOptions = options.map((option) => typeof option === 'string' ? { value: option, label: option } : option);
+  const valueParts = multiple ? value.split(',').map((item) => item.trim()) : [value];
+  const currentValue = valueParts[valueParts.length - 1] || '';
+  const selectedOption = normalizedOptions.find((option) => option.value === currentValue);
+  const displayValue = valueParts.map((item) => normalizedOptions.find((option) => option.value === item)?.label ?? item).join(', ');
+  const query = (multiple ? displayValue.split(',').at(-1) || '' : displayValue).trim().toLowerCase();
+  const filteredOptions = selectedOption ? normalizedOptions : normalizedOptions.filter((option) =>
+    option.label.toLowerCase().includes(query) || option.value.toLowerCase().includes(query));
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -73,15 +92,14 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
   }, [open]);
 
   function showSuggestions() {
-    const currentIndex = options.findIndex((option) => option === value);
-    setActiveIndex(currentIndex >= 0 ? filteredOptions.indexOf(options[currentIndex]) : -1);
+    setActiveIndex(filteredOptions.findIndex((option) => option.value === currentValue));
     setMenuStyle({ position: 'fixed', visibility: 'hidden', left: 0, top: 0, width: 0 });
     setOpen(true);
     inputRef.current?.focus();
   }
 
   function choose(option: string) {
-    onChange(option);
+    onChange(multiple ? [...valueParts.filter((item) => item && item !== option), option].join(',') : option);
     setOpen(false);
     setActiveIndex(-1);
     inputRef.current?.focus();
@@ -103,7 +121,7 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
     } else if (event.key === 'Enter' && open) {
       if (activeIndex >= 0 && filteredOptions[activeIndex]) {
         event.preventDefault();
-        choose(filteredOptions[activeIndex]);
+        choose(filteredOptions[activeIndex].value);
       } else {
         event.preventDefault();
         setOpen(false);
@@ -117,7 +135,7 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
   return (
     <div
       ref={rootRef}
-      className={`cangyuan-suggestion-control ${open ? 'open' : ''}`}
+      className={`${styles.control} ${open ? styles.open : ''}`}
       onBlur={(event) => {
         const nextTarget = event.relatedTarget as Node | null;
         if (nextTarget && (rootRef.current?.contains(nextTarget) || menuRef.current?.contains(nextTarget))) return;
@@ -128,6 +146,8 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
         ref={inputRef}
         type="text"
         inputMode={inputMode}
+        minLength={minLength}
+        maxLength={maxLength}
         role="combobox"
         aria-label={ariaLabel}
         aria-autocomplete="list"
@@ -135,9 +155,10 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
         aria-expanded={open}
         aria-controls={listId}
         aria-activedescendant={open && activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
-        value={value}
+        value={displayValue}
         onChange={(event) => {
-          onChange(event.target.value);
+          const entered = event.target.value;
+          onChange(getCangyuanSuggestionWireValue(options, entered, multiple));
           if (!open) setOpen(true);
           setActiveIndex(-1);
         }}
@@ -159,7 +180,7 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
         <div
           ref={menuRef}
           id={listId}
-          className="cangyuan-suggestion-menu"
+          className={styles.menu}
           style={{ ...menuStyle, zIndex: CANVAS_Z_INDEX.portalPopover }}
           role="listbox"
           aria-label={`${ariaLabel}建议`}
@@ -168,18 +189,18 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
           {filteredOptions.length ? filteredOptions.map((option, index) => (
             <div
               id={`${listId}-${index}`}
-              key={option}
+              key={option.value}
               role="option"
-              aria-selected={option === value}
-              className={`cangyuan-suggestion-option ${index === activeIndex ? 'active' : ''} ${option === value ? 'selected' : ''}`.trim()}
+              aria-selected={option.value === currentValue}
+              className={`${styles.option} ${index === activeIndex ? styles.active : ''} ${option.value === currentValue ? styles.selected : ''}`.trim()}
               onMouseEnter={() => setActiveIndex(index)}
               onPointerDown={(event) => event.preventDefault()}
-              onClick={() => choose(option)}
+              onClick={() => choose(option.value)}
             >
-              <span>{option}</span>
-              {option === value && <span aria-hidden="true">✓</span>}
+              <span>{option.label}</span>
+              {option.value === currentValue && <span aria-hidden="true">✓</span>}
             </div>
-          )) : <div className="cangyuan-suggestion-empty">无匹配建议，可直接输入</div>}
+          )) : <div className={styles.empty}>无匹配建议，可直接输入</div>}
         </div>,
         document.body,
       )}

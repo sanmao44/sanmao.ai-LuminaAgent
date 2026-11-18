@@ -9,7 +9,9 @@ import SelectMenu from '@/components/SelectMenu';
 import CangyuanSuggestionInput from '@/components/cangyuan/CangyuanSuggestionInput';
 import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
 import CangyuanMusicOptionsFields from '@/components/cangyuan/CangyuanMusicOptionsFields';
+import CangyuanAudioTranscription from '@/components/cangyuan/CangyuanAudioTranscription';
 import CangyuanThreeDScenarioPicker from '@/components/cangyuan/CangyuanThreeDScenarioPicker';
+import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from '@/components/cangyuan/CangyuanTripoQualityOptions';
 import CangyuanReferenceImagePreview from '@/components/cangyuan/CangyuanReferenceImagePreview';
 import { cangyuanSpeechVoiceOptions } from '@/components/cangyuan/speech-voice-options';
 import { supportedSpeechModels } from '@/components/cangyuan/speech-model-options';
@@ -36,7 +38,7 @@ import { filterModelsByActiveProviders } from '@/lib/provider-availability';
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS, CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from '@/lib/cangyuan-media-task-polling';
 import './CangyuanMediaStudio.css';
 
-type StudioMode = 'speech' | 'music' | '3d';
+type StudioMode = 'speech' | 'transcription' | 'music' | '3d';
 type StudioNotice = { kind: 'error' | 'info' | 'success'; text: string } | null;
 type SpeechResult = { url: string; name: string; modelName: string; contentType: string; extension: string };
 
@@ -692,10 +694,11 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         <div>
           <p className="cangyuan-studio-eyebrow">创作工作台</p>
           <h1>媒体生成</h1>
-          <p>配音、音乐与三维模型在一个工作区中生成和管理。</p>
+          <p>配音、转写、音乐与三维模型在一个工作区中使用和管理。</p>
         </div>
         <nav className="cangyuan-studio-tabs" aria-label="生成类型">
           <button type="button" className={mode === 'speech' ? 'active' : ''} aria-pressed={mode === 'speech'} onClick={() => { setMode('speech'); setNotice(null); }}>配音</button>
+          <button type="button" className={mode === 'transcription' ? 'active' : ''} aria-pressed={mode === 'transcription'} onClick={() => { setMode('transcription'); setNotice(null); }}>转写</button>
           <button type="button" className={mode === 'music' ? 'active' : ''} aria-pressed={mode === 'music'} onClick={() => { setMode('music'); setNotice(null); }}>音乐</button>
           <button type="button" className={mode === '3d' ? 'active' : ''} aria-pressed={mode === '3d'} onClick={() => { setMode('3d'); setNotice(null); }}>三维</button>
         </nav>
@@ -709,7 +712,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       {loadingState && <div className="cangyuan-studio-loading" role="status">正在读取可用模型…</div>}
 
       {!loadingState && !stateError && (
-        <div className="cangyuan-studio-layout">
+        mode === 'transcription' && publicState
+          ? <CangyuanAudioTranscription state={publicState} onOpenModels={onOpenModels} onNotify={onNotify} />
+          : <div className="cangyuan-studio-layout">
           <section className="cangyuan-studio-form" aria-label={`${mode === 'speech' ? '配音' : mode === 'music' ? '音乐' : '三维'}生成设置`}>
             <div className="cangyuan-form-heading">
               <div>
@@ -893,90 +898,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                   </div>
                 )}
                 {profile3d?.family === 'tripo' && (
-                  <details className="cangyuan-3d-advanced">
-                    <summary>更多生成选项</summary>
-                    <div className="cangyuan-trellis-grid">
-                      <label className="cangyuan-music-text-field">
-                        <span>面数上限 {profile3d.faceLimitRange[0]}–{profile3d.modelId === 'tripo3d-p2' && tripoOptions.quad ? '25000' : profile3d.faceLimitRange[1]}</span>
-                        <input
-                          type="number"
-                          min={profile3d.faceLimitRange[0]}
-                          max={profile3d.modelId === 'tripo3d-p2' && tripoOptions.quad ? 25_000 : profile3d.faceLimitRange[1]}
-                          step="1"
-                          value={tripoOptions.faceLimit ?? ''}
-                          onChange={(event) => setTripoOptions((current) => ({ ...current, faceLimit: event.target.value ? Number(event.target.value) : undefined }))}
-                          placeholder="模型默认"
-                        />
-                        <small>控制最终网格复杂度；数值越高，细节和文件体积通常越大。</small>
-                      </label>
-                      <div className="cangyuan-select-field">
-                        <span>贴图</span>
-                        <SelectMenu
-                          value={tripoOptions.texture === undefined ? 'auto' : String(tripoOptions.texture)}
-                          ariaLabel="贴图开关"
-                          className="cangyuan-field-select"
-                          menuClassName="cangyuan-field-select-menu"
-                          options={[{ value: 'auto', label: '模型决定' }, { value: 'true', label: '生成贴图' }, { value: 'false', label: '不生成贴图' }]}
-                          disabled={tripoOptions.generateParts === true}
-                          onChange={(value) => setTripoOptions((current) => ({ ...current, texture: value === 'auto' ? undefined : value === 'true' }))}
-                        />
-                      </div>
-                      {profile3d.modelId === CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL && (
-                        <div className="cangyuan-select-field">
-                          <span>几何质量</span>
-                          <SelectMenu
-                            value={tripoOptions.geometryQuality || 'default'}
-                            ariaLabel="几何质量"
-                            className="cangyuan-field-select"
-                            menuClassName="cangyuan-field-select-menu"
-                            options={[{ value: 'default', label: '模型默认' }, { value: 'standard', label: '标准' }, { value: 'detailed', label: '精细' }]}
-                            onChange={(value) => setTripoOptions((current) => ({ ...current, geometryQuality: value === 'default' ? undefined : value as 'standard' | 'detailed' }))}
-                          />
-                        </div>
-                      )}
-                      <div className="cangyuan-select-field">
-                        <span>贴图质量</span>
-                        <SelectMenu
-                          value={tripoOptions.textureQuality || 'default'}
-                          ariaLabel="贴图质量"
-                          className="cangyuan-field-select"
-                          menuClassName="cangyuan-field-select-menu"
-                          options={[{ value: 'default', label: '模型默认' }, { value: 'standard', label: '标准' }, { value: 'detailed', label: '精细' }, { value: 'extreme', label: '极高' }, { value: 'fast', label: '快速' }]}
-                          onChange={(value) => setTripoOptions((current) => ({ ...current, textureQuality: value === 'default' ? undefined : value as 'standard' | 'detailed' | 'extreme' | 'fast' }))}
-                        />
-                      </div>
-                      <div className="cangyuan-select-field">
-                        <span>贴图版本</span>
-                        <SelectMenu
-                          value={tripoOptions.textureVersion || 'default'}
-                          ariaLabel="贴图版本"
-                          className="cangyuan-field-select"
-                          menuClassName="cangyuan-field-select-menu"
-                          options={[{ value: 'default', label: '模型默认' }, { value: 'v3.5-20260815', label: 'V3.5' }, { value: 'v3.0-20250812', label: 'V3.0' }, { value: 'v2.5-20250123', label: 'V2.5' }]}
-                          onChange={(value) => setTripoOptions((current) => ({ ...current, textureVersion: value === 'default' ? undefined : value as Cangyuan3DOptions['textureVersion'] }))}
-                        />
-                      </div>
-                      <label className="cangyuan-checkbox-field">
-                        <input type="checkbox" checked={tripoOptions.pbr === true} disabled={tripoOptions.generateParts === true} onChange={(event) => setTripoOptions((current) => ({ ...current, pbr: event.target.checked }))} />
-                        <span>PBR 材质</span>
-                      </label>
-                      {profile3d.supportsGenerateParts && (
-                        <label className="cangyuan-checkbox-field">
-                          <input type="checkbox" checked={tripoOptions.generateParts === true} onChange={(event) => setTripoOptions((current) => ({ ...current, generateParts: event.target.checked, ...(event.target.checked ? { texture: false, pbr: false, quad: false } : {}) }))} />
-                          <span>分件生成</span>
-                        </label>
-                      )}
-                      {profile3d.supportsQuad && (
-                        <label className="cangyuan-checkbox-field">
-                          <input type="checkbox" checked={tripoOptions.quad === true} disabled={tripoOptions.generateParts === true} onChange={(event) => setTripoOptions((current) => ({ ...current, quad: event.target.checked }))} />
-                          <span>四边形网格（输出 FBX）</span>
-                        </label>
-                      )}
-                    </div>
-                    {tripoOptions.textureQuality === 'fast' && tripoOptions.textureVersion !== 'v3.5-20260815' && <p className="cangyuan-model-note">快速贴图质量要求贴图版本选择 V3.5。</p>}
-                    {tripoOptions.generateParts === true && <p className="cangyuan-model-note">分件生成会自动关闭贴图、PBR 材质和四边形网格。</p>}
-                    {profile3d.modelId === 'tripo3d-p2' && tripoOptions.quad === true && <p className="cangyuan-model-note">P2 四边形网格模式的面数上限为 25,000，结果为 FBX 文件。</p>}
-                  </details>
+                  <CangyuanTripoQualityOptions profile={profile3d} options={tripoOptions} onChange={setTripoOptions} />
                 )}
                 {isTrellisModel(model3d) && (
                   <div className="cangyuan-3d-trellis-options">

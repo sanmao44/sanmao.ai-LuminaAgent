@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
 
 const { main: application } = await buildLibModules(
-  ['apps/api/audio-transcription-application'],
+  ['apps/api/audio-transcription-application', 'packages/contracts/audio-transcription'],
   'audio-transcription-application',
 );
 
@@ -50,6 +50,50 @@ test('SRT keeps ASR timestamps, uses millisecond precision, and emits stable cue
     artifactId: 'subtitle-id',
     downloadUrl: '/api/artifacts/subtitle-id',
   });
+});
+
+test('uploaded transcription validates documented settings and records structured output', async () => {
+  const lifecycle = [];
+  let providerInput;
+  const result = await application.transcribeUploadedAudio({
+    modelId: 'cangyuan-asr',
+    file: { name: 'meeting.wav', mimeType: 'audio/wav', bytes: new Uint8Array([1, 2, 3]) },
+    language: 'zh', prompt: '张小明、沧海', responseFormat: 'verbose_json', temperature: 0.15,
+  }, {
+    transcribe: async (input) => {
+      providerInput = input;
+      return { text: '会议开始。', modelId: 'cangyuan-asr', modelName: 'Muse ASR', language: 'zh', segments: [{ start: 0, end: 1.25, text: '会议开始。' }] };
+    },
+    startLog: async (input) => { lifecycle.push({ type: 'start', input }); return 'log-1'; },
+    finishLog: async (id, patch) => { lifecycle.push({ type: 'finish', id, patch }); },
+  });
+
+  assert.equal(providerInput.file.name, 'meeting.wav');
+  assert.equal(providerInput.language, 'zh');
+  assert.equal(providerInput.prompt, '张小明、沧海');
+  assert.equal(providerInput.responseFormat, 'verbose_json');
+  assert.equal(providerInput.temperature, 0.15);
+  assert.equal(result.text, '会议开始。');
+  assert.deepEqual(result.segments, [{ start: 0, end: 1.25, text: '会议开始。' }]);
+  assert.equal(lifecycle[0].input.sourceAudioName, 'meeting.wav');
+  assert.equal(lifecycle[1].patch.textResult, '会议开始。');
+  assert.deepEqual(lifecycle[1].patch.transcriptionSegments, [{ start: 0, end: 1.25, text: '会议开始。' }]);
+});
+
+test('uploaded transcription rejects unsupported audio and out-of-range temperature before creating history', async () => {
+  let started = false;
+  const ports = {
+    transcribe: async () => { throw new Error('must not call provider'); },
+    startLog: async () => { started = true; return 'log'; },
+    finishLog: async () => {},
+  };
+  await assert.rejects(application.transcribeUploadedAudio({
+    modelId: 'model', file: { name: 'track.aiff', mimeType: 'audio/aiff', bytes: new Uint8Array([1]) },
+  }, ports), /仅支持 MP3、WAV、OGG、M4A、FLAC、WebM 或 PCM/);
+  await assert.rejects(application.transcribeUploadedAudio({
+    modelId: 'model', file: { name: 'track.mp3', mimeType: 'audio/mpeg', bytes: new Uint8Array([1]) }, temperature: 1.1,
+  }, ports), /温度范围应为 0 到 1/);
+  assert.equal(started, false);
 });
 
 test('audio transcription forwards bounded reference text and reports model stages', async () => {

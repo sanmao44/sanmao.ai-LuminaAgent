@@ -43,6 +43,13 @@ export type GenerationLog = {
   imageCount?: number;
   imageUrls?: string[];
   audioUrl?: string;
+  /** Text returned by synchronous speech recognition. */
+  textResult?: string;
+  transcriptionSegments?: Array<{ start: number; end: number; text: string }>;
+  sourceAudioName?: string;
+  transcriptionLanguage?: string;
+  transcriptionResponseFormat?: string;
+  temperature?: number;
   storagePath?: string;
   storageError?: string;
   error?: string;

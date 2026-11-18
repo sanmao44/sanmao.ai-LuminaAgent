@@ -190,6 +190,9 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
     if (/reference|multiframe|images/.test(text)) capabilities.push('video-reference');
     if (/audio|sound/.test(text)) capabilities.push('video-audio');
   }
+  if (/audio[-_ ]?transcri|\/audio\/transcriptions|speech[-_ ]?to[-_ ]?text|\basr\b|\bstt\b/i.test(text)) {
+    capabilities.push('transcription');
+  }
   // Some OpenAI-compatible model registries return only an id and omit
   // endpoint metadata. Keep discovery consistent with the shared model-kind
   // classifier so common third-party video families still enter the video
@@ -775,7 +778,7 @@ async function uploadCangyuanImage(provider: RuntimeProvider, image: CangyuanIma
     putResponse = await fetch(uploadUrl, {
       method: 'PUT',
       headers: uploadHeaders,
-      body: image.bytes,
+      body: Uint8Array.from(image.bytes),
       cache: 'no-store',
       redirect: 'error',
       signal: combineSignals(signal, 30000),
@@ -1538,6 +1541,7 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
       [input.chaos, 'chaos'], [input.experimentalStyle, 'exp'], [input.hd, 'hd'], [input.referenceImageWeight, 'iw'],
       [input.rawStyle, 'raw'], [input.referenceMode, 'reference'], [input.referenceSlots, 'reference_slots'],
       [input.speed, 'speed'], [input.stylize, 'stylize'], [input.styleWeight, 'sw'], [input.weird, 'weird'],
+      [input.svgAuthorModel, 'svg.model'], [input.svgReasoningEffort, 'svg.reasoning.effort'],
     ];
     for (const [value, name] of unverifiedParameters) {
       if (value !== undefined) throw cangyuanParameterError(rawModelId, name, String(value));
@@ -1552,6 +1556,21 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
 
   if (count > (profile.nMax ?? 1)) {
     throw new Error(`沧元模型 ${rawModelId} 文档中的 n 最大值为 ${profile.nMax ?? 1}，请将生成数量调低。`);
+  }
+  if (input.outputFormat === 'svg') {
+    if (!profile.outputFormatEnum.includes('svg') || !profile.supportsSvgOptions) {
+      throw cangyuanParameterError(rawModelId, 'output_format', 'svg');
+    }
+    if (count !== 1) throw new Error('SVG 生成每次只能输出 1 张，请将生成数量设为 1。');
+    if (endpoint === 'edits' || input.mask || input.markupImage) {
+      throw new Error('SVG 仅支持文生图，不支持改图、蒙版或透明标记图；请移除参考编辑素材或切换为 PNG。');
+    }
+    if (input.outputCompression !== undefined) throw cangyuanParameterError(rawModelId, 'output_compression', String(input.outputCompression));
+  } else if (input.svgAuthorModel !== undefined || input.svgReasoningEffort !== undefined) {
+    throw cangyuanParameterError(rawModelId, 'svg', '仅支持 SVG 输出');
+  }
+  if ((input.svgAuthorModel !== undefined || input.svgReasoningEffort !== undefined) && !profile.supportsSvgOptions) {
+    throw cangyuanParameterError(rawModelId, 'svg', '该模型未声明矢量绘图选项');
   }
   if (input.references.length > (profile.imagesMaxItems ?? 0)) {
     throw new Error(profile.imagesMaxItems
@@ -1609,7 +1628,7 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
         || (profile.seedMaximum !== undefined && seed > profile.seedMaximum)) {
         throw cangyuanParameterError(rawModelId, 'seed', input.seed);
       }
-      parameters.seed = seed;
+      parameters.seed = profile.seedWireType === 'integer' ? seed : input.seed;
     } else {
       parameters.seed = input.seed;
     }
@@ -1624,6 +1643,11 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
   }
   if (input.layerDecomposition !== undefined) {
     if (!profile.supportsLayerDecomposition) throw cangyuanParameterError(rawModelId, 'layer_decomposition', String(input.layerDecomposition));
+    if (input.layerDecomposition) {
+      if (input.references.length !== 1) throw new Error('图片分层需要恰好一张参考图，请上传一张需要拆层的图片。');
+      if (input.outputFormat && input.outputFormat !== 'png') throw new Error('图片分层仅支持 PNG 输出，请切换图片格式。');
+      if (input.background === 'transparent') throw new Error('图片分层不能同时使用透明背景，请切换背景方式。');
+    }
     parameters.layer_decomposition = input.layerDecomposition;
   }
   if (input.layerMaxImages !== undefined || input.layerTextRecognition !== undefined) {
@@ -1685,10 +1709,16 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
     if (!supportsAdvanced('complexity')) throw cangyuanParameterError(rawModelId, 'complexity', input.complexity);
     parameters.complexity = input.complexity;
   }
+  if (input.svgAuthorModel !== undefined || input.svgReasoningEffort !== undefined) {
+    parameters.svg = {
+      ...(input.svgAuthorModel?.trim() ? { model: input.svgAuthorModel.trim() } : {}),
+      ...(input.svgReasoningEffort ? { reasoning: { effort: input.svgReasoningEffort } } : {}),
+    };
+  }
   if (input.frameCount !== undefined && input.outputFormat !== 'gif') throw cangyuanParameterError(rawModelId, 'frame_count', String(input.frameCount));
   if (input.frameDurationMs !== undefined && input.outputFormat !== 'gif') throw cangyuanParameterError(rawModelId, 'frame_duration_ms', String(input.frameDurationMs));
   addAdvancedNumber('frame_count', 'frame_count', 'frame_count', input.frameCount, 2, 16);
-  addAdvancedNumber('frame_duration_ms', 'frame_duration_ms', 'frame_duration_ms', input.frameDurationMs, 20, 2000, 10);
+  addAdvancedNumber('frame_duration_ms', 'frame_duration_ms', 'frame_duration_ms', input.frameDurationMs, 20, profile.frameDurationMaximum ?? 2000, 10);
   addAdvancedNumber('chaos', 'chaos', 'chaos', input.chaos, 0, 100);
   addAdvancedNumber('exp', 'exp', 'exp', input.experimentalStyle, 0, 100);
   if (input.hd !== undefined) {
@@ -1935,22 +1965,8 @@ export async function generateImage(provider: RuntimeProvider, rawModelId: strin
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImage(provider, rawModelId, input, references, signal);
   const count = Math.max(1, Math.min(8, Number(input.count || 1)));
   if (isCangyuanProvider(provider)) return generateCangyuanImage(provider, rawModelId, {
-    prompt: input.prompt,
+    ...input,
     references,
-    count: input.count,
-    aspectRatio: input.aspectRatio,
-    width: input.width,
-    height: input.height,
-    sizeMode: input.sizeMode,
-    quality: input.quality,
-    resolution: input.resolution,
-    tier: input.tier,
-    series: input.series,
-    seed: input.seed,
-    enablePromptExpansion: input.enablePromptExpansion,
-    outputFormat: input.outputFormat,
-    responseFormat: input.responseFormat,
-    background: input.background,
   }, 'generations', signal);
   if (isAgnesProvider(provider)) {
     const outputFormat = input.outputFormat;

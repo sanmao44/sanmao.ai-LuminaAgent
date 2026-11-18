@@ -16,10 +16,11 @@ const MIME_EXTENSIONS: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
   "image/png": "png",
+  "image/svg+xml": "svg",
   "image/webp": "webp",
 };
 
-const SAFE_EXTENSION = /^(?:avif|gif|jpe?g|png|webp)$/i;
+const SAFE_EXTENSION = /^(?:avif|gif|jpe?g|png|svg|webp)$/i;
 
 export function orderCanvasImageItems(
   items: CanvasImageDownloadItem[],
@@ -39,7 +40,7 @@ function safeStem(name: string | undefined) {
     .replace(/[. ]+$/g, "")
     .slice(0, 96)
     .trim();
-  return (normalized || "SANMAO素材").replace(/\.(?:avif|gif|jpe?g|png|webp)$/i, "");
+  return (normalized || "SANMAO素材").replace(/\.(?:avif|gif|jpe?g|png|svg|webp)$/i, "");
 }
 
 function imageExtension(item: CanvasImageDownloadItem, contentType: string) {

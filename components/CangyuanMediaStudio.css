@@ -102,19 +102,6 @@
 .cangyuan-field-select-menu.select-menu-popover{min-width:0;padding:4px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--panel) 98%,transparent);box-shadow:0 12px 28px color-mix(in srgb,var(--shadow-color,#111827) 22%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
 .cangyuan-field-select-menu .select-menu-option{min-height:30px;padding:6px 8px;border-radius:6px}
 .cangyuan-field-select-menu .select-menu-option-copy strong{font-size:10px}
-.cangyuan-suggestion-control{display:flex;min-width:0}
-.cangyuan-suggestion-control input{flex:1;width:1%;min-width:0;border-radius:6px 0 0 6px!important;border-right:0!important}
-.cangyuan-suggestion-control>button{flex:none;width:34px;min-height:34px;border:1px solid var(--line);border-left:0;border-radius:0 6px 6px 0;background:var(--panel);color:var(--muted);font:inherit;font-size:15px;cursor:pointer}
-.cangyuan-suggestion-control>button:hover,.cangyuan-suggestion-control.open>button{color:var(--accent-text)}
-.cangyuan-suggestion-control:focus-within input,.cangyuan-suggestion-control:focus-within>button{border-color:var(--accent)}
-.cangyuan-suggestion-control:focus-within{border-radius:6px;box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 12%,transparent)}
-.cangyuan-suggestion-control input:focus{box-shadow:none}
-.cangyuan-suggestion-control>button:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px}
-.cangyuan-suggestion-menu{box-sizing:border-box;overflow-y:auto;padding:4px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--panel) 98%,transparent);color:var(--text);box-shadow:0 12px 28px color-mix(in srgb,var(--shadow-color,#111827) 22%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
-.cangyuan-suggestion-option{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:30px;padding:6px 8px;border:1px solid transparent;border-radius:6px;color:var(--text-2);font-size:10px;cursor:pointer}
-.cangyuan-suggestion-option:hover,.cangyuan-suggestion-option.active{border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:var(--accent-soft);color:var(--accent-text)}
-.cangyuan-suggestion-option.selected{font-weight:750}
-.cangyuan-suggestion-empty{padding:9px 8px;color:var(--muted);font-size:10px;line-height:1.4}
 .cangyuan-music-duration{max-width:180px}
 .cangyuan-music-ranges{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .cangyuan-music-range-field{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:5px;color:var(--text-2);font-size:9px}

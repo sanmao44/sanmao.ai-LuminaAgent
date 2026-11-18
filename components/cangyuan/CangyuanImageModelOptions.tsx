@@ -43,6 +43,7 @@ export default function CangyuanImageModelOptions({
   const hasAdvancedOptions = Boolean(
     profile.supportsSeed
     || profile.supportsSafetyIdentifier
+    || profile.supportsSvgOptions
     || profile.advancedParameters?.length,
   );
 
@@ -86,17 +87,22 @@ export default function CangyuanImageModelOptions({
                 ...settings,
                 layerDecomposition: !settings.layerDecomposition,
                 count: settings.layerDecomposition ? settings.count : 1,
+                outputFormat: settings.layerDecomposition ? settings.outputFormat : "png",
                 ...(settings.layerDecomposition || settings.backgroundMode !== "api-transparent"
                   ? {}
                   : { backgroundMode: "auto" as const }),
               })}
             >
-              <span>{settings.layerDecomposition ? "单张分层" : "普通图片"}</span>
+              <span>{settings.layerDecomposition ? "拆分参考图" : "普通图片"}</span>
               <i />
             </button>
           </label>
           {showLayerOptions && (
             <div className="cangyuan-image-nested-options cangyuan-image-wide-field">
+              <p className={`cangyuan-image-wide-field ${referenceCount === 1 ? "creation-hint" : "cangyuan-image-inline-warning"}`}>
+                上传一张需要拆层的图片，结果以 PNG 保存；请在下方选择需要的图层细节。
+                {referenceCount > 1 ? ` 当前有 ${referenceCount} 张参考图，请仅保留一张。` : ""}
+              </p>
               <label className="creation-field">
                 <small>分层结果上限</small>
                 <input
@@ -162,14 +168,14 @@ export default function CangyuanImageModelOptions({
                 <input
                   className="creation-field-input"
                   type="text"
-                  inputMode="numeric"
+                  inputMode={profile.seedInteger ? "numeric" : "text"}
                   value={settings.seed || ""}
                   maxLength={profile.seedMaximum ? String(profile.seedMaximum).length : undefined}
                   onChange={(event) => onChange({ ...settings, seed: event.target.value || undefined })}
                   placeholder="每次随机"
                   autoComplete="off"
                 />
-                <em>填入整数可复现相近构图</em>
+                <em>{profile.seedInteger ? "填入整数可复现相近构图" : "固定此值可复现相近构图，也可使用文字"}</em>
               </label>
             )}
 
@@ -238,9 +244,42 @@ export default function CangyuanImageModelOptions({
             {settings.outputFormat === "gif" && hasParameter("frame_duration_ms") && (
               <label className="creation-field">
                 <small>单帧时长（毫秒）</small>
-                <input className="creation-field-input" type="number" min={20} max={2000} step={10} value={settings.frameDurationMs ?? 200}
+                <input className="creation-field-input" type="number" min={20} max={profile.frameDurationMaximum ?? 2000} step={10} value={settings.frameDurationMs ?? 200}
                   onChange={(event) => onChange({ ...settings, frameDurationMs: event.target.value === "" ? undefined : Number(event.target.value) })} />
+                {profile.frameDurationMaximum === 655350 && <em>该型号 GIF 编码上限为 655,350 毫秒</em>}
               </label>
+            )}
+
+            {profile.supportsSvgOptions && settings.outputFormat === "svg" && (
+              <div className="cangyuan-image-nested-options cangyuan-image-wide-field">
+                <label className="creation-field">
+                  <small>矢量绘图思考深度</small>
+                  <SelectMenu
+                    portalZIndex={portalZIndex}
+                    value={settings.svgReasoningEffort || "default"}
+                    onChange={(value) => onChange({ ...settings, svgReasoningEffort: value === "default" ? undefined : value as NonNullable<ImageCreationSettings["svgReasoningEffort"]> })}
+                    options={[
+                      { value: "default", label: "模型默认" },
+                      { value: "none", label: "不额外推理" },
+                      { value: "minimal", label: "极简" },
+                      { value: "low", label: "较低" },
+                      { value: "medium", label: "标准" },
+                      { value: "high", label: "较高" },
+                      { value: "xhigh", label: "很高" },
+                      { value: "max", label: "最高" },
+                    ]}
+                    ariaLabel="矢量绘图思考深度"
+                  />
+                  <em>只影响 SVG 作者模型的推理强度</em>
+                </label>
+                <label className="creation-field">
+                  <small>指定矢量绘图模型</small>
+                  <input className="creation-field-input" type="text" value={settings.svgAuthorModel || ""}
+                    onChange={(event) => onChange({ ...settings, svgAuthorModel: event.target.value || undefined })}
+                    placeholder="使用默认模型" autoComplete="off" />
+                  <em>可留空使用默认；填写后按服务商可用模型名选择</em>
+                </label>
+              </div>
             )}
 
             {hasParameter("chaos") && (

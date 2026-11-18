@@ -108,12 +108,14 @@
   overflow-wrap: anywhere;
 }
 
+.field :global(.select-menu-trigger),
 .booleanField :global(.select-menu-trigger) {
   min-height: 34px;
   padding: 7px 8px;
   border-radius: 6px;
 }
 
+.field :global(.select-menu-trigger-copy),
 .booleanField :global(.select-menu-trigger-copy) {
   font-size: 10px;
 }

@@ -457,7 +457,7 @@ export default function MediaViewer({
     const anchor = document.createElement("a");
     anchor.href = item.url;
     const originalLabel = item.kind === "video" ? "原视频" : item.kind === "audio" ? "原音频" : "原图";
-    const extension = item.kind === "video" ? "mp4" : item.kind === "audio" ? "mp3" : "png";
+    const extension = item.kind === "video" ? "mp4" : item.kind === "audio" ? "mp3" : /\.svg(?:[?#]|$)/i.test(item.url) ? "svg" : "png";
     anchor.download = `${item.name || "SANMAO素材"}-${variant === "share" ? "分享版" : originalLabel}.${extension}`;
     anchor.click();
   };

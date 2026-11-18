@@ -1,6 +1,7 @@
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { isCangyuanProvider } from '@/lib/cangyuan-provider';
 import { filterModelsByActiveProviders } from '@/lib/provider-availability';
+import { isAudioTranscriptionModelId } from '@/lib/model-kind';
 
 const CANGYUAN_NON_TTS_MODELS = new Set(['mu1-muse-asr']);
 
@@ -11,5 +12,6 @@ export function supportedSpeechModels(state: PublicState | null): RegistryModel[
   const cangyuanProviderIds = new Set(state.providers.filter(isCangyuanProvider).map((provider) => provider.id));
 
   return activeSpeechModels.filter((model) =>
-    !cangyuanProviderIds.has(model.providerId) || !CANGYUAN_NON_TTS_MODELS.has(model.rawId.trim().toLowerCase()));
+    !model.capabilities.includes('transcription') && !isAudioTranscriptionModelId(model.rawId)
+    && (!cangyuanProviderIds.has(model.providerId) || !CANGYUAN_NON_TTS_MODELS.has(model.rawId.trim().toLowerCase())));
 }

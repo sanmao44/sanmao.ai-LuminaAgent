@@ -17,7 +17,7 @@ import {
   type VideoCreationSettings,
   type VideoInputMode,
 } from "@/lib/creation/settings";
-import { resolveAvailableCreationModel } from "@/lib/creation/settings";
+import { normalizeImageCreationSettings, resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getCangyuanImageModelProfile } from "@/lib/cangyuan-image-capabilities";
 import { isCangyuanProvider } from "@/lib/cangyuan-provider";
 import { getCangyuanVideoModelProfile } from "@/lib/cangyuan-video-capabilities";
@@ -209,6 +209,17 @@ function ImageEditor({
       ...(needsPng && supportsPng ? { outputFormat: "png" as const } : {}),
     });
   };
+  const updateImageOutputFormat = (value: string) => {
+    const outputFormat = value as ImageCreationSettings["outputFormat"];
+    onChange({
+      ...settings,
+      outputFormat,
+      ...(outputFormat === "svg" ? { count: 1 } : {}),
+      ...(outputFormat === "svg" || outputFormat === "gif" || outputFormat === "png"
+        ? { outputCompression: undefined }
+        : {}),
+    });
+  };
   const updateImageModel = (modelId: string) => {
     const nextSettings = { ...settings, model: modelId };
     const nextModel = resolveAvailableCreationModel(nextSettings, runtime).model;
@@ -241,7 +252,7 @@ function ImageEditor({
           ? settings.enablePromptExpansion ?? profile.promptExpansionDefault ?? true
           : undefined,
         style: profile?.supportsStyle ? settings.style : undefined,
-        negativePrompt: profile?.supportsNegativePrompt ? settings.negativePrompt : undefined,
+        negativePrompt: profile?.supportsNegativePrompt || profile?.supportsNoParameter ? settings.negativePrompt : undefined,
         layerDecomposition: profile?.supportsLayerDecomposition ? settings.layerDecomposition : undefined,
         layerMaxImages: profile?.supportsLayerDecomposition ? settings.layerMaxImages : undefined,
         layerTextRecognition: profile?.supportsLayerDecomposition ? settings.layerTextRecognition : undefined,
@@ -256,10 +267,13 @@ function ImageEditor({
           ? "auto"
           : settings.backgroundMode,
       };
-      onChange(selectedSize ? withCangyuanSize(nextModelSettings, selectedSize, profile) : nextModelSettings);
+      onChange(normalizeImageCreationSettings(
+        selectedSize ? withCangyuanSize(nextModelSettings, selectedSize, profile) : nextModelSettings,
+        runtime,
+      ));
       return;
     }
-    onChange({
+    onChange(normalizeImageCreationSettings({
       ...nextSettings,
       count: Math.min(settings.count, 8),
       quality: IMAGE_QUALITY_OPTIONS.some((option) => option.value === settings.quality) ? settings.quality : "自动",
@@ -278,7 +292,7 @@ function ImageEditor({
       watermark: undefined,
       safetyIdentifier: undefined,
       markupImage: undefined,
-    });
+    }, runtime));
   };
   const cangyuanSizeSelect = cangyuanSizeSuggestions.length > 0 ? (
     <SelectMenu
@@ -392,8 +406,9 @@ function ImageEditor({
         cangyuanWarnings.push("当前输出格式不受所选模型支持，请选择文档列出的格式。");
       }
       if (settings.backgroundMode === "api-transparent" && !cangyuanProfile.backgroundEnum.includes("transparent")) cangyuanWarnings.push("该模型不支持 API 透明背景；可改用本地透明处理。");
-      if (settings.layerDecomposition && settings.count !== 1) cangyuanWarnings.push("分层输出每次只能生成 1 张图片。");
+      if (settings.layerDecomposition && referenceCount !== 1) cangyuanWarnings.push("分层输出需要恰好一张参考图片，请只保留一张需要拆层的图片。");
       if (settings.layerDecomposition && settings.backgroundMode === "api-transparent") cangyuanWarnings.push("分层输出不能与 API 透明背景同时使用。");
+      if (settings.outputFormat === "svg" && settings.mask) cangyuanWarnings.push("SVG 仅支持文生图，不支持蒙版或改图；请移除蒙版或改用 PNG。");
       if (settings.markupImage && referenceCount < 1) cangyuanWarnings.push("透明标记图需要至少 1 张参考图。");
       if (settings.markupImage && settings.mask) cangyuanWarnings.push("透明标记图不能与蒙版同时使用。");
       if (settings.backgroundMode === "opaque" && !cangyuanProfile.backgroundEnum.includes("opaque")) cangyuanWarnings.push("该模型不支持指定不透明背景，请改用自动背景。");
@@ -538,7 +553,7 @@ function ImageEditor({
                 <SelectMenu
                   portalZIndex={portalZIndex}
                   value={settings.outputFormat}
-                  onChange={(value) => update("outputFormat", value)}
+                  onChange={updateImageOutputFormat}
                 options={imageFormatOptions}
                   ariaLabel="输出格式"
                 />
@@ -715,7 +730,7 @@ function ImageEditor({
                       <SelectMenu
                         portalZIndex={portalZIndex}
                         value={settings.outputFormat}
-                        onChange={(value) => update("outputFormat", value)}
+                        onChange={updateImageOutputFormat}
                         options={imageFormatOptions}
                         ariaLabel="输出格式"
                       />
@@ -946,7 +961,7 @@ function ImageEditor({
             <SelectMenu
               portalZIndex={portalZIndex}
               value={settings.outputFormat}
-              onChange={(value) => update("outputFormat", value)}
+              onChange={updateImageOutputFormat}
               options={imageFormatOptions}
               ariaLabel="输出格式"
             />

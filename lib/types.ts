@@ -95,6 +95,7 @@ export type ModelCapability =
   | 'upscale'
   | 'fast'
   | 'speech'
+  | 'transcription'
   | 'music-generate'
   | '3d-generate'
   | 'web-search'

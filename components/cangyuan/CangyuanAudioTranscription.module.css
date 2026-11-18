@@ -1,0 +1,19 @@
+.fileInput{display:none}
+.upload{display:grid;gap:6px;justify-items:center;min-width:0;padding:22px 14px;border:1px dashed var(--line);border-radius:7px;background:var(--panel-2);color:var(--text-2);font:inherit;cursor:pointer;text-align:center}
+.upload:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
+.upload strong{max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:12px;overflow-wrap:anywhere}
+.upload span{font-size:10px;color:var(--muted);line-height:1.5}
+.upload:disabled{opacity:.6;cursor:wait}
+.details{min-width:0;border-top:1px solid var(--line);padding-top:10px;font-size:11px}
+.details summary{cursor:pointer;color:var(--text-2);font-weight:650}
+.advanced{display:grid;gap:12px;margin-top:12px}
+.temperature{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;color:var(--text-2);font-size:10px}
+.temperature input{grid-column:1;grid-row:2;min-width:0;width:100%;margin:0;accent-color:var(--accent)}
+.temperature output{grid-column:2;grid-row:2;min-width:42px;text-align:right;color:var(--muted)}
+.temperature small{grid-column:1/-1;color:var(--muted);font-size:10px;font-weight:400}
+.result{min-width:0}
+.transcript{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text);font-size:12px;line-height:1.8;user-select:text}
+.segments{display:grid;gap:9px;margin:12px 0 0;padding:0;list-style:none}
+.segments li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;line-height:1.6}
+.segments time{color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.segments span{overflow-wrap:anywhere;color:var(--text-2);font-size:11px}

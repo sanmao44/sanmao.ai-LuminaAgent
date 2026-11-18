@@ -8,6 +8,17 @@ const load = createTsRequire(process.cwd(), {
   './CangyuanVideoModelParameters.module.css': {
     panel: 'panel', heading: 'heading', grid: 'grid', field: 'field', booleanField: 'booleanField', wideField: 'wideField',
   },
+  './CangyuanSuggestionInput.module.css': { control: 'suggestion-control', open: 'open', menu: 'suggestion-menu', option: 'suggestion-option', active: 'active', selected: 'selected', empty: 'empty' },
+  '@/components/cangyuan/CangyuanSuggestionInput': {
+    __esModule: true,
+    default: ({ value, options, ariaLabel }) => {
+      const selected = options.find((option) => option.value === value);
+      return createElement('div', { 'aria-label': ariaLabel },
+        createElement('input', { value: selected?.label ?? value, readOnly: true }),
+        ...options.map((option) => createElement('span', { key: option.value }, option.label)),
+      );
+    },
+  },
   '@/components/SelectMenu': {
     __esModule: true,
     default: ({ value, options, ariaLabel }) => createElement('select', { 'aria-label': ariaLabel, value: String(value), onChange: () => undefined },
@@ -15,6 +26,8 @@ const load = createTsRequire(process.cwd(), {
   },
 });
 const CangyuanVideoModelParameters = load('./components/cangyuan/CangyuanVideoModelParameters').default;
+const { getCangyuanVideoParameterSuggestions } = load('./lib/cangyuan-video-model-catalog');
+const { getCangyuanSuggestionWireValue } = load('./components/cangyuan/CangyuanSuggestionInput');
 
 test('video model settings render documented field types with localized labels', () => {
   const spec = {
@@ -73,4 +86,28 @@ test('video model help text hides raw API keys and presents localized guidance',
   assert.match(markup, /向左摇镜、推近、环绕/);
   assert.match(markup, /不确定时保留模型默认值/);
   assert.doesNotMatch(markup, /duration。|pan_left|zoom_in|asset_id|asset:\/\/|Active/);
+});
+
+test('Muse controls present documented recommendations in Chinese and keep official wire values', () => {
+  const spec = {
+    publicModel: 'mu1-muse-video',
+    params: [
+      { name: 'style_preset', type: 'string', description: 'cinematic_realistic、2d_anime、3d_xianxia。' },
+      { name: 'camera_movement', type: 'string', description: '例如 pan_left、zoom_in、orbit、tracking_shot、static。' },
+      { name: 'language', type: 'string', description: '例如 zh 中文、en 英文。' },
+      { name: 'voices', type: 'string', description: 'alloy、aria、coral 是清亮女声，nova、shimmer、sage 是温暖女声，echo、helio、onyx 是沉稳男声，fable 是叙事男声。' },
+    ],
+  };
+  const values = { style_preset: 'cinematic_realistic', camera_movement: 'pan_left', language: 'zh', voices: 'alloy' };
+  const markup = renderToStaticMarkup(createElement(CangyuanVideoModelParameters, { spec, values, onChange: () => undefined }));
+
+  for (const label of ['电影写实', '向左摇镜', '中文', '清亮女声一']) assert.match(markup, new RegExp(label));
+  assert.match(markup, /value="电影写实"/);
+  assert.doesNotMatch(markup, /cinematic_realistic|pan_left|alloy/);
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[0]), '电影写实'), 'cinematic_realistic');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[1]), '向左摇镜'), 'pan_left');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[2]), '中文'), 'zh');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '清亮女声一'), 'alloy');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[3]), '清亮女声一，叙事男声', true), 'alloy,fable');
+  assert.equal(getCangyuanSuggestionWireValue(getCangyuanVideoParameterSuggestions(spec.params[0]), '我的自定义画风'), '我的自定义画风');
 });

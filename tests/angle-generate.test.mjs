@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 const angleSource = await readFile(new URL('../lib/angle-control.ts', import.meta.url), 'utf8');
 const modelSelectionSource = await readFile(new URL('../lib/model-selection.ts', import.meta.url), 'utf8');
 const routeSource = await readFile(new URL('../app/api/generate/route.ts', import.meta.url), 'utf8');
+const creativeContract = createTsRequire(process.cwd())('./packages/contracts/creative');
 function load(source, dependencies = {}) {
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -36,7 +38,9 @@ function harness(options = {}) {
       resolveCanvasImageRequestIntent: async input => {
         calls.intentInputs.push(input);
         if (options.intentResolution) return options.intentResolution;
-        return input.isCanvasRequest
+        return input.hasMask
+          ? { operation: 'edit', classifierStatus: 'used' }
+          : input.isCanvasRequest
           ? { operation: 'reference-generate', classifierStatus: 'used', classifierModelId: 'jev-runtime', classifierMs: 12 }
           : { operation: input.imageReferenceCount ? 'reference-generate' : 'generate', ...(input.imageReferenceCount ? { classifierStatus: 'unavailable' } : {}) };
       },
@@ -104,7 +108,10 @@ function harness(options = {}) {
         return operation(initial);
       },
     },
-    '@/packages/contracts/creative': { MAX_IMAGE_REFERENCES: 16 },
+    '@/packages/contracts/creative': {
+      MAX_IMAGE_REFERENCES: 16,
+      parseImageModelParameters: creativeContract.parseImageModelParameters,
+    },
   });
   return {
     calls,
@@ -295,6 +302,45 @@ test('Canvas JEV edit decision routes linked image to edit capability and endpoi
   assert.deepEqual(api.calls.modelLookups, ['auto']);
   assert.equal(api.calls.capabilityLookups.length, 0);
   assert.equal(api.calls.logs[0].operation, 'edit');
+});
+
+test('automatic image operation treats a Cangyuan transparent markup image as an edit input', async () => {
+  const cangyuanRuntime = {
+    provider: { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan' },
+    model: { id: 'cangyuan-image', rawId: 'gpt-image-2.5-flare-o', displayName: 'GPT Image', capabilities: ['generate', 'edit', 'reference'] },
+  };
+  const api = harness({ runtime: cangyuanRuntime, editImages: [{ url: '/marked-edit.png' }] });
+  const markupImage = 'data:image/png;base64,bWFya3Vw';
+  const response = await api.post({
+    source: 'canvas', imageOperation: 'auto', prompt: '在标记区域增加物体',
+    references: [reference], markupImage,
+  });
+  const body = await response.json();
+
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.operation, 'edit');
+  assert.equal(api.calls.intentInputs[0].hasMask, true);
+  assert.equal(api.calls.edits[0].markupImage, markupImage);
+  assert.equal(api.calls.generations.length, 0);
+});
+
+test('image generation forwards parsed Cangyuan-only controls to the provider boundary', async () => {
+  const cangyuanRuntime = {
+    provider: { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan' },
+    model: { id: 'cangyuan-image', rawId: 'mu1-muse-image', displayName: 'Muse Image', capabilities: ['generate', 'edit', 'reference'] },
+  };
+  const api = harness({ runtime: cangyuanRuntime, generationImages: [{ url: '/generated.png' }] });
+  const response = await api.post({
+    imageOperation: 'generate', prompt: '暖色窗台', model: 'cangyuan-image',
+    seed: '42', style: '柔和电影光', negativePrompt: '文字、水印',
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual({
+    seed: api.calls.generations[0].seed,
+    style: api.calls.generations[0].style,
+    negativePrompt: api.calls.generations[0].negativePrompt,
+  }, { seed: '42', style: '柔和电影光', negativePrompt: '文字、水印' });
 });
 
 test('uncertain JEV decisions conservatively use connected references for a new image', async () => {
@@ -491,6 +537,9 @@ test('image edit keeps a provider image successful when local post-processing fa
         normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
         normalizeStarApiLandscapeImages: async () => { throw new Error('本地后处理失败'); },
       },
+      '@/packages/contracts/creative': {
+        parseImageModelParameters: creativeContract.parseImageModelParameters,
+      },
       '@/packages/model-runtime/media': {
         invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),
       },
@@ -552,6 +601,9 @@ test('image edit does not return or persist an unmasked provider image when mask
     '@/lib/image-orientation': {
       normalizeStarApiLandscapePrompt: (_provider, _model, prompt) => prompt,
       normalizeStarApiLandscapeImages: async (_provider, _model, _input, images) => images,
+    },
+    '@/packages/contracts/creative': {
+      parseImageModelParameters: creativeContract.parseImageModelParameters,
     },
     '@/packages/model-runtime/media': {
       invokeMediaModelCandidates: async (initial, _loadFallbacks, operation) => operation(initial),

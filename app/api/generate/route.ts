@@ -215,7 +215,7 @@ export async function POST(request: Request) {
           isCanvasRequest: sourceForLog === 'canvas',
           prompt: baseGenerationPrompt,
           imageReferenceCount: references.length,
-          hasMask: Boolean(mask || moveGuide || camera),
+          hasMask: Boolean(mask || moveGuide || camera || rawMarkupImage),
           signal: requestController.signal,
         })
       : {
@@ -233,9 +233,6 @@ export async function POST(request: Request) {
     }
     if (imageOperation === 'edit' && !references.length) {
       return Response.json({ error: '改图操作至少需要一张图片参考。' }, { status: 400 });
-    }
-    if (rawMarkupImage && runtime.provider.platform !== 'cangyuan') {
-      return Response.json({ error: '透明标记图仅支持已确认兼容的沧元图片型号。' }, { status: 400 });
     }
     if (rawMarkupImage && mask) {
       return Response.json({ error: '透明标记图不能与蒙版同时使用。' }, { status: 400 });
@@ -263,6 +260,9 @@ export async function POST(request: Request) {
             ? '当前选中的图片模型不可用或不支持生图。'
             : '没有可用的生图模型。请先到“模型库”勾选一个图片模型。';
       return Response.json({ error }, { status: 400 });
+    }
+    if (rawMarkupImage && runtime.provider.platform !== 'cangyuan') {
+      return Response.json({ error: '透明标记图仅支持已确认兼容的沧元图片型号。' }, { status: 400 });
     }
     runtimeProviderId = runtime.provider.id;
     const sizeMode: 'system' | 'custom' | undefined = body.sizeMode === 'custom' ? 'custom' : body.sizeMode === 'system' ? 'system' : undefined;

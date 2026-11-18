@@ -97,8 +97,8 @@ test('music payload rejects unprofiled models, unsupported fields, and values ou
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', n: 2 }), /n 目前只支持 1/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', duration: 9 }), /10–360/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', styleWeight: 1.1 }), /0–1/);
-  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', version: 'v5' }), /version 必须/);
-  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', vocalGender: 'x' }), /vocalGender 必须/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', version: '  ' }), /生成版本不能为空/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', vocalGender: '  ' }), /人声类型不能为空/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', referenceImage: 'https://example.test/a.png' }), /未支持的音乐参数/);
   assert.throws(() => provider.buildCangyuanMusicPayload('su2-suno-v6', { prompt: 'Song', sourceTaskId: 'job-1' }), /不支持这些音乐参数/);
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-v6', { prompt: 'Song', sourceTaskId: 'job-1' }), /不支持这些音乐参数/);
@@ -117,6 +117,29 @@ test('music payload rejects unprofiled models, unsupported fields, and values ou
   assert.throws(() => provider.buildCangyuanMusicPayload('suno-cover-audio', {
     prompt: 'cover', sourceTaskId: 'job-1', sourceTrack: 12,
   }), /sourceTrack 必须是 0–11/);
+});
+
+test('Suno music suggestions remain open to server-supported values', () => {
+  assert.deepEqual(provider.buildCangyuanMusicPayload('suno-v6', {
+    prompt: 'Song', version: ' future-v7 ', vocalGender: ' future-voice ',
+  }), { model: 'suno-v6', prompt: 'Song', n: 1, version: 'future-v7', vocalGender: 'future-voice' });
+  assert.deepEqual(provider.buildCangyuanMusicPayload('suno-stem', {
+    audioUrl: 'https://cdn.example.test/track.wav', stemType: ' future-separation ',
+  }), { model: 'suno-stem', n: 1, audio_url: 'https://cdn.example.test/track.wav', type: 'future-separation' });
+});
+
+test('cover audio rejects unlisted source audio ids and retains the documented track selection', () => {
+  assert.throws(() => provider.buildCangyuanMusicPayload('suno-cover-audio', {
+    prompt: 'Cover', sourceTaskId: 'job-1', sourceAudioId: 'audio-1',
+  }), /不支持这些音乐参数.*sourceAudioId/);
+  const payload = provider.buildCangyuanMusicPayload('suno-cover-audio', {
+    prompt: 'Cover', sourceTaskId: 'job-1', sourceTrack: 0,
+  });
+  assert.equal(payload.source_track, 0);
+  assert.equal('source_audio_id' in payload, false);
+  assert.equal(provider.buildCangyuanMusicPayload('suno-midi', {
+    sourceTaskId: 'job-1', sourceAudioId: 'audio-1',
+  }).source_audio_id, 'audio-1');
 });
 
 test('Suno persona requires and maps its documented extraction fields', () => {

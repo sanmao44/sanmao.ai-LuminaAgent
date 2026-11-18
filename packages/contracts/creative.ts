@@ -81,6 +81,7 @@ export const MAX_IMAGE_REFERENCES = 16;
 export const MAX_CREATIVE_PROJECT_REFERENCE_ASSETS = 8;
 export type CreativeExecution = 'none' | 'preview' | 'run';
 export type ImageOutputFormat = 'png' | 'jpeg' | 'webp' | 'gif' | 'svg';
+export type ImageSvgReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 /** Optional image model controls forwarded only when the selected model documents them. */
 export type ImageModelParameters = {
@@ -103,6 +104,8 @@ export type ImageModelParameters = {
   complexity?: 'low' | 'medium' | 'high';
   frameCount?: number;
   frameDurationMs?: number;
+  svgAuthorModel?: string;
+  svgReasoningEffort?: ImageSvgReasoningEffort;
   chaos?: number;
   experimentalStyle?: number;
   hd?: boolean;
@@ -131,6 +134,7 @@ export function parseImageModelParameters(value: unknown): ImageModelParametersP
   const strings: ReadonlyArray<[keyof ImageModelParameters, string]> = [
     ['resolution', '输出清晰度'], ['tier', '生成档位'], ['series', '图片系列'], ['seed', '随机种子'],
     ['style', '风格偏好'], ['negativePrompt', '排除内容'], ['safetyIdentifier', '安全追踪标识'], ['markupImage', '透明标记图'],
+    ['svgAuthorModel', '矢量绘图模型'],
   ];
   for (const [key, label] of strings) {
     const current = source[key];
@@ -144,6 +148,7 @@ export function parseImageModelParameters(value: unknown): ImageModelParametersP
     else if (key === 'negativePrompt') result.negativePrompt = current;
     else if (key === 'safetyIdentifier') result.safetyIdentifier = current;
     else if (key === 'markupImage') result.markupImage = current;
+    else if (key === 'svgAuthorModel') result.svgAuthorModel = current.trim();
   }
 
   const booleans: ReadonlyArray<[keyof ImageModelParameters, string]> = [
@@ -193,6 +198,12 @@ export function parseImageModelParameters(value: unknown): ImageModelParametersP
   if (source.complexity !== undefined && source.complexity !== null) {
     if (source.complexity !== 'low' && source.complexity !== 'medium' && source.complexity !== 'high') return invalid('构图规划');
     result.complexity = source.complexity;
+  }
+  if (source.svgReasoningEffort !== undefined && source.svgReasoningEffort !== null) {
+    const effort = source.svgReasoningEffort;
+    if (effort !== 'none' && effort !== 'minimal' && effort !== 'low' && effort !== 'medium'
+      && effort !== 'high' && effort !== 'xhigh' && effort !== 'max') return invalid('矢量绘图思考深度');
+    result.svgReasoningEffort = effort;
   }
   if (source.referenceMode !== undefined && source.referenceMode !== null) {
     if (source.referenceMode !== 'image' && source.referenceMode !== 'style' && source.referenceMode !== 'edit'

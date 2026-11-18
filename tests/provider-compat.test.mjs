@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import sharp from 'sharp';
 import { createTsRequire } from './ts-require.mjs';
 
 const sourceUrl = new URL('../lib/providers.ts', import.meta.url);
@@ -13,7 +14,8 @@ const modelKind = await readFile(new URL('../lib/model-kind.ts', import.meta.url
 const detectionUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detection = await readFile(detectionUrl, 'utf8');
 globalThis.__providerImageReferenceReaderModule = createTsRequire(process.cwd())('./lib/provider-image-reference-reader');
-const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;')}`;
+globalThis.__providerCompatSharp = sharp;
+const bundledSource = `${detection.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${modelKind}\n${agnes.replace(/^import .+;\r?\n/gm, '')}\n${cangyuanCapabilities}\n${cangyuanProvider}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '').replace("import { inferModelKind } from './model-kind';", '').replace("import { agnesModelCatalog } from './agnes';", '').replace("import { getCangyuanImageModelProfile } from './cangyuan-image-capabilities';", '').replace("import { isCangyuanProvider } from './cangyuan-provider';", '').replace("import { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } from './provider-image-reference-reader';", 'const { isPublicImageAddress, providerImageReferenceReader, PROVIDER_IMAGE_REFERENCE_MAX_BYTES } = globalThis.__providerImageReferenceReaderModule;').replace("import { MAX_IMAGE_REFERENCES } from '@/packages/contracts/creative';", 'const MAX_IMAGE_REFERENCES = 16;').replace("import sharp from 'sharp';", 'const sharp = globalThis.__providerCompatSharp;')}`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: {
     module: ts.ModuleKind.ESNext,
@@ -23,6 +25,7 @@ const compiled = ts.transpileModule(bundledSource, {
 }).outputText;
 const providers = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 delete globalThis.__providerImageReferenceReaderModule;
+delete globalThis.__providerCompatSharp;
 const presetSource = await readFile(new URL('../lib/provider-presets.ts', import.meta.url), 'utf8');
 const pageSource = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
 const providerPickerSource = await readFile(new URL('../components/ProviderPlatformPicker.tsx', import.meta.url), 'utf8');
@@ -1179,6 +1182,7 @@ test('Cangyuan image generation and edits upload signed reference bytes and poll
   try {
     const generated = await providers.generateImage(provider, 'ax-gpt-image-2.6-flare', {
       prompt: '雾中群山', count: 1, aspectRatio: '16:9', resolution: '2K', quality: 'xhigh', outputFormat: 'gif', background: 'transparent', references: [reference],
+      seed: '42', frameCount: 8, frameDurationMs: 120,
     });
     const edited = await providers.editImage(provider, 'ax-gpt-image-2.6-flare', {
       prompt: '给主体增加柔和的轮廓光', references: [reference], mask: reference, count: 1, aspectRatio: '1:1', resolution: '1K', quality: 'max', outputFormat: 'webp', background: 'auto',
@@ -1206,6 +1210,7 @@ test('Cangyuan image generation and edits upload signed reference bytes and poll
     assert.deepEqual(JSON.parse(generationCall.init.body), {
       model: 'ax-gpt-image-2.6-flare', prompt: '雾中群山', async: true,
       size: '2K', aspect_ratio: '16:9', quality: 'xhigh', output_format: 'gif', background: 'transparent',
+      seed: 42, frame_count: 8, frame_duration_ms: 120,
       images: ['https://cdn.example.test/reference-1.png'],
     });
     const editCall = calls.find((call) => call.url.endsWith('/v1/images/edits'));
