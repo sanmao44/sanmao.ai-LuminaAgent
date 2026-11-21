@@ -19,10 +19,10 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
   const sampleUrl = sample?.url || '';
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playRequestRef = useRef(0);
-  const [playing, setPlaying] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle');
 
   useEffect(() => {
-    setPlaying(false);
+    setStatus('idle');
     return () => {
       playRequestRef.current += 1;
       const audio = audioRef.current;
@@ -37,7 +37,7 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
   }, [sampleUrl]);
 
   if (!sample) {
-    return <span className="voice-sample-unavailable" title="当前模型与服务商暂无对应样音">暂无样音</span>;
+    return <span className="voice-sample-unavailable" title="尚未生成与当前模型和音色严格对应的本地样音，不会使用其他音色替代">样音待生成</span>;
   }
   function stopCurrent() {
     const previousAudio = activeAudio;
@@ -57,17 +57,25 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       const createdAudio = new Audio(sampleUrl);
       createdAudio.preload = 'metadata';
       createdAudio.addEventListener('playing', () => {
-        if (activeAudio === createdAudio) setPlaying(true);
+        if (activeAudio === createdAudio) setStatus('playing');
       });
       createdAudio.addEventListener('pause', () => {
-        if (activeAudio === createdAudio) setPlaying(false);
+        if (activeAudio === createdAudio) setStatus('idle');
+      });
+      createdAudio.addEventListener('error', () => {
+        if (activeAudio === createdAudio) {
+          activeAudio = null;
+          activeStop = null;
+          audioRef.current = null;
+          setStatus('error');
+        }
       });
       createdAudio.addEventListener('ended', () => {
         if (activeAudio !== createdAudio) return;
         activeAudio = null;
         activeStop = null;
         createdAudio.currentTime = 0;
-        setPlaying(false);
+        setStatus('idle');
       });
       audio = createdAudio;
       audioRef.current = createdAudio;
@@ -77,13 +85,14 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       activeStop = null;
       audio.pause();
       audio.currentTime = 0;
-      setPlaying(false);
+      setStatus('idle');
       return;
     }
     stopCurrent();
     if (audio.ended) audio.currentTime = 0;
     activeAudio = audio;
-    activeStop = () => setPlaying(false);
+    activeStop = () => setStatus('idle');
+    setStatus('loading');
     const playRequest = ++playRequestRef.current;
     try {
       await audio.play();
@@ -91,15 +100,17 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       if (playRequestRef.current === playRequest && activeAudio === audio) {
         activeAudio = null;
         activeStop = null;
-        setPlaying(false);
+        audioRef.current = null;
+        setStatus('error');
       }
     }
   }
 
-  const label = playing ? '暂停样音' : '播放样音';
+  const playing = status === 'playing';
+  const label = playing ? '暂停样音' : status === 'error' ? '重试样音' : '播放样音';
   if (optionAction) {
     return <span
-      className={`voice-sample-button voice-sample-option-action${playing ? ' playing' : ''}`}
+      className={`voice-sample-button voice-sample-option-action${playing ? ' playing' : ''}${status === 'error' ? ' error' : ''}`}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -109,9 +120,9 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') void toggle(event);
       }}
-    >{playing ? '暂停' : '试听'}</span>;
+    >{playing ? '暂停' : status === 'error' ? '重试' : status === 'loading' ? '加载中' : '试听'}</span>;
   }
-  return <button type="button" className={`voice-sample-button${compact ? ' compact' : ''}${playing ? ' playing' : ''}`} onClick={(event) => void toggle(event)} title={`${label}（不消耗额度）`}>{playing ? '暂停样音' : '播放样音'}</button>;
+  return <button type="button" className={`voice-sample-button${compact ? ' compact' : ''}${playing ? ' playing' : ''}${status === 'error' ? ' error' : ''}`} onClick={(event) => void toggle(event)} title={status === 'error' ? '样音加载失败，请检查当前服务是否包含样音资源后重试' : `${label}（不消耗额度）`} disabled={status === 'loading'}>{playing ? '暂停样音' : status === 'error' ? '重试样音' : status === 'loading' ? '加载中' : '播放样音'}</button>;
 }
 
 export { SAMPLE_TEXT as SPEECH_SAMPLE_TEXT } from './voice-samples';

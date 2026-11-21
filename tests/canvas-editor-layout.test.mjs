@@ -62,35 +62,6 @@ test("scales every node editor family inversely with canvas zoom within readable
   }
 });
 
-test("pans enough to reveal a below-node editor even when its node reaches the viewport top", () => {
-  assert.equal(layout.canvasNodeEditorPanDelta(700, 856), 0);
-  assert.equal(layout.canvasNodeEditorPanDelta(936, 856), 92);
-  assert.equal(layout.canvasNodeEditorPanDelta(940, 720), 232);
-  assert.equal(layout.canvasNodeEditorPanDelta(800, 720), 92);
-});
-
-test("keeps a tall below-node editor in the viewport when the node must move above it", () => {
-  const viewportHeight = 812;
-  const anchor = { left: 320, top: 60, width: 220, height: 150 };
-  const size = { width: 620, height: 700 };
-  const editor = layout.placeCanvasNodeEditor(anchor, { width: 1440, height: viewportHeight }, size);
-  const panDelta = layout.canvasNodeEditorPanDelta(editor.top + size.height, viewportHeight);
-  const shiftedAnchor = { ...anchor, top: anchor.top - panDelta };
-  const shiftedEditor = layout.placeCanvasNodeEditor(shiftedAnchor, { width: 1440, height: viewportHeight }, size);
-
-  assert.ok(shiftedAnchor.top < 0, "the node can move above the viewport when required");
-  assert.ok(shiftedEditor.top > shiftedAnchor.top + shiftedAnchor.height, "the editor remains below its node");
-  assert.ok(shiftedEditor.top + size.height <= viewportHeight - 12, "the full editor remains visible");
-});
-
-test("recalculates upward pan when fit-all moves an open editor below the viewport", () => {
-  const panDelta = layout.canvasNodeEditorPanDelta(1110, 856, 12);
-
-  assert.equal(panDelta, 266);
-  assert.equal(1110 - panDelta, 844);
-  assert.equal(583 - panDelta, 317);
-});
-
 test("keeps the editor below a near-edge node and lets it extend past the viewport", () => {
   const anchor = { left: 300, top: 790, width: 380, height: 160 };
   const viewport = { width: 1280, height: 1000 };

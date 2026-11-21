@@ -27,7 +27,7 @@ test('Muse TTS labels explain documented voice groups without changing request I
     '埃科（沉稳男声）', '赫利奥（沉稳男声）', '奥尼克斯（沉稳男声）', '费布尔（叙事男声）',
   ]);
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
-  assert.equal(options.find(({ value }) => value === 'sage')?.description, '该音色暂无样音');
+  assert.equal(options.find(({ value }) => value === 'sage')?.description, '对应音色样音待生成');
   assert.equal(options.find(({ value }) => value === 'alloy')?.description, '可播放本地样音，不消耗额度');
 });
 
@@ -49,5 +49,5 @@ test('voice options do not advertise Cangyuan samples for another provider', () 
   const profile = contracts.getSpeechModelProfile('gemini-tts', 'cangyuan');
   const options = voiceOptions.speechVoiceOptions(profile, 'other-provider');
 
-  assert.ok(options.every(({ description }) => description === '该音色暂无样音'));
+  assert.ok(options.every(({ description }) => description === '对应音色样音待生成'));
 });

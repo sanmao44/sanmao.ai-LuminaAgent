@@ -82,6 +82,7 @@ async function main() {
 
   const origin = String(argumentValue('--origin', process.env.SANMAO_AUDIO_SAMPLE_API_ORIGIN || 'http://127.0.0.1:3213')).replace(/\/+$/, '');
   const concurrency = Math.min(4, parsePositiveInteger('--concurrency', 2));
+  const useDefaultFormat = process.argv.includes('--default-format');
   const modelFilter = argumentValue('--model', null);
   const selectedModels = modelFilter ? MODELS.filter((model) => model.id === modelFilter) : MODELS;
   if (!selectedModels.length) throw new Error(`Unknown MiniMax TTS model: ${modelFilter}`);
@@ -176,7 +177,7 @@ async function main() {
         text: PREVIEW_TEXT,
         modelId: model.registryId,
         voiceId: voice.voiceId,
-        format: 'mp3',
+        ...(!useDefaultFormat ? { format: 'mp3' } : {}),
       }),
     });
     if (!response.ok) {
@@ -186,6 +187,9 @@ async function main() {
     const contentType = response.headers.get('content-type')?.split(';', 1)[0] || '';
     if (responseModelId !== model.registryId || !contentType.startsWith('audio/')) {
       throw new Error(`Response identity or audio type did not match ${model.id}/${voice.voiceId}; stopped without retry.`);
+    }
+    if (useDefaultFormat && contentType !== 'audio/mpeg') {
+      throw new Error(`The documented default format returned ${contentType || 'an unknown audio type'} for ${model.id}/${voice.voiceId}; refusing to save it as MP3.`);
     }
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length < 128) throw new Error(`Audio payload was too small for ${model.id}/${voice.voiceId}; stopped without retry.`);

@@ -1,4 +1,5 @@
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
+import { isCangyuanProvider } from '../cangyuan-provider';
 import type { SpeechVoiceListInput, SpeechVoiceRecord, SpeechVoiceRegistrationInput } from '../../packages/contracts/audio-voice-registration';
 
 export class CangyuanSpeechVoiceError extends Error {
@@ -16,8 +17,11 @@ export type SpeechVoiceRuntime = {
   model: { rawId: string };
 };
 
-export function speechVoicesEndpoint(provider: RuntimeProvider) {
-  const base = runtimeBaseUrl(provider).replace(/\/+$/, '');
+export function speechVoicesEndpoint(provider: RuntimeProvider, modelId = '') {
+  let base = runtimeBaseUrl(provider).replace(/\/+$/, '');
+  if (isCangyuanProvider(provider) && /^minimax-speech-2\.8-(?:hd|turbo)-tts$/i.test(modelId)) {
+    base = base.replace(/^https:\/\/ai\.cangyuansuanli\.cn(?=\/|$)/i, 'https://direct-api.cangyuansuanli.cn');
+  }
   return /\/v1$/i.test(base) ? `${base}/audio/voices` : `${base}/v1/audio/voices`;
 }
 
@@ -98,7 +102,7 @@ export async function registerCangyuanSpeechVoice(
 ): Promise<SpeechVoiceRecord> {
   let response: Response;
   try {
-    response = await fetch(speechVoicesEndpoint(runtime.provider), {
+    response = await fetch(speechVoicesEndpoint(runtime.provider, runtime.model.rawId), {
       method: 'POST',
       headers: { ...authHeaders(runtime.provider), 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -126,7 +130,7 @@ export async function listCangyuanSpeechVoices(
   input: SpeechVoiceListInput,
   signal?: AbortSignal,
 ): Promise<readonly SpeechVoiceRecord[]> {
-  const url = new URL(speechVoicesEndpoint(runtime.provider));
+  const url = new URL(speechVoicesEndpoint(runtime.provider, runtime.model.rawId));
   url.searchParams.set('model', input.registrationModel);
   let response: Response;
   try {
@@ -151,7 +155,7 @@ export async function previewCangyuanSpeechVoice(
   signal?: AbortSignal,
 ): Promise<{ body: ArrayBuffer; contentType: string }> {
   let target: URL;
-  const voicesUrl = new URL(speechVoicesEndpoint(runtime.provider));
+  const voicesUrl = new URL(speechVoicesEndpoint(runtime.provider, runtime.model.rawId));
   try {
     target = new URL(previewUrl);
   } catch {

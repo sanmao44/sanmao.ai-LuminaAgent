@@ -397,10 +397,15 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       if (speechUrlRef.current) URL.revokeObjectURL(speechUrlRef.current);
       speechUrlRef.current = persistedUrl ? '' : url;
       const extension = response.headers.get('X-Audio-Extension') || 'mp3';
+      const encodedModelName = response.headers.get('X-Audio-Model');
+      let modelName = encodedModelName || speechModel.displayName;
+      if (encodedModelName) {
+        try { modelName = decodeURIComponent(encodedModelName); } catch { /* Keep the transport value as a fallback. */ }
+      }
       setSpeechResult({
         url,
         name: `speech-${Date.now()}.${extension}`,
-        modelName: response.headers.get('X-Audio-Model') || speechModel.displayName,
+        modelName,
         contentType: blob.type || 'audio/mpeg',
         extension,
       });

@@ -46,7 +46,6 @@ import { IMAGE_QUALITY_OPTIONS, resolveAvailableCreationModel, type CreationSett
 import { requestPromptOptimization } from "@/lib/creation/agent";
 import { canvasNodeSupportsImagePresets } from "@/lib/canvas/image-presets";
 import {
-  canvasNodeEditorPanDelta,
   canvasZoomResponsiveNodeEditorWidth,
   placeCanvasNodeEditor,
 } from "@/lib/canvas/editor-layout";
@@ -98,7 +97,6 @@ export type CanvasNodeEditorPopoverProps = {
   onLocalEdit?: () => void;
   onLocalEditRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
-  onRequestCanvasPan: (deltaY: number) => void;
   onGenerate: (
     node: CanvasNode,
     options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string; excludedProjectReferenceAssetIds?: string[] },
@@ -181,7 +179,6 @@ function CanvasNodeEditorPopover({
   onLocalEdit,
   onLocalEditRemove,
   onToggleEditor,
-  onRequestCanvasPan,
   onGenerate,
   projectVisualReferences = [],
   onOneTake,
@@ -241,7 +238,6 @@ function CanvasNodeEditorPopover({
     placement: "bottom" as const,
   });
   const [editorWidth, setEditorWidth] = useState(0);
-  const lastEditorPanLayoutRef = useRef("");
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [isCompact, setIsCompact] = useState(false);
   const [promptExpanded, setPromptExpanded] = useState(false);
@@ -809,17 +805,6 @@ function CanvasNodeEditorPopover({
       top: editorPosition.top + stageRect.top - workspaceRect.top,
       placement: "bottom" as const,
     };
-    const anchorTop = anchor.top + stageRect.top - workspaceRect.top;
-    const panLayoutKey = `${node.id}:${popoverWidth}:${editorHeight}:${viewport.width}:${viewport.height}:${Math.round(anchorTop)}`;
-    if (editorHeight > 0 && lastEditorPanLayoutRef.current !== panLayoutKey) {
-      lastEditorPanLayoutRef.current = panLayoutKey;
-      const panDelta = canvasNodeEditorPanDelta(
-        nextPosition.top + editorHeight,
-        viewport.height,
-        12,
-      );
-      if (panDelta > 0) onRequestCanvasPan(panDelta);
-    }
     setPosition((current) =>
       current.left === nextPosition.left &&
       current.top === nextPosition.top &&
@@ -827,7 +812,7 @@ function CanvasNodeEditorPopover({
         ? current
         : nextPosition,
     );
-  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.id, node.x, node.y, onRequestCanvasPan, portalRoot, promptExpanded, size.h, size.w, stackedEditor, stageRef, threeDNode]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.id, node.x, node.y, portalRoot, promptExpanded, size.h, size.w, stackedEditor, stageRef, threeDNode]);
 
   useLayoutEffect(() => {
     reposition();

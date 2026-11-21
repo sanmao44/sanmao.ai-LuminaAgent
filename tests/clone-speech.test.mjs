@@ -253,6 +253,37 @@ test('服务商用 200 回 JSON 报错时不能当音频存盘', async () => {
   } finally { stub.restore(); }
 });
 
+test('服务商返回结构化 JSON 错误时保留上游消息、类型和代码', async () => {
+  const payload = JSON.stringify({
+    error: {
+      message: 'openai_error',
+      type: 'bad_response_status_code',
+      param: '',
+      code: 'bad_response_status_code',
+    },
+  });
+  const stub = stubFetch(() => audioResponse(Buffer.from(payload), 'application/json'));
+  try {
+    await assert.rejects(
+      () => speech.synthesizeSpeech(runtime(), { text: '你好' }),
+      /配音接口返回错误.*消息：openai_error.*类型：bad_response_status_code.*代码：bad_response_status_code/,
+    );
+  } finally { stub.restore(); }
+});
+
+test('服务商响应头中的请求编号会附加到配音错误', async () => {
+  const stub = stubFetch(() => ({
+    ok: false,
+    status: 502,
+    headers: new Headers({ 'x-request-id': 'cangyuan-request-123' }),
+    text: async () => '{"error":{"message":"openai_error"}}',
+    arrayBuffer: async () => new ArrayBuffer(0),
+  }));
+  try {
+    await assert.rejects(() => speech.synthesizeSpeech(runtime(), { text: '你好' }), /请求编号：cangyuan-request-123/);
+  } finally { stub.restore(); }
+});
+
 test('接口失败时抛出带状态码与详情的中文错误', async () => {
   const stub = stubFetch(() => ({ ok: false, status: 429, text: async () => 'Today the free API access limit exceeded.', headers: new Headers(), arrayBuffer: async () => new ArrayBuffer(0) }));
   try {

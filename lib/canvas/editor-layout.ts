@@ -55,15 +55,6 @@ export function canvasZoomResponsiveNodeEditorWidth(
   return canvasWideNodeEditorWidth(viewportWidth, preferredWidth, viewportMargin);
 }
 
-/** Returns the smallest upward canvas pan that reveals a below-node editor. */
-export function canvasNodeEditorPanDelta(
-  editorBottom: number,
-  viewportHeight: number,
-  bottomMargin = 12,
-) {
-  return Math.max(0, editorBottom - viewportHeight + bottomMargin);
-}
-
 /**
  * Places a fixed context menu next to its pointer while keeping it inside the
  * visible viewport. The measured menu size is intentionally supplied by the

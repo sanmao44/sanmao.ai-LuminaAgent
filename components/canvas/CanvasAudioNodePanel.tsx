@@ -454,7 +454,12 @@ export default function CanvasAudioNodePanel({
         type: blob.type || "audio/mpeg",
       });
       const engine: CanvasAudioGenerationMeta['engine'] = response.headers.get("X-Audio-Engine") === "offline" ? "offline" : "provider";
-      const modelName = response.headers.get("X-Audio-Model")?.trim().slice(0, 120);
+      const encodedModelName = response.headers.get("X-Audio-Model");
+      let modelName = encodedModelName || undefined;
+      if (encodedModelName) {
+        try { modelName = decodeURIComponent(encodedModelName); } catch { /* Keep the transport value as a fallback. */ }
+      }
+      modelName = modelName?.trim().slice(0, 120);
       const modelId = response.headers.get("X-Audio-Model-Id")?.trim().slice(0, 160);
       const generation: CanvasAudioGenerationMeta = {
         text,

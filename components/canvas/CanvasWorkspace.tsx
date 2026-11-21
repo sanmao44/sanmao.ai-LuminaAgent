@@ -1719,13 +1719,6 @@ export default function SuperCanvas() {
     },
     [setDoc],
   );
-  const requestCanvasPanForEditor = useCallback((deltaY: number) => {
-    if (!Number.isFinite(deltaY) || deltaY <= 0) return;
-    updateDoc((current) => ({
-      ...current,
-      camera: { ...current.camera, y: current.camera.y - deltaY },
-    }));
-  }, [updateDoc]);
   const updateCanvasAudioDraft = useCallback((nodeId: string, draft: CanvasAudioDraft) => {
     const current = canvasCoreRef.current.document();
     const next = updateCanvasAudioDraftDocument(current, nodeId, draft);
@@ -14500,7 +14493,6 @@ export default function SuperCanvas() {
                 writeCustomImagePresets(next);
               }}
               onToggleEditor={toggleEditor}
-              onRequestCanvasPan={requestCanvasPanForEditor}
               currentImageReference={currentImageReferenceByNode[editorNode.id]}
               onCurrentImageReferenceChange={(value) => {
                 setCurrentImageReferenceByNode((current) => current[editorNode.id] === value

@@ -9,6 +9,17 @@ import { normalizeGenerationSource } from '@/lib/generation-source';
 export const runtime = 'nodejs';
 export const maxDuration = 180;
 
+function encodeHeaderValue(value: string) {
+  try {
+    return encodeURIComponent(value);
+  } catch {
+    // A malformed surrogate must not turn an otherwise successful synthesis
+    // into a transport error. Keep the header ASCII-safe and let consumers use
+    // their normal display-name fallback.
+    return '';
+  }
+}
+
 export async function POST(request: Request) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '需要管理员登录。' }, { status: 401 });
   const contentLength = Number(request.headers.get('content-length') || 0);
@@ -67,12 +78,12 @@ export async function POST(request: Request) {
         'Cache-Control': 'no-store',
         'X-Audio-Extension': result.extension,
         'X-Audio-Engine': result.engine,
-        ...(result.modelName ? { 'X-Audio-Model': result.modelName } : {}),
+        ...(result.modelName ? { 'X-Audio-Model': encodeHeaderValue(result.modelName) } : {}),
         ...(result.modelId ? { 'X-Audio-Model-Id': result.modelId } : {}),
         ...(result.storageUrl ? { 'X-Audio-Url': result.storageUrl } : {}),
         // HTTP headers are ByteString values; encode the user-visible Chinese
         // message and let the workspace decode it before displaying it.
-        ...(result.storageError ? { 'X-Audio-Storage-Error': encodeURIComponent(result.storageError) } : {}),
+        ...(result.storageError ? { 'X-Audio-Storage-Error': encodeHeaderValue(result.storageError) } : {}),
         ...(logId ? { 'X-Audio-Log-Id': logId } : {}),
       },
     });

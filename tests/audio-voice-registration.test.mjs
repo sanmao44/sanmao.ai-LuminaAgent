@@ -159,7 +159,7 @@ test('voice list adapter queries the selected registration model and does not ca
       modelId: 'registry-model-id', registrationModel: 'minimax-speech-2.8-hd-clone',
     });
     assert.deepEqual(result, [{ voiceId: 'voice-123', name: '样音', status: 'active' }]);
-    assert.equal(calls[0].url, 'https://ai.cangyuansuanli.cn/v1/audio/voices?model=minimax-speech-2.8-hd-clone');
+    assert.equal(calls[0].url, 'https://direct-api.cangyuansuanli.cn/v1/audio/voices?model=minimax-speech-2.8-hd-clone');
     assert.equal(calls[0].init.method, 'GET');
     assert.equal(calls[0].init.cache, 'no-store');
     assert.equal(calls[0].init.headers.Authorization, 'Bearer private-test-key');
@@ -176,8 +176,8 @@ test('preview adapter sends the configured bearer token only to the exact offici
       runtimeBaseUrl: (provider) => provider.baseUrl,
     },
   })('./lib/clone/voice-registration');
-  const runtime = { provider: { baseUrl: 'https://ai.cangyuansuanli.cn/v1', apiKey: 'private-test-key' }, model: { rawId: 'minimax-speech-2.8-hd-tts' } };
-  const previewUrl = 'https://ai.cangyuansuanli.cn/v1/audio/voices/task_123/preview';
+  const runtime = { provider: { platform: 'cangyuan', baseUrl: 'https://ai.cangyuansuanli.cn/v1', apiKey: 'private-test-key' }, model: { rawId: 'minimax-speech-2.8-hd-tts' } };
+  const previewUrl = 'https://direct-api.cangyuansuanli.cn/v1/audio/voices/task_123/preview';
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -193,7 +193,8 @@ test('preview adapter sends the configured bearer token only to the exact offici
     assert.equal(calls[0].init.redirect, 'manual');
 
     await assert.rejects(() => adapter.previewCangyuanSpeechVoice(runtime, 'https://attacker.example/v1/audio/voices/task_123/preview'), /与当前服务商不匹配/);
-    await assert.rejects(() => adapter.previewCangyuanSpeechVoice(runtime, 'https://ai.cangyuansuanli.cn/v1/audio/voices/task_123/preview?target=secret'), /与当前服务商不匹配/);
+    await assert.rejects(() => adapter.previewCangyuanSpeechVoice(runtime, 'https://ai.cangyuansuanli.cn/v1/audio/voices/task_123/preview'), /与当前服务商不匹配/);
+    await assert.rejects(() => adapter.previewCangyuanSpeechVoice(runtime, 'https://direct-api.cangyuansuanli.cn/v1/audio/voices/task_123/preview?target=secret'), /与当前服务商不匹配/);
     assert.equal(calls.length, 1, 'untrusted destinations must be rejected before fetch');
 
     globalThis.fetch = async () => new Response(null, { status: 302, headers: { location: 'https://attacker.example/audio.mp3' } });

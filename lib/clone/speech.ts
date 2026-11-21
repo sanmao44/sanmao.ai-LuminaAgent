@@ -115,6 +115,55 @@ function looksLikeTextPayload(buffer: Buffer) {
   return head.startsWith('{') || head.startsWith('[') || head.startsWith('<');
 }
 
+function redactSpeechErrorDetail(value: string) {
+  return value
+    .replace(/((?:api[_ -]?key|access[_ -]?token|authorization|secret)\s*[:=]\s*)([^\s,;]+)/giu, '$1[已遮蔽]')
+    .replace(/\bBearer\s+[^\s,;]+/giu, 'Bearer [已遮蔽]')
+    .replace(/\s+/gu, ' ')
+    .trim()
+    .slice(0, 500);
+}
+
+/**
+ * 沧元及其他 OpenAI 兼容服务商有时会用 200 或 4xx/5xx 返回 JSON 错误。
+ * 把结构化字段保留下来，便于区分“没有样音”和“上游生成失败”。
+ */
+function formatSpeechProviderError(detail: string) {
+  const compact = redactSpeechErrorDetail(detail);
+  if (!compact) return '';
+  try {
+    const parsed: unknown = JSON.parse(compact);
+    const root = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+    const error = root.error && typeof root.error === 'object'
+      ? root.error as Record<string, unknown>
+      : root;
+    const message = typeof error.message === 'string' ? error.message.trim() : '';
+    const type = typeof error.type === 'string' ? error.type.trim() : '';
+    const code = typeof error.code === 'string' ? error.code.trim() : '';
+    const param = typeof error.param === 'string' ? error.param.trim() : '';
+    const requestId = typeof error.request_id === 'string'
+      ? error.request_id.trim()
+      : typeof root.request_id === 'string' ? root.request_id.trim() : '';
+    const fields = [
+      message ? `消息：${message}` : '',
+      type ? `类型：${type}` : '',
+      code ? `代码：${code}` : '',
+      param ? `参数：${param}` : '',
+      requestId ? `请求编号：${requestId}` : '',
+    ].filter(Boolean);
+    return fields.length ? fields.join('；') : compact;
+  } catch {
+    return compact;
+  }
+}
+
+function speechProviderError(detail: string, status?: number, responseRequestId?: string | null) {
+  const formatted = formatSpeechProviderError(detail);
+  const requestId = String(responseRequestId || '').trim();
+  const requestHint = requestId ? `；请求编号：${requestId}` : '';
+  return `配音接口${status ? `失败：HTTP ${status}` : '返回错误'}${formatted ? `（${formatted}${requestHint}）` : requestHint}`;
+}
+
 /** 合成一句配音，返回音频字节与真实容器；调用方负责落盘与测时长。 */
 export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequest): Promise<SpeechAudio> {
   const text = String(input.text || '').trim();
@@ -208,12 +257,12 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
-      throw new Error(`配音接口失败：HTTP ${response.status}${detail ? `（${detail.replace(/\s+/g, ' ').slice(0, 180)}）` : ''}`);
+      throw new Error(speechProviderError(detail, response.status, response.headers.get('x-request-id') || response.headers.get('request-id')));
     }
     const buffer = Buffer.from(await response.arrayBuffer());
     if (!buffer.byteLength) throw new Error('配音接口没有返回音频数据。');
     if (looksLikeTextPayload(buffer)) {
-      throw new Error(`配音接口没有返回音频：${buffer.subarray(0, 180).toString('utf8').replace(/\s+/g, ' ').trim()}`);
+      throw new Error(speechProviderError(buffer.toString('utf8'), undefined, response.headers.get('x-request-id') || response.headers.get('request-id')));
     }
     return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type'), input.format) };
   }
@@ -241,12 +290,12 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   });
   if (!response.ok) {
     const message = await response.text().catch(() => '');
-    throw new Error(`配音接口失败：HTTP ${response.status}${message ? `（${message.replace(/\s+/g, ' ').slice(0, 180)}）` : ''}`);
+    throw new Error(speechProviderError(message, response.status, response.headers.get('x-request-id') || response.headers.get('request-id')));
   }
   const buffer = Buffer.from(await response.arrayBuffer());
   if (!buffer.byteLength) throw new Error('配音接口没有返回音频数据。');
   if (looksLikeTextPayload(buffer)) {
-    throw new Error(`配音接口没有返回音频：${buffer.subarray(0, 180).toString('utf8').replace(/\s+/g, ' ').trim()}`);
+    throw new Error(speechProviderError(buffer.toString('utf8'), undefined, response.headers.get('x-request-id') || response.headers.get('request-id')));
   }
   return { buffer, contentType: speechContentType(buffer, response.headers.get('content-type'), input.format || 'mp3') };
 }
