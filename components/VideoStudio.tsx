@@ -23,7 +23,9 @@ import type { VideoModelParameterValues } from '@/packages/contracts/video-gener
 import {
   cangyuanVideoImageDataUrlBytes,
   cangyuanVideoImageSizeError,
+  CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH,
   getCangyuanVideoModelProfile,
+  getCangyuanVideoPromptMaxLength,
   isCangyuanVideoModelSelectable,
   isPublicHttpsUrl,
 } from '@/lib/cangyuan-video-capabilities';
@@ -606,6 +608,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (!original.trim()) return onNotify('请先在提示词框写下想优化的内容');
     if (!agentAvailable) return onNotify('还没有可用对话模型，请先去模型库启用');
     if (promptOptimizing) return;
+    const promptMaxLength = selectedVideoPromptMaxLength(modelId, defaultModelId, models, providers);
     setPromptOptimizing(true);
     try {
       const optimized = await requestPromptOptimization(
@@ -615,7 +618,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         'polish_text',
       );
       setPromptBeforeOptimization(original);
-      setPrompt(optimized.slice(0, 6000));
+      setPrompt(optimized.slice(0, promptMaxLength));
       window.setTimeout(() => (promptExpanded ? promptExpandedRef.current : promptRef.current)?.focus(), 0);
       onNotify('已完成 AI 优化，可继续修改；也可以撤销');
     } catch (error) {
@@ -647,6 +650,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const selectedModel = models.find((model) => model.id === modelId) || models.find((model) => model.id === defaultModelId) || models[0];
   const selectedProvider = providers.find((provider) => provider.id === selectedModel?.providerId);
+  const promptMaxLength = selectedVideoPromptMaxLength(modelId, defaultModelId, models, providers);
   const defaultModel = models.find((model) => model.id === defaultModelId);
   const defaultProvider = providers.find((provider) => provider.id === defaultModel?.providerId);
   const videoPickerModels = useMemo(() => {
@@ -1237,6 +1241,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     event.preventDefault();
     if (cangyuanUploadInProgress) return onNotify('请等待参考素材上传完成后再生成。');
     if (!prompt.trim()) return onNotify('请先输入视频提示词');
+    if (prompt.length > promptMaxLength) return onNotify(`当前型号的提示词最多 ${promptMaxLength} 个字符，请精简后再生成。`);
     if (!models.length) return onNotify('请先在模型库启用一个视频模型');
     if (usesCangyuan && (!cangyuanProfile || !cangyuanSpec)) return onNotify('该沧元视频型号缺少完整的官方参数说明，无法安全提交；请在模型列表中选择已核实的型号。');
     if (inputMode === 'first-frame' && !firstFrame) return onNotify('请先添加首帧图片');
@@ -1421,9 +1426,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
             ariaLabel="视频提示词"
             readOnly={promptExpanded}
             placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
-            onChange={(value) => { setPrompt(value.slice(0, 6000)); setPromptBeforeOptimization(null); }}
+            onChange={(value) => { setPrompt(value.slice(0, promptMaxLength)); setPromptBeforeOptimization(null); }}
             transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
-          /><div className="video-prompt-meta"><small>{prompt.length}/6000</small><small className="video-draft-status" data-state={draftStatus} role="status" aria-live="polite">{!draftReady ? '正在检查草稿…' : draftStatus === 'saved' ? '已自动保存' : draftStatus === 'error' ? '保存失败，请保持当前页面' : '自动保存至本会话'}</small></div></div>
+          /><div className="video-prompt-meta"><small>{prompt.length}/{promptMaxLength}</small><small className="video-draft-status" data-state={draftStatus} role="status" aria-live="polite">{!draftReady ? '正在检查草稿…' : draftStatus === 'saved' ? '已自动保存' : draftStatus === 'error' ? '保存失败，请保持当前页面' : '自动保存至本会话'}</small></div></div>
           {draftNoticeVisible && <div className="video-draft-notice" role="status"><span>已恢复提示词和参数；上次的图片、视频或音频附件未保存，请按需重新添加。</span><button type="button" onClick={() => { setDraftHadMedia(false); setDraftNoticeVisible(false); }}>知道了</button></div>}
           <div className={`video-creation-selects ${showOperationField ? '' : 'without-operation'}`}>
             <label className="video-field video-model-field">
@@ -1573,7 +1578,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         </div>
       </aside>
       </div></>}
-    {promptExpanded && <div className="video-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="video-prompt-dialog-title" onMouseDown={(event) => { if (event.target === event.currentTarget) closePromptEditor(); }}><div className="video-prompt-dialog-inner"><div className="video-prompt-dialog-head"><div><span>提示词编辑</span><strong id="video-prompt-dialog-title">最大化编辑</strong></div><div className="video-prompt-heading-actions"><span className="video-prompt-dialog-count">{prompt.length}/6000</span>{prompt && <button type="button" className="video-prompt-optimize" title={agentAvailable ? '使用 AI 优化提示词' : '请先在模型库启用对话模型'} aria-label="AI 优化提示词" aria-busy={promptOptimizing} disabled={!agentAvailable || promptOptimizing} onClick={() => void optimizePrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? '优化中…' : 'AI 优化'}</span></button>}{promptBeforeOptimization !== null && <button type="button" className="video-prompt-undo" title="撤销 AI 优化" aria-label="撤销 AI 优化" disabled={promptOptimizing} onClick={undoPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); setPromptBeforeOptimization(null); window.setTimeout(() => promptExpandedRef.current?.focus(), 0); }}>清空文本</button>}<button type="button" className="video-media-dialog-close" aria-label="关闭提示词编辑" onClick={closePromptEditor}>×</button></div></div><ReferenceMentionEditor
+    {promptExpanded && <div className="video-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="video-prompt-dialog-title" onMouseDown={(event) => { if (event.target === event.currentTarget) closePromptEditor(); }}><div className="video-prompt-dialog-inner"><div className="video-prompt-dialog-head"><div><span>提示词编辑</span><strong id="video-prompt-dialog-title">最大化编辑</strong></div><div className="video-prompt-heading-actions"><span className="video-prompt-dialog-count">{prompt.length}/{promptMaxLength}</span>{prompt && <button type="button" className="video-prompt-optimize" title={agentAvailable ? '使用 AI 优化提示词' : '请先在模型库启用对话模型'} aria-label="AI 优化提示词" aria-busy={promptOptimizing} disabled={!agentAvailable || promptOptimizing} onClick={() => void optimizePrompt()}><span aria-hidden="true">✦</span><span>{promptOptimizing ? '优化中…' : 'AI 优化'}</span></button>}{promptBeforeOptimization !== null && <button type="button" className="video-prompt-undo" title="撤销 AI 优化" aria-label="撤销 AI 优化" disabled={promptOptimizing} onClick={undoPromptOptimization}><span aria-hidden="true">↶</span><span>撤销</span></button>}{prompt && <button type="button" className="video-prompt-clear" title="一键清空提示词" aria-label="一键清空提示词" onClick={() => { setPrompt(''); setPromptBeforeOptimization(null); window.setTimeout(() => promptExpandedRef.current?.focus(), 0); }}>清空文本</button>}<button type="button" className="video-media-dialog-close" aria-label="关闭提示词编辑" onClick={closePromptEditor}>×</button></div></div><ReferenceMentionEditor
       ref={promptExpandedRef}
       value={prompt}
       references={supportsReferenceMentions ? referenceCandidates : []}
@@ -1581,13 +1586,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       menuClassName="video-reference-mention-menu"
       ariaLabel="最大化编辑视频提示词"
       placeholder={usesJimengCli ? '描述主体、动作、镜头运动、光线和风格… 参考图会直接提交给即梦 CLI' : '描述主体、动作、镜头运动、光线和风格… 输入 @ 可引用图片、视频或文本'}
-      onChange={(value) => { setPrompt(value.slice(0, 6000)); setPromptBeforeOptimization(null); }}
+      onChange={(value) => { setPrompt(value.slice(0, promptMaxLength)); setPromptBeforeOptimization(null); }}
       transformPastedText={(value) => replaceNaturalReferenceLabels(value, referenceCandidates).value}
     /><div className="video-prompt-dialog-foot"><small>支持换行和 @ 引用素材，关闭后内容会保留在原提示词框中。</small><button type="button" className="video-primary-button" onClick={closePromptEditor}>完成编辑</button></div></div></div>}
     {previewImage && <div className="video-media-dialog" role="dialog" aria-modal="true" aria-label={previewImage.kind === 'video' ? '查看参考视频' : '查看参考图'} onClick={() => setPreviewImage(null)}><div className="video-media-dialog-inner" onClick={(event) => event.stopPropagation()}><button type="button" className="video-media-dialog-close" aria-label="关闭预览" onClick={() => setPreviewImage(null)}>×</button>{previewImage.kind === 'video' ? <video src={previewImage.url} controls playsInline autoPlay /> : <img src={previewImage.url} alt={previewImage.name} />}<span>{previewImage.name}</span></div></div>}
     {restoreCandidate && <div className="video-task-dialog video-restore-confirm-dialog" role="dialog" aria-modal="true" aria-label="确认恢复视频参数" onClick={() => setRestoreCandidate(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>确认恢复</span><strong>不会自动生成</strong></div><button type="button" className="video-media-dialog-close" aria-label="取消恢复" onClick={() => setRestoreCandidate(null)}>×</button></div><div className="video-task-dialog-content"><p className="video-restore-confirm-copy">恢复这条历史任务会替换左侧当前草稿，但不会自动提交或扣费。</p><div className="video-restore-confirm-actions"><button type="button" className="video-quiet-button" onClick={() => setRestoreCandidate(null)}>取消</button><button type="button" className="video-primary-button" onClick={confirmRestoreTask}>继续恢复</button></div></div></div></div>}
     {taskDetail && <div className="video-task-dialog" role="dialog" aria-modal="true" aria-label="任务详情" onClick={() => setTaskDetail(null)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>任务详情</span><strong>{statusLabel(videoTaskStatus(taskDetail))}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭任务详情" onClick={() => setTaskDetail(null)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{taskDetail.input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta"><span>模型<b>{taskDetail.modelName || '自动模型'}</b></span><span>操作<b>{operationLabel(taskDetail.operation)}</b></span><span>参数<b>{taskParameterSummary(taskDetail)}</b></span></div>{taskDetail.error && <p className="video-task-error">{taskDetail.error}</p>}</div></div></div>}
   </section>;
+}
+
+function selectedVideoPromptMaxLength(modelId: string, defaultModelId: string | null | undefined, models: RegistryModel[], providers: ProviderConnection[]) {
+  const model = models.find((item) => item.id === modelId) || models.find((item) => item.id === defaultModelId);
+  const provider = providers.find((item) => item.id === model?.providerId);
+  if (provider?.videoTransport !== 'cangyuan-videos' || !model || !isCangyuanVideoModelSelectable(model.rawId)) return 6000;
+  return getCangyuanVideoPromptMaxLength(model.rawId) ?? CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH;
 }
 
 function ReferenceImageTray({ items, maxItems, onAdd, onRemove, onClear, onMove, onReorder, onPreview, inputRef }: { items: UploadSlot[]; maxItems: number; onAdd: (files: FileList | null) => void; onRemove: (index: number) => void; onClear: () => void; onMove: (index: number, direction: -1 | 1) => void; onReorder: (from: number, to: number) => void; onPreview: (item: UploadSlot) => void; inputRef: (node: HTMLInputElement | null) => void }) {

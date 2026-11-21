@@ -14,6 +14,19 @@ const SPEECH_OPTION_LABELS: Readonly<Record<SpeechAdvancedOptionKey, string>> = 
   emotion: '情绪',
   instruct: '语气说明',
   dialogue: '多人对白',
+  aigcWatermark: '生成内容水印',
+  bitrate: '音频比特率',
+  channel: '声道数',
+  effectIntensity: '力度效果',
+  effectPitch: '音高效果',
+  effectTimbre: '音色效果',
+  latexRead: '公式朗读',
+  pitch: '音高',
+  pronunciationTone: '发音标注',
+  sampleRate: '采样率',
+  soundEffects: '声音效果',
+  textNormalizationMode: '文本规范化方式',
+  volume: '音量',
 };
 
 export class AudioSynthesisInputError extends Error {
@@ -91,6 +104,12 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
     }
     return value;
   };
+  const booleanValue = (key: string) => {
+    const value = source[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== 'boolean') throw new AudioSynthesisInputError(`${SPEECH_OPTION_LABELS[key as SpeechAdvancedOptionKey] || key}必须是开关值。`);
+    return value;
+  };
   const optionalString = (key: string) => {
     const value = source[key];
     if (value === undefined) return undefined;
@@ -106,8 +125,22 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
   const instruct = optionalString('instruct');
   const voiceId = optionalString('voiceId');
   const seed = boundedNumber('seed', 0);
+  if (seed !== undefined && !Number.isInteger(seed)) throw new AudioSynthesisInputError('随机种子必须是非负整数。');
   const similarityBoost = boundedNumber('similarityBoost', 0, 1);
   const stability = boundedNumber('stability', 0, 1);
+  const aigcWatermark = booleanValue('aigcWatermark');
+  const bitrate = enumValue('bitrate', ['32000', '64000', '128000', '256000'] as const);
+  const channel = enumValue('channel', ['1', '2'] as const);
+  const effectIntensity = boundedNumber('effectIntensity', -100, 100);
+  const effectPitch = boundedNumber('effectPitch', -100, 100);
+  const effectTimbre = boundedNumber('effectTimbre', -100, 100);
+  const latexRead = booleanValue('latexRead');
+  const pitch = boundedNumber('pitch', -12, 12);
+  const pronunciationTone = optionalString('pronunciationTone');
+  const sampleRate = enumValue('sampleRate', ['8000', '16000', '22050', '24000', '32000', '44100'] as const);
+  const soundEffects = enumValue('soundEffects', ['spacious_echo', 'auditorium_echo', 'lofi_telephone', 'robotic'] as const);
+  const textNormalizationMode = enumValue('textNormalizationMode', ['basic', 'quality'] as const);
+  const volume = boundedNumber('volume', 0.01, 10);
   let dialogue: SpeechDialogueLine[] | undefined;
   if (source.dialogue !== undefined) {
     if (!Array.isArray(source.dialogue) || source.dialogue.length < 1 || source.dialogue.length > 50) {
@@ -144,6 +177,19 @@ function parseRequest(input: unknown): AudioSynthesisRequest {
     ...(emotion ? { emotion } : {}),
     ...(instruct ? { instruct } : {}),
     ...(dialogue ? { dialogue } : {}),
+    ...(aigcWatermark !== undefined ? { aigcWatermark } : {}),
+    ...(bitrate ? { bitrate } : {}),
+    ...(channel ? { channel } : {}),
+    ...(effectIntensity !== undefined ? { effectIntensity } : {}),
+    ...(effectPitch !== undefined ? { effectPitch } : {}),
+    ...(effectTimbre !== undefined ? { effectTimbre } : {}),
+    ...(latexRead !== undefined ? { latexRead } : {}),
+    ...(pitch !== undefined ? { pitch } : {}),
+    ...(pronunciationTone ? { pronunciationTone } : {}),
+    ...(sampleRate ? { sampleRate } : {}),
+    ...(soundEffects ? { soundEffects } : {}),
+    ...(textNormalizationMode ? { textNormalizationMode } : {}),
+    ...(volume !== undefined ? { volume } : {}),
     ...(modelId && modelId !== 'auto' ? { modelId } : {}),
     ...(sourceName ? { source: sourceName } : {}),
     ...(projectId ? { projectId } : {}),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasAudioTranscriptionMeta, CanvasNode } from "@/lib/canvas/types";
 import type { ProviderConnection, RegistryModel } from "@/lib/types";
 import { selectAutomaticModel } from "@/lib/model-selection";
@@ -100,6 +100,19 @@ export default function CanvasAudioNodePanel({
     instruct: node.data.speechDraft?.instruct,
     dialogue: node.data.speechDraft?.dialogue,
     dialogueText: node.data.speechDraft?.dialogueText,
+    aigcWatermark: node.data.speechDraft?.aigcWatermark,
+    bitrate: node.data.speechDraft?.bitrate,
+    channel: node.data.speechDraft?.channel,
+    effectIntensity: node.data.speechDraft?.effectIntensity,
+    effectPitch: node.data.speechDraft?.effectPitch,
+    effectTimbre: node.data.speechDraft?.effectTimbre,
+    latexRead: node.data.speechDraft?.latexRead,
+    pitch: node.data.speechDraft?.pitch,
+    pronunciationTone: node.data.speechDraft?.pronunciationTone,
+    sampleRate: node.data.speechDraft?.sampleRate,
+    soundEffects: node.data.speechDraft?.soundEffects,
+    textNormalizationMode: node.data.speechDraft?.textNormalizationMode,
+    volume: node.data.speechDraft?.volume,
   }));
   const [generatingSpeech, setGeneratingSpeech] = useState(false);
   const [speechError, setSpeechError] = useState("");
@@ -114,6 +127,15 @@ export default function CanvasAudioNodePanel({
   const musicPollCursorRef = useRef<string | null>(null);
   const [materializingMusicOutput, setMaterializingMusicOutput] = useState("");
   const [uploadingMusicFields, setUploadingMusicFields] = useState<Set<string>>(() => new Set());
+  const handleMusicUploadStateChange = useCallback((fieldId: string, uploading: boolean) => {
+    setUploadingMusicFields((current) => {
+      if (current.has(fieldId) === uploading) return current;
+      const next = new Set(current);
+      if (uploading) next.add(fieldId);
+      else next.delete(fieldId);
+      return next;
+    });
+  }, []);
   const data = node.data;
   const musicHistory = useMemo(() => data.musicTasks?.length ? data.musicTasks : data.musicTask ? [data.musicTask] : [], [data.musicTasks, data.musicTask]);
   const currentMusicKindName = activeMode === "sound-effect" ? "音效" : "音乐";
@@ -122,6 +144,7 @@ export default function CanvasAudioNodePanel({
   const transcriptionHistory = data.transcriptions?.length ? data.transcriptions : data.transcription ? [data.transcription] : [];
   const speechHistory = data.speechGenerations?.length ? data.speechGenerations : data.speechGeneration ? [data.speechGeneration] : [];
   const hasAudio = Boolean(data.url);
+  const showAudioSource = hasAudio || speechHistory.length > 0 || transcriptionHistory.length > 0 || musicHistory.length > 0;
   const musicModels = canvasAudioMusicModels(models, providers);
   const transcriptionModels = canvasAudioTranscriptionModels(models, providers);
   const speechModels = canvasAudioSpeechModels(models, providers);
@@ -495,7 +518,7 @@ export default function CanvasAudioNodePanel({
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      <div className="canvas-audio-panel-main">
+      <div className={`canvas-audio-panel-main${showAudioSource ? " has-source" : ""}`}>
         <div className="canvas-audio-panel-workbench">
           <nav className="canvas-audio-mode-tabs" aria-label="音频工具">
             <button type="button" className={activeMode === "speech" ? "active" : ""} aria-pressed={activeMode === "speech"} onClick={() => setActiveMode("speech")}>配音</button>
@@ -503,7 +526,7 @@ export default function CanvasAudioNodePanel({
             <button type="button" className={activeMode === "sound-effect" ? "active" : ""} aria-pressed={activeMode === "sound-effect"} onClick={() => setActiveMode("sound-effect")}>音效</button>
             <button type="button" className={activeMode === "transcription" ? "active" : ""} aria-pressed={activeMode === "transcription"} onClick={() => setActiveMode("transcription")}>转写</button>
           </nav>
-        {activeMode === "speech" && <section className="canvas-audio-speech" aria-label="文本转配音">
+        {activeMode === "speech" && <section className={`canvas-audio-speech${speechProfile && (speechProfile.supportsDialogue || speechProfile.supportsVoiceId || speechProfile.supportsAdvancedControls) ? " canvas-audio-speech-complex" : ""}`} aria-label="文本转配音">
           <div className="canvas-audio-speech-heading">
             <div>
               <label htmlFor={`canvas-audio-speech-${node.id}`}>文本配音</label>
@@ -536,63 +559,74 @@ export default function CanvasAudioNodePanel({
           }}
           disabled={generatingSpeech}
         />
-        <details className="canvas-audio-advanced">
-          <summary>音色设置（可选）</summary>
+        <section className="canvas-audio-advanced" aria-label="配音参数">
+          <strong className="canvas-audio-settings-subheading">配音参数</strong>
         {speechProfile ? <>
           {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && !usesRegisteredVoice && <>
-            <span className="canvas-audio-option-label">音色</span>
-            <SelectMenu
-              value={voiceChoice}
-              ariaLabel="配音音色"
-              className="canvas-audio-option-select"
-              menuClassName="canvas-audio-option-menu"
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              options={[
-                { value: "", label: "使用模型默认音色" },
-                ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
-                  ...option,
-                  action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
-                })),
-                { value: "custom", label: "自定义音色名称" },
-              ]}
-              onChange={(value) => {
-                const nextVoice = value === "custom" ? "" : value;
-                setCustomVoiceSelected(value === "custom");
-                setVoice(nextVoice);
-                setSpeechError("");
-                saveSpeechDraft({ voice: nextVoice });
-              }}
-              disabled={generatingSpeech}
-            />
-            {voiceChoice === "custom" && <input
-              id={`canvas-audio-voice-${node.id}`}
-              value={voice}
-              maxLength={100}
-              placeholder="输入服务商支持的音色名称"
-              onChange={(event) => {
-                const nextVoice = event.target.value;
-                setVoice(nextVoice);
-                setSpeechError("");
-                saveSpeechDraft({ voice: nextVoice });
-              }}
-              disabled={generatingSpeech}
-            />}
+            <div className="canvas-audio-option-field">
+              <span className="canvas-audio-option-label">音色</span>
+              <SelectMenu
+                value={voiceChoice}
+                ariaLabel="配音音色"
+                className="canvas-audio-option-select"
+                menuClassName="canvas-audio-option-menu"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                options={[
+                  { value: "", label: "使用模型默认音色" },
+                  ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
+                    ...option,
+                    action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
+                  })),
+                  { value: "custom", label: "自定义音色名称" },
+                ]}
+                onChange={(value) => {
+                  const nextVoice = value === "custom" ? "" : value;
+                  setCustomVoiceSelected(value === "custom");
+                  setVoice(nextVoice);
+                  setSpeechError("");
+                  saveSpeechDraft({ voice: nextVoice });
+                }}
+                disabled={generatingSpeech}
+              />
+              {voiceChoice === "custom" && <input
+                id={`canvas-audio-voice-${node.id}`}
+                value={voice}
+                maxLength={100}
+                placeholder="输入服务商支持的音色名称"
+                onChange={(event) => {
+                  const nextVoice = event.target.value;
+                  setVoice(nextVoice);
+                  setSpeechError("");
+                  saveSpeechDraft({ voice: nextVoice });
+                }}
+                disabled={generatingSpeech}
+              />}
+            </div>
           </>}
           {speechFormats.length > 0 && <>
-            <span className="canvas-audio-option-label">输出格式</span>
-            <SelectMenu
-              value={supportedFormat || speechFormats[0]}
-              ariaLabel="配音输出格式"
-              className="canvas-audio-option-select"
-              menuClassName="canvas-audio-option-menu"
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
-              onChange={(value) => {
-                setSpeechFormat(value as SpeechOutputFormat);
-                saveSpeechDraft({ format: value as SpeechOutputFormat });
-              }}
-              disabled={generatingSpeech}
-            />
+            <div className="canvas-audio-option-field">
+              <span className="canvas-audio-option-label">输出格式</span>
+              <SelectMenu
+                value={supportedFormat || speechFormats[0]}
+                ariaLabel="配音输出格式"
+                className="canvas-audio-option-select"
+                menuClassName="canvas-audio-option-menu"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
+                onChange={(value) => {
+                  const nextFormat = value as SpeechOutputFormat;
+                  setSpeechFormat(nextFormat);
+                  if (nextFormat !== 'mp3' && speechAdvanced.bitrate !== undefined) {
+                    const nextAdvanced = { ...speechAdvanced, bitrate: undefined };
+                    setSpeechAdvanced(nextAdvanced);
+                    saveSpeechDraft({ ...nextAdvanced, format: nextFormat });
+                  } else {
+                    saveSpeechDraft({ format: nextFormat });
+                  }
+                }}
+                disabled={generatingSpeech}
+              />
+            </div>
           </>}
           {speechSpeedRange && <div className="canvas-audio-option-speed">
               <label htmlFor={`canvas-audio-speed-${node.id}`}>语速</label>
@@ -628,32 +662,36 @@ export default function CanvasAudioNodePanel({
               />
             </div>}
           </> : <>
-            <label htmlFor={`canvas-audio-voice-${node.id}`}>音色名称</label>
-            <input
-              id={`canvas-audio-voice-${node.id}`}
-              value={voice}
-              maxLength={100}
-              placeholder="留空使用默认音色"
-              onChange={(event) => {
-                const nextVoice = event.target.value;
-                setVoice(nextVoice);
-                setSpeechError("");
-                saveSpeechDraft({ voice: nextVoice });
-              }}
-              disabled={generatingSpeech}
-            />
+            <label className="canvas-audio-option-field" htmlFor={`canvas-audio-voice-${node.id}`}>
+              <span className="canvas-audio-option-label">音色名称</span>
+              <input
+                id={`canvas-audio-voice-${node.id}`}
+                value={voice}
+                maxLength={100}
+                placeholder="留空使用默认音色"
+                onChange={(event) => {
+                  const nextVoice = event.target.value;
+                  setVoice(nextVoice);
+                  setSpeechError("");
+                  saveSpeechDraft({ voice: nextVoice });
+                }}
+                disabled={generatingSpeech}
+              />
+            </label>
           </>}
           {usesRegisteredVoice && <small className="canvas-audio-input-note">当前使用已登记的自备音色编号，预设音色与样音不会参与本次生成。清空编号即可恢复预设音色。</small>}
-          {speechProfile && <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={(next) => { setSpeechAdvanced(next); saveSpeechDraft(next); }} disabled={generatingSpeech} compact />}
+          {speechProfile && <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={(next) => { setSpeechAdvanced(next); saveSpeechDraft(next); }} disabled={generatingSpeech} compact alwaysVisible modelId={selectedModel?.id} format={supportedFormat || speechFormats[0]} />}
           <div className="canvas-audio-voice-sample-row">
             {usesRegisteredVoice
               ? <span className="voice-sample-unavailable">已登记音色编号暂无预设样音</span>
-              : speechProfile && voice.trim()
+              : speechProfile && voice.trim() && voiceChoice !== "custom"
               ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} providerKey={speechSampleProviderKey} />
+              : speechProfile && voiceChoice === "custom"
+              ? <span className="voice-sample-unavailable" title="自定义音色没有经过验证的本地样音">自定义音色暂无对应样音</span>
               : <span className="voice-sample-unavailable">{speechProfile?.requiresVoiceId ? '已登记音色暂无本地样音' : speechProfile?.supportsDialogue ? '请为每句对白选择音色' : '选择已收录音色后可播放样音'}</span>}
-            <small>本地样音不调用配音接口、不消耗额度；样音仅用于感受音色风格。</small>
+            <small>本地样音只播放精确匹配的预设音色，不消耗额度；自定义音色不会使用其他音色代替。</small>
           </div>
-        </details>
+        </section>
         </section>}
         {activeMode === "transcription" && <section className="canvas-audio-speech canvas-audio-transcription" aria-label="音频转写">
           <div className="canvas-audio-speech-heading">
@@ -661,48 +699,57 @@ export default function CanvasAudioNodePanel({
             <button type="button" className="canvas-audio-speech-copy" onClick={() => transcriptionInputRef.current?.click()} disabled={transcriptionBusy}>选择文件</button>
           </div>
           <div className="canvas-audio-transcription-options">
-            <SelectMenu
-              value={transcriptionDraft.language || ""}
-              ariaLabel="录音语言"
-              className="canvas-audio-option-select"
-              menuClassName="canvas-audio-option-menu"
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              options={TRANSCRIPTION_LANGUAGES}
-              onChange={(value) => saveTranscriptionDraft({ language: value })}
-              disabled={transcriptionBusy}
-            />
-            {transcriptionDraft.language === "__custom" && <input value={transcriptionDraft.customLanguage || ""} maxLength={30} placeholder="填写语言代码，例如 it" onChange={(event) => saveTranscriptionDraft({ customLanguage: event.target.value })} disabled={transcriptionBusy} />}
-            <SelectMenu
-              value={transcriptionDraft.responseFormat || "verbose_json"}
-              ariaLabel="转写结果格式"
-              className="canvas-audio-option-select"
-              menuClassName="canvas-audio-option-menu"
-              portalZIndex={CANVAS_Z_INDEX.modalPopover}
-              options={TRANSCRIPTION_FORMATS}
-              onChange={(value) => saveTranscriptionDraft({ responseFormat: value as AudioTranscriptionResponseFormat })}
-              disabled={transcriptionBusy}
-            />
+            <label className="canvas-audio-option-field">
+              <span className="canvas-audio-option-label">识别语言</span>
+              <SelectMenu
+                value={transcriptionDraft.language || ""}
+                ariaLabel="录音语言"
+                className="canvas-audio-option-select"
+                menuClassName="canvas-audio-option-menu"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                options={TRANSCRIPTION_LANGUAGES}
+                onChange={(value) => saveTranscriptionDraft({ language: value })}
+                disabled={transcriptionBusy}
+              />
+            </label>
+            {transcriptionDraft.language === "__custom" && <label className="canvas-audio-option-field">
+              <span className="canvas-audio-option-label">语言代码</span>
+              <input value={transcriptionDraft.customLanguage || ""} maxLength={30} placeholder="例如 it" onChange={(event) => saveTranscriptionDraft({ customLanguage: event.target.value })} disabled={transcriptionBusy} />
+            </label>}
+            <label className="canvas-audio-option-field">
+              <span className="canvas-audio-option-label">输出内容</span>
+              <SelectMenu
+                value={transcriptionDraft.responseFormat || "verbose_json"}
+                ariaLabel="转写结果格式"
+                className="canvas-audio-option-select"
+                menuClassName="canvas-audio-option-menu"
+                portalZIndex={CANVAS_Z_INDEX.modalPopover}
+                options={TRANSCRIPTION_FORMATS}
+                onChange={(value) => saveTranscriptionDraft({ responseFormat: value as AudioTranscriptionResponseFormat })}
+                disabled={transcriptionBusy}
+              />
+            </label>
           </div>
-          <textarea
-            value={transcriptionDraft.prompt || ""}
-            maxLength={12000}
-            rows={4}
-            placeholder="可选：填写人名、品牌或行业术语，帮助提高识别准确度"
-            onChange={(event) => saveTranscriptionDraft({ prompt: event.target.value })}
-            disabled={transcriptionBusy}
-          />
-          <details className="canvas-audio-advanced">
-            <summary>识别稳定性</summary>
-            <div className="canvas-audio-transcription-temperature">
-              <input type="range" min="0" max="1" step="0.05" value={transcriptionDraft.temperature ?? 0} onChange={(event) => saveTranscriptionDraft({ temperature: Number(event.target.value) })} disabled={transcriptionBusy} />
-              <output>{(transcriptionDraft.temperature ?? 0) === 0 ? "最稳定" : (transcriptionDraft.temperature ?? 0).toFixed(2)}</output>
-              <small>默认最稳定；提高后结果会更灵活。</small>
-            </div>
-          </details>
-          {transcriptionError && <p className="canvas-audio-error" role="alert">{transcriptionError}</p>}
+          <label className="canvas-audio-transcription-prompt">
+            <span className="canvas-audio-option-label">辅助词语（选填）</span>
+            <textarea
+              value={transcriptionDraft.prompt || ""}
+              maxLength={12000}
+              rows={4}
+              placeholder="填写人名、品牌或行业术语，帮助提高识别准确度"
+              onChange={(event) => saveTranscriptionDraft({ prompt: event.target.value })}
+              disabled={transcriptionBusy}
+            />
+          </label>
+          <div className="canvas-audio-transcription-temperature">
+            <label htmlFor={`canvas-audio-temperature-${node.id}`}>识别稳定性</label>
+            <input id={`canvas-audio-temperature-${node.id}`} type="range" min="0" max="1" step="0.05" value={transcriptionDraft.temperature ?? 0} onChange={(event) => saveTranscriptionDraft({ temperature: Number(event.target.value) })} disabled={transcriptionBusy} />
+            <output>{(transcriptionDraft.temperature ?? 0) === 0 ? "最稳定" : (transcriptionDraft.temperature ?? 0).toFixed(2)}</output>
+            <small>默认最稳定；提高后结果会更灵活。</small>
+          </div>
           <small className="canvas-audio-input-note">支持 MP3、WAV、OGG、M4A、FLAC、WebM、PCM，最大 50 MiB</small>
         </section>}
-        {(activeMode === "music" || activeMode === "sound-effect") && <section className="canvas-audio-speech canvas-audio-music" aria-label={`${musicTaskKindName}生成`}>
+        {(activeMode === "music" || activeMode === "sound-effect") && <section className="canvas-audio-speech canvas-audio-music" data-model-id={activeMusicProfile?.modelId} aria-label={`${musicTaskKindName}生成`}>
           <div className="canvas-audio-speech-heading">
             <div><label htmlFor={`canvas-audio-music-${node.id}`}>{musicTaskKindName === "音效" ? "音效描述" : "音乐创作描述"}</label><small>{activeMusicProfile?.promptRequired ? musicTaskKindName === "音效" ? "描述声音本身，不是完整歌曲" : "描述曲风、情绪、乐器与场景" : "按所选模型填写创作描述或工作流素材"}</small></div>
             {activeMusicProfile && <span className="canvas-audio-speech-count">{activeMusicDraft.prompt.length}{activeMusicProfile.promptMaxLength ? ` / ${activeMusicProfile.promptMaxLength}` : " 字"}</span>}
@@ -723,19 +770,14 @@ export default function CanvasAudioNodePanel({
           {activeMusicProfile && <CangyuanMusicOptionsFields
             profile={activeMusicProfile}
             options={activeMusicDraft.options}
+            alwaysVisible
             onChange={(options: CangyuanMusicOptions) => (activeMode === "sound-effect" ? saveSoundEffectDraft : saveMusicDraft)({ options })}
-            onUploadStateChange={(fieldId, uploading) => setUploadingMusicFields((current) => {
-              const next = new Set(current);
-              if (uploading) next.add(fieldId);
-              else next.delete(fieldId);
-              return next;
-            })}
+            onUploadStateChange={handleMusicUploadStateChange}
           />}
           {!(activeMode === "sound-effect" ? soundEffectModels : musicModels).length && <p className="canvas-audio-input-note">当前没有已接入可运行接口的{musicTaskKindName}模型。启用模型前，请确认对应服务商已完成该任务类型的接口适配。</p>}
-          {musicError && <p className="canvas-audio-error" role="alert">{musicError}</p>}
         </section>}
         </div>
-        <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
+        {showAudioSource && <aside className="canvas-audio-panel-source" aria-label="音频素材与生成记录">
           <div className="canvas-audio-panel-intro">
             <div className="canvas-audio-panel-intro-copy">
               <span className="canvas-audio-panel-icon" aria-hidden="true">♫</span>
@@ -770,7 +812,7 @@ export default function CanvasAudioNodePanel({
               <small>生成配音或导入素材后，可在此试听</small>
             </div>
           )}
-          {speechHistory.length > 0 && <details className="canvas-audio-generation" open>
+          {speechHistory.length > 0 && <details className="canvas-audio-generation" open={activeMode === "speech"}>
             <summary>配音生成记录 · {speechHistory.length} 条</summary>
             <div className="canvas-audio-generation-list">
               {speechHistory.map((generation, index) => <article key={`${generation.createdAt}-${index}`}>
@@ -786,7 +828,7 @@ export default function CanvasAudioNodePanel({
               </article>)}
             </div>
           </details>}
-          {transcriptionHistory.length > 0 && <details className="canvas-audio-generation" open>
+          {transcriptionHistory.length > 0 && <details className="canvas-audio-generation" open={activeMode === "transcription"}>
             <summary>转写记录 · {transcriptionHistory.length} 条</summary>
             <div className="canvas-audio-generation-list">
               {transcriptionHistory.map((transcription, transcriptionIndex) => <article key={`${transcription.createdAt}-${transcriptionIndex}`}>
@@ -804,7 +846,7 @@ export default function CanvasAudioNodePanel({
               </article>)}
             </div>
           </details>}
-          {musicHistory.length > 0 && <details className="canvas-audio-generation" open>
+          {musicHistory.length > 0 && <details className="canvas-audio-generation" open={activeMode === "music" || activeMode === "sound-effect"}>
             <summary>音乐与音效任务记录 · {musicHistory.length} 条</summary>
             <div className="canvas-audio-generation-list">
               {musicHistory.map((musicTask) => <article key={musicTask.id}>
@@ -824,7 +866,7 @@ export default function CanvasAudioNodePanel({
               </article>)}
             </div>
           </details>}
-        </aside>
+        </aside>}
       </div>
       <div className="canvas-audio-panel-actions">
         {(activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError}</p>}

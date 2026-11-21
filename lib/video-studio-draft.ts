@@ -46,7 +46,8 @@ export function hasVideoStudioDraftContent(draft: VideoStudioDraftInput, default
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const STORAGE_KEY = 'sanmao.video-studio-draft.v1';
-const MAX_SERIALIZED_LENGTH = 20_000;
+const MAX_SERIALIZED_LENGTH = 24_000;
+const MAX_PROMPT_LENGTH = 20_000;
 const RATIOS = new Set(['auto', '21:9', '16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3']);
 const OPERATIONS = new Set(['generate', 'edit', 'extend']);
 const INPUT_MODES = new Set(['text', 'first-frame', 'frames', 'reference']);
@@ -71,7 +72,7 @@ function boundedInteger(value: unknown, fallback: number, min: number, max: numb
 
 function normalizeDraft(value: unknown): VideoStudioDraft | null {
   if (!isRecord(value) || value.version !== 1 || !Number.isFinite(value.savedAt) || typeof value.savedAt !== 'number') return null;
-  if (typeof value.prompt !== 'string' || value.prompt.length > 6000 || INLINE_MEDIA_DATA_URL.test(value.prompt)) return null;
+  if (typeof value.prompt !== 'string' || value.prompt.length > MAX_PROMPT_LENGTH || INLINE_MEDIA_DATA_URL.test(value.prompt)) return null;
 
   const ratio = typeof value.ratio === 'string' && RATIOS.has(value.ratio) ? value.ratio : '16:9';
   const modelId = typeof value.modelId === 'string' && value.modelId.length > 0 && value.modelId.length <= 240 ? value.modelId : 'auto';

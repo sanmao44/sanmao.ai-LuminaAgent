@@ -214,6 +214,8 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   const classifiedPurposes = hasReviewableAiSuggestion ? [] : audioClassification.purposes;
   for (const purpose of classifiedPurposes) {
     if (purpose === 'speech') audioCapabilities.add('speech');
+    if (purpose === 'voice-conversion') audioCapabilities.add('voice-conversion');
+    if (purpose === 'audio-isolation') audioCapabilities.add('audio-isolation');
     if (purpose === 'transcription') audioCapabilities.add('transcription');
     if (purpose === 'music') audioCapabilities.add('music-generate');
     if (purpose === 'sound-effect') audioCapabilities.add('sound-effect');
@@ -265,7 +267,7 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities, classification: model.classification });
   const editOnly = isImageEditOnlyModel({ rawId: model.rawId, displayName: model.displayName });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
-  const audioTaskCapabilities: readonly ModelCapability[] = ['speech', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'];
+  const audioTaskCapabilities: readonly ModelCapability[] = ['speech', 'voice-conversion', 'audio-isolation', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'];
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !audioTaskCapabilities.includes(capability) && !(editOnly && capability === 'generate'));
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;

@@ -356,6 +356,19 @@ export type CanvasAudioDraft = {
   instruct?: string;
   dialogue?: Array<{ text: string; voice: string }>;
   dialogueText?: string;
+  aigcWatermark?: boolean;
+  bitrate?: SpeechAdvancedOptions['bitrate'];
+  channel?: SpeechAdvancedOptions['channel'];
+  effectIntensity?: number;
+  effectPitch?: number;
+  effectTimbre?: number;
+  latexRead?: boolean;
+  pitch?: number;
+  pronunciationTone?: string;
+  sampleRate?: SpeechAdvancedOptions['sampleRate'];
+  soundEffects?: SpeechAdvancedOptions['soundEffects'];
+  textNormalizationMode?: SpeechAdvancedOptions['textNormalizationMode'];
+  volume?: number;
   updatedAt?: number;
 };
 

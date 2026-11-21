@@ -59,3 +59,16 @@ test('Tripo recommended quality fields retain non-empty custom server values', (
     geometry_quality: 'future-geometry', texture_quality: 'future-texture', texture_version: 'future-version',
   });
 });
+
+test('canvas Tripo quality controls can render expanded while studio defaults stay collapsible', () => {
+  const profile = contracts.getCangyuan3DModelProfile('tripo3d-v3.1');
+  const props = { profile, options: {}, onChange: () => undefined };
+  const studioMarkup = renderToStaticMarkup(createElement(component.default, props));
+  const canvasMarkup = renderToStaticMarkup(createElement(component.default, { ...props, alwaysVisible: true }));
+
+  assert.match(studioMarkup, /<details class="cangyuan-3d-advanced">/);
+  assert.doesNotMatch(canvasMarkup, /<details/);
+  for (const label of ['贴图', '几何质量', '贴图质量', '贴图版本', '面数上限', 'PBR 材质']) {
+    assert.match(canvasMarkup, new RegExp(label));
+  }
+});

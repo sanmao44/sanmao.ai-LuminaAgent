@@ -28,7 +28,7 @@ const musicFieldsModule = loader('./components/cangyuan/CangyuanMusicOptionsFiel
 const CangyuanMusicOptionsFields = musicFieldsModule.default;
 const { SFX_KEY_OPTIONS } = musicFieldsModule;
 const { cangyuanMusicTaskKindName } = musicFieldsModule;
-const { getCangyuanMusicModelProfile } = loader('./packages/contracts/cangyuan-media');
+const { getCangyuanMusicModelProfile, CANGYUAN_MUSIC_MODEL_PROFILE_LIST } = loader('./packages/contracts/cangyuan-media');
 
 function renderStemOptions(options) {
   return renderToStaticMarkup(createElement(CangyuanMusicOptionsFields, {
@@ -75,6 +75,22 @@ test('Suno stem UI makes type optional and only requires a track name for advanc
   assert.match(advancedMarkup, /required=""/);
 });
 
+test('audio-node option layout renders every registered music and sound-effect model profile', () => {
+  assert.equal(CANGYUAN_MUSIC_MODEL_PROFILE_LIST.length, 24);
+
+  for (const profile of CANGYUAN_MUSIC_MODEL_PROFILE_LIST) {
+    const markup = renderToStaticMarkup(createElement(CangyuanMusicOptionsFields, {
+      profile,
+      options: {},
+      onChange: () => undefined,
+      alwaysVisible: true,
+    }));
+
+    assert.match(markup, /class="cangyuan-music-options(?:\s|\")/, profile.modelId);
+    assert.doesNotMatch(markup, /<details/, profile.modelId);
+  }
+});
+
 test('Suno v6 persona model presents Chinese presets while keeping provider values', () => {
   const markup = renderSunoV6Options({});
 
@@ -112,6 +128,20 @@ test('Lyria UI preserves every documented creative option with model-specific bo
     assert.match(markup, /<details class="cangyuan-music-advanced"><summary>节奏与输出</);
     assert.equal(markup.includes('184 秒'), modelId === 'lyria-3-pro');
   }
+});
+
+test('Lyria canvas options keep every parameter visible in a compact two-column panel', () => {
+  const markup = renderToStaticMarkup(createElement(CangyuanMusicOptionsFields, {
+    profile: getCangyuanMusicModelProfile('lyria-3-pro'),
+    options: {},
+    onChange: () => undefined,
+    alwaysVisible: true,
+  }));
+
+  assert.match(markup, /class="cangyuan-music-options cangyuan-music-options-lyria"/);
+  assert.match(markup, /class="cangyuan-music-advanced is-always-visible"/);
+  assert.doesNotMatch(markup, /<details/);
+  assert.match(markup, /曲名[\s\S]*目标时长[\s\S]*纯音乐[\s\S]*歌词[\s\S]*节奏与输出[\s\S]*保存格式/);
 });
 
 test('music option controls take their limits from the selected model profile', () => {

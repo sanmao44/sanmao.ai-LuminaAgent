@@ -5,12 +5,14 @@ import { createTsRequire } from './ts-require.mjs';
 const { supportedSpeechModels, supportedTranscriptionModels, supportedMusicModels, supportedThreeDModels } = createTsRequire(process.cwd())('./components/audio/model-options');
 const { inferModel } = createTsRequire(process.cwd())('./lib/store');
 
-test('all five Cangyuan speech models are inferred into the speech picker while Muse ASR stays excluded', () => {
+test('all seven Cangyuan speech models are inferred into the speech picker while Muse ASR stays excluded', () => {
   const provider = { id: 'cangyuan', type: 'openai-compatible', platform: 'cangyuan' };
   const speechModelIds = [
     'elevenlabs-dialogue',
     'elevenlabs-v4-tts',
     'gemini-tts',
+    'minimax-speech-2.8-hd-tts',
+    'minimax-speech-2.8-turbo-tts',
     'mu1-muse-tts',
     'voice-clone-tts',
   ];

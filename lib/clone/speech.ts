@@ -11,7 +11,7 @@
 import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers';
 import { isCangyuanProvider } from '../cangyuan-provider';
 import { getRuntimeModelCandidates } from '../store';
-import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, type AudioSynthesisRequest, type SpeechAdvancedOptionKey, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, type AudioSynthesisRequest, type SpeechAdvancedOptionKey, type SpeechAdvancedOptions, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
 
 export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModelCandidates>>[number]>;
 
@@ -27,6 +27,19 @@ const SPEECH_ADVANCED_OPTION_LABELS: Readonly<Record<SpeechAdvancedOptionKey, st
   emotion: '情绪',
   instruct: '语气说明',
   dialogue: '多人对白',
+  aigcWatermark: '生成内容水印',
+  bitrate: '音频比特率',
+  channel: '声道数',
+  effectIntensity: '力度效果',
+  effectPitch: '音高效果',
+  effectTimbre: '音色效果',
+  latexRead: '公式朗读',
+  pitch: '音高',
+  pronunciationTone: '发音标注',
+  sampleRate: '采样率',
+  soundEffects: '声音效果',
+  textNormalizationMode: '文本规范化方式',
+  volume: '音量',
 };
 
 const SPEECH_ADVANCED_OPTION_KEYS = Object.keys(SPEECH_ADVANCED_OPTION_LABELS);
@@ -36,8 +49,12 @@ export async function resolveSpeechRuntime(modelId: string | null = null) {
   return candidates.find((runtime) => runtime.model.capabilities.includes('speech')) ?? null;
 }
 
-export function speechEndpoint(provider: RuntimeProvider) {
-  const base = runtimeBaseUrl(provider).replace(/\/+$/, '');
+export function speechEndpoint(provider: RuntimeProvider, modelId?: string) {
+  let base = runtimeBaseUrl(provider).replace(/\/+$/, '');
+  if (isCangyuanProvider(provider) && /^minimax-speech-2\.8-(?:hd|turbo)-tts$/i.test(modelId || '')) {
+    // Cangyuan documents MiniMax TTS on its public API host, separate from the console host.
+    base = base.replace(/^https:\/\/ai\.cangyuansuanli\.cn(?=\/|$)/i, 'https://direct-api.cangyuansuanli.cn');
+  }
   return /\/v1$/i.test(base) ? `${base}/audio/speech` : `${base}/v1/audio/speech`;
 }
 
@@ -83,7 +100,7 @@ export function audioExtension(contentType: string) {
 /** 服务商明确以参数错误拒单时值得换一种参数组合重试一次。 */
 /** 留空音色时，若服务端要求必填 voice，用它兜底（OpenAI 兼容平台的默认音色）。 */
 
-export type SpeechRequest = Pick<AudioSynthesisRequest, 'text' | 'voice' | 'format' | 'speed' | 'applyTextNormalization' | 'engine' | 'languageCode' | 'language' | 'seed' | 'similarityBoost' | 'stability' | 'voiceId' | 'emotion' | 'instruct' | 'dialogue'> & { signal?: AbortSignal };
+export type SpeechRequest = Pick<AudioSynthesisRequest, 'text' | 'voice' | 'format' | 'speed'> & SpeechAdvancedOptions & { signal?: AbortSignal };
 
 export type SpeechAudio = {
   buffer: Buffer;
@@ -124,6 +141,24 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     if (input.languageCode && profile.languageCodes && !profile.languageCodes.includes(input.languageCode)) throw new Error('所选朗读语言不受当前型号支持。');
     if (input.language && profile.languageCodes && !profile.languageCodes.includes(input.language)) throw new Error('所选声音语言不受当前型号支持。');
     if (input.emotion && profile.emotionOptions && !profile.emotionOptions.includes(input.emotion)) throw new Error('所选情绪不受当前型号支持。');
+    if (input.seed !== undefined && (!Number.isInteger(input.seed) || input.seed < 0)) throw new Error('随机种子必须是非负整数。');
+    if (input.bitrate && !['32000', '64000', '128000', '256000'].includes(input.bitrate)) throw new Error('所选音频比特率不受当前型号支持。');
+    if (input.channel && !['1', '2'].includes(input.channel)) throw new Error('所选声道数不受当前型号支持。');
+    if (input.sampleRate && !['8000', '16000', '22050', '24000', '32000', '44100'].includes(input.sampleRate)) throw new Error('所选采样率不受当前型号支持。');
+    if (input.soundEffects && !['spacious_echo', 'auditorium_echo', 'lofi_telephone', 'robotic'].includes(input.soundEffects)) throw new Error('所选声音效果不受当前型号支持。');
+    if (input.textNormalizationMode && !['basic', 'quality'].includes(input.textNormalizationMode)) throw new Error('所选文本规范化方式不受当前型号支持。');
+    if (input.bitrate && input.format && input.format !== 'mp3') throw new Error('音频比特率仅支持 MP3 格式。');
+    for (const [key, value, min, max] of [
+      ['effectIntensity', input.effectIntensity, -100, 100],
+      ['effectPitch', input.effectPitch, -100, 100],
+      ['effectTimbre', input.effectTimbre, -100, 100],
+      ['pitch', input.pitch, -12, 12],
+      ['volume', input.volume, 0.01, 10],
+    ] as const) {
+      if (value !== undefined && (!Number.isFinite(value) || value < min || value > max)) {
+        throw new Error(`${SPEECH_ADVANCED_OPTION_LABELS[key]}超出允许范围。`);
+      }
+    }
     if (profile.supportsDialogue && (!input.dialogue?.length || input.dialogue.length > 50)) throw new Error('多人对白需要 1 到 50 句。');
     if (!profile.supportsDialogue && input.dialogue?.length) throw new Error('当前配音型号不支持多人对白。');
     if (input.voice && (profile.supportsDialogue || profile.requiresVoiceId)) throw new Error('当前配音型号使用对白音色或已登记的音色编号，不能再传预设音色。');
@@ -152,7 +187,20 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     if (advancedOptions.emotion) body.emotion = advancedOptions.emotion;
     if (advancedOptions.instruct) body.instruct = advancedOptions.instruct;
     if (advancedOptions.dialogue?.length) body.dialogue = advancedOptions.dialogue;
-    const response = await fetch(speechEndpoint(runtime.provider), {
+    if (advancedOptions.aigcWatermark !== undefined) body.aigc_watermark = advancedOptions.aigcWatermark;
+    if (advancedOptions.bitrate) body.bitrate = advancedOptions.bitrate;
+    if (advancedOptions.channel) body.channel = advancedOptions.channel;
+    if (advancedOptions.effectIntensity !== undefined) body.effect_intensity = advancedOptions.effectIntensity;
+    if (advancedOptions.effectPitch !== undefined) body.effect_pitch = advancedOptions.effectPitch;
+    if (advancedOptions.effectTimbre !== undefined) body.effect_timbre = advancedOptions.effectTimbre;
+    if (advancedOptions.latexRead !== undefined) body.latex_read = advancedOptions.latexRead;
+    if (advancedOptions.pitch !== undefined) body.pitch = advancedOptions.pitch;
+    if (advancedOptions.pronunciationTone) body.pronunciation_tone = advancedOptions.pronunciationTone;
+    if (advancedOptions.sampleRate) body.sample_rate = advancedOptions.sampleRate;
+    if (advancedOptions.soundEffects) body.sound_effects = advancedOptions.soundEffects;
+    if (advancedOptions.textNormalizationMode) body.text_normalization_mode = advancedOptions.textNormalizationMode;
+    if (advancedOptions.volume !== undefined) body.volume = advancedOptions.volume;
+    const response = await fetch(speechEndpoint(runtime.provider, runtime.model.rawId), {
       method: 'POST',
       headers: { ...authHeaders(runtime.provider), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -185,7 +233,7 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   };
   const voice = String(input.voice || '').trim();
   if (voice) body.voice = voice;
-  const response = await fetch(speechEndpoint(runtime.provider), {
+  const response = await fetch(speechEndpoint(runtime.provider, runtime.model.rawId), {
     method: 'POST',
     headers: { ...authHeaders(runtime.provider), 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

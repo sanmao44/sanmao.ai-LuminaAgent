@@ -67,6 +67,15 @@ test('video studio draft round-trips versioned settings and documented model par
   assert.ok(Number.isFinite(restored.savedAt));
 });
 
+test('video studio draft round-trips prompts up to the largest documented model limit', () => {
+  const storage = new MemoryStorage();
+  const prompt = 'x'.repeat(20_000);
+
+  assert.equal(saveVideoStudioDraft(draft({ prompt }), storage), true);
+  assert.equal(loadVideoStudioDraft(storage)?.prompt, prompt);
+  assert.equal(saveVideoStudioDraft(draft({ prompt: `${prompt}x` }), storage), false);
+});
+
 test('video studio recognizes Agnes-only parameter edits as a draft', () => {
   const defaults = draft({
     prompt: '', modelId: 'auto', operation: 'generate', inputMode: 'text', seconds: 5,

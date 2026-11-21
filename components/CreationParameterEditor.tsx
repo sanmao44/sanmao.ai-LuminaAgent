@@ -353,6 +353,24 @@ function ImageEditor({
       ariaLabel="图片系列"
     />
   ) : null;
+  const cangyuanVariantField = cangyuanProfile?.variantEnum?.length ? (
+    <label className="creation-field compact">
+      <small>生成模式</small>
+      <SelectMenu
+        portalZIndex={portalZIndex}
+        value={cangyuanProfile.variantEnum.includes(settings.variant || "")
+          ? settings.variant || ""
+          : cangyuanProfile.variantDefault || cangyuanProfile.variantEnum[0]}
+        onChange={(value) => update("variant", value as ImageCreationSettings["variant"])}
+        options={cangyuanProfile.variantEnum.map((value) => ({
+          value,
+          label: value === "standard" ? "标准" : value === "highspeed" ? "高速" : value,
+          description: value === "standard" ? "标准生成速度" : "高速生成模式",
+        }))}
+        ariaLabel="图片生成模式"
+      />
+    </label>
+  ) : null;
   const cangyuanPromptExpansionControl = cangyuanProfile?.supportsPromptExpansion ? (
     <label className="creation-field creation-toggle">
       <small>提示词扩写</small>
@@ -522,6 +540,7 @@ function ImageEditor({
             <span className="canvas-parameter-group-label">生成系列</span>
             {cangyuanSeriesSelect}
           </div>}
+          {cangyuanVariantField}
           <button
             type="button"
             className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -699,6 +718,7 @@ function ImageEditor({
                   <span className="canvas-parameter-group-label">生成系列</span>
                   {cangyuanSeriesSelect}
                 </div>}
+                {cangyuanVariantField}
                 <button
                   type="button"
                   className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -877,6 +897,7 @@ function ImageEditor({
           <small>生成系列</small>
           {cangyuanSeriesSelect}
         </label>}
+        {cangyuanVariantField}
         {flat && imageQualityOptions.length > 0 && (
           <label className="creation-field compact">
             <small>质量</small>

@@ -88,6 +88,7 @@ export type ImageModelParameters = {
   resolution?: string;
   tier?: string;
   series?: string;
+  variant?: 'standard' | 'highspeed';
   seed?: string;
   enablePromptExpansion?: boolean;
   style?: string;
@@ -132,7 +133,7 @@ export function parseImageModelParameters(value: unknown): ImageModelParametersP
   const result: ImageModelParameters = {};
   const invalid = (label: string): ImageModelParametersParseResult => ({ ok: false, error: `${label}格式无效。` });
   const strings: ReadonlyArray<[keyof ImageModelParameters, string]> = [
-    ['resolution', '输出清晰度'], ['tier', '生成档位'], ['series', '图片系列'], ['seed', '随机种子'],
+    ['resolution', '输出清晰度'], ['tier', '生成档位'], ['series', '图片系列'], ['variant', '生成模式'], ['seed', '随机种子'],
     ['style', '风格偏好'], ['negativePrompt', '排除内容'], ['safetyIdentifier', '安全追踪标识'], ['markupImage', '透明标记图'],
     ['svgAuthorModel', '矢量绘图模型'],
   ];
@@ -143,6 +144,10 @@ export function parseImageModelParameters(value: unknown): ImageModelParametersP
     if (key === 'resolution') result.resolution = current;
     else if (key === 'tier') result.tier = current;
     else if (key === 'series') result.series = current;
+    else if (key === 'variant') {
+      if (current !== 'standard' && current !== 'highspeed') return invalid('生成模式');
+      result.variant = current;
+    }
     else if (key === 'seed') result.seed = current;
     else if (key === 'style') result.style = current;
     else if (key === 'negativePrompt') result.negativePrompt = current;

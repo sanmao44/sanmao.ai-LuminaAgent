@@ -12,6 +12,12 @@
 .canvas-menu-media+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
 .canvas-create-context-menu .canvas-menu-item-tool{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
 .canvas-create-context-menu .canvas-menu-item-tool+.canvas-menu-group{margin-top:10px;padding-top:10px;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+.canvas-create-context-menu .canvas-context-menu-body{scrollbar-width:none}
+.canvas-create-context-menu .canvas-context-menu-body::-webkit-scrollbar{display:none}
+.canvas-create-context-menu .canvas-menu-group{gap:2px}
+.canvas-create-context-menu button.canvas-menu-item{min-height:40px;padding:4px 7px}
+.canvas-create-context-menu .canvas-menu-item-tool{margin-top:7px;padding-top:7px}
+.canvas-create-context-menu .canvas-menu-item-tool+.canvas-menu-group{margin-top:7px;padding-top:7px}
 .canvas-context-menu button.canvas-menu-item,.canvas-context-menu button.canvas-menu-media{width:100%;min-height:48px;display:flex;align-items:center;gap:10px;margin:0;padding:7px;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--text);text-align:left;font:inherit;cursor:pointer;transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
 .canvas-context-menu button.canvas-menu-item:hover{border-color:color-mix(in srgb,var(--accent) 26%,var(--line));background:color-mix(in srgb,var(--accent-soft) 72%,var(--panel));box-shadow:0 5px 14px color-mix(in srgb,var(--accent) 8%,transparent);transform:translateX(2px)}
 .canvas-context-menu button.canvas-menu-item:active,.canvas-context-menu button.canvas-menu-media:active{transform:translateX(1px) scale(.985)}

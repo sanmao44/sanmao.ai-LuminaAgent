@@ -5,12 +5,26 @@ import { createTsRequire } from './ts-require.mjs';
 const { CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES, getCangyuanImageModelProfile } =
   createTsRequire(process.cwd())('./lib/cangyuan-image-capabilities');
 
-test('registry covers the 72 exact public image model names', () => {
-  assert.equal(CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES.length, 72);
-  assert.equal(new Set(CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES).size, 72);
+test('registry covers the 73 exact public image model names', () => {
+  assert.equal(CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES.length, 73);
+  assert.equal(new Set(CANGYUAN_IMAGE_PUBLIC_MODEL_NAMES).size, 73);
   assert.equal(getCangyuanImageModelProfile('Midjourney-v8.1')?.publicModel, 'Midjourney-v8.1');
   assert.equal(getCangyuanImageModelProfile('midjourney-v8.1'), null);
   assert.equal(getCangyuanImageModelProfile('unlisted-image-model'), null);
+});
+
+test('MiniMax H3 image profile exposes its documented generation controls and limits', () => {
+  const profile = getCangyuanImageModelProfile('minimax-h3-image');
+  assert.ok(profile);
+  assert.equal(profile.nMax, 4);
+  assert.equal(profile.imagesMaxItems, 16);
+  assert.deepEqual(profile.qualityEnum, ['1k', '2k', '4k']);
+  assert.equal(profile.qualityDefault, '1k');
+  assert.equal(profile.promptMaxLength, 8000);
+  assert.equal(profile.supportsCustomDimensions, false);
+  assert.deepEqual(profile.variantEnum, ['standard', 'highspeed']);
+  assert.equal(profile.variantDefault, 'standard');
+  assert.deepEqual(profile.sizeRecommendations, ['auto', '21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16', '9:21']);
 });
 
 test('GPT Image AX profile exposes its documented tiers, enums, and media limits', () => {

@@ -23,6 +23,8 @@ export type AudioModelClassificationInput = {
 
 const PURPOSE_ORDER: readonly Exclude<AudioModelPurpose, 'unknown'>[] = [
   'speech',
+  'voice-conversion',
+  'audio-isolation',
   'transcription',
   'music',
   'sound-effect',
@@ -31,6 +33,8 @@ const PURPOSE_ORDER: readonly Exclude<AudioModelPurpose, 'unknown'>[] = [
 
 const PURPOSE_LABELS: Record<AudioModelPurpose, string> = {
   speech: '配音',
+  'voice-conversion': '变声',
+  'audio-isolation': '人声分离',
   transcription: '语音转写',
   music: '音乐',
   'sound-effect': '音效',
@@ -52,6 +56,8 @@ function textFromUnknown(value: unknown): string {
 function declaredPurpose(value: string): AudioModelPurpose | null {
   const normalized = value.trim().toLowerCase().replace(/[_-]+/g, ' ');
   if (!normalized) return null;
+  if (/(?:voice changer|voice changing|voice conversion|audio to audio|变声)/.test(normalized)) return 'voice-conversion';
+  if (/(?:audio isolation|voice isolation|vocal isolation|speech separation|人声分离|人声提取)/.test(normalized)) return 'audio-isolation';
   if (/(?:sound effect|sound effects|sfx|foley|音效)/.test(normalized)) return 'sound-effect';
   if (/(?:transcription|speech to text|automatic speech recognition|\basr\b|\bstt\b|语音识别|转写)/.test(normalized)) return 'transcription';
   if (/(?:text to speech|speech synthesis|voice synthesis|\btts\b|配音|语音合成)/.test(normalized)) return 'speech';
@@ -63,6 +69,8 @@ function declaredPurpose(value: string): AudioModelPurpose | null {
 function declaredCapabilityPurpose(value: string): AudioModelPurpose | null {
   switch (value.trim().toLowerCase()) {
     case 'speech': return 'speech';
+    case 'voice-conversion': return 'voice-conversion';
+    case 'audio-isolation': return 'audio-isolation';
     case 'transcription': return 'transcription';
     case 'music-generate': return 'music';
     case 'sound-effect': return 'sound-effect';
@@ -154,8 +162,10 @@ export function classifyAudioModelPurpose(input: AudioModelClassificationInput):
   const text = metadataText(input);
   const heuristicValues: Array<[AudioModelPurpose, RegExp]> = [
     ['sound-effect', /(?:sound[-_ ]?effect|sfx|foley)/],
+    ['voice-conversion', /(?:voice[-_ ]?(?:changer|changing|conversion)|audio[-_ ]?to[-_ ]?audio|变声)/],
+    ['audio-isolation', /(?:audio[-_ ]?isolation|voice[-_ ]?isolation|vocal[-_ ]?isolation|speech[-_ ]?separation|人声分离|人声提取)/],
     ['transcription', /(?:whisper|transcri|\basr\b|\bstt\b|speech[-_ ]?to[-_ ]?text)/],
-    ['speech', /(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|generation)|cosyvoice|elevenlabs|voice[-_ ]?clone)/],
+    ['speech', /(?:tts|text[-_ ]?to[-_ ]?speech|speech[-_ ]?(?:synth|generation)|cosyvoice|voice[-_ ]?clone)/],
     ['music', /(?:\bmusic\b|\bsong\b|suno|lyria|(?:^|[^a-z0-9])udio(?:[^a-z0-9]|$)|melody)/],
     ['conversation', /(?:dialogue|conversation|audio[-_ ]?chat|audio[-_ ]?conversation)/],
   ];
@@ -169,6 +179,8 @@ export function classifyAudioModelPurpose(input: AudioModelClassificationInput):
 
 function cangyuanCatalogPurposes(modelId: string): AudioModelPurpose[] {
   const id = String(modelId || '').split('/').pop()?.split(':').pop()?.toLowerCase() || '';
+  if (id === 'elevenlabs-voice-changer') return ['voice-conversion'];
+  if (id === 'elevenlabs-audio-isolation') return ['audio-isolation'];
   if (getSpeechModelProfile(id, 'cangyuan')) return ['speech'];
   if (id === 'mu1-muse-asr') return ['transcription'];
   if (id === 'mu1-muse-audio') return ['conversation'];
@@ -180,7 +192,7 @@ function cangyuanCatalogPurposes(modelId: string): AudioModelPurpose[] {
 /** Build a strict JSON-only prompt for an optional local model suggestion. */
 export function buildAudioModelClassificationPrompt(input: AudioModelClassificationInput) {
   return [
-    '请判断下面音频模型的用途，只能从 speech、transcription、music、sound-effect、conversation 中选择一个或多个。',
+    '请判断下面音频模型的用途，只能从 speech、voice-conversion、audio-isolation、transcription、music、sound-effect、conversation 中选择一个或多个。',
     '不要根据厂商名称猜测；优先依据模型名称、接口路径、能力字段和说明。无法确认时返回空数组。',
     '只返回 JSON，不要 Markdown：{"purposes":["speech"],"confidence":"medium","reason":"..."}',
     JSON.stringify({

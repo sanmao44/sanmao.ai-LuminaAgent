@@ -37,13 +37,14 @@ type Props = {
   options: CangyuanMusicOptions;
   onChange: (options: CangyuanMusicOptions) => void;
   onUploadStateChange?: (fieldId: string, uploading: boolean) => void;
+  alwaysVisible?: boolean;
 };
 
 export function cangyuanMusicTaskKindName(profile: Pick<CangyuanMusicModelProfile, 'family'> | null | undefined) {
   return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx' ? '音效' : '音乐';
 }
 
-export default function CangyuanMusicOptionsFields({ profile, options, onChange, onUploadStateChange }: Props) {
+export default function CangyuanMusicOptionsFields({ profile, options, onChange, onUploadStateChange, alwaysVisible = false }: Props) {
   const supports = (key: keyof CangyuanMusicOptions) => profile.allowedOptions.includes(key);
   const update = (patch: Partial<CangyuanMusicOptions>) => onChange({ ...options, ...patch });
   const [customPersonaModelSelected, setCustomPersonaModelSelected] = useState(() =>
@@ -87,22 +88,26 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
     const durationRange = profile.durationRange;
     const bpmRange = profile.bpmRange;
     const seedRange = profile.seedRange;
+    const tempoAndOutput = <div className="cangyuan-music-fields-grid">
+      <label className="cangyuan-music-text-field"><span>节奏速度</span><input aria-label="节奏速度，每分钟节拍数" type="number" min={bpmRange?.[0]} max={bpmRange?.[1]} step="1" value={options.bpm ?? ''} onChange={(event) => update({ bpm: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={bpmRange ? `自动，或填写 ${bpmRange[0]}–${bpmRange[1]}` : '自动'} /><small>每分钟的节拍数，越大节奏越快。</small></label>
+      <label className="cangyuan-music-text-field"><span>固定生成编号</span><input aria-label="固定生成编号" type="number" min={seedRange?.[0]} max={seedRange?.[1]} step="1" value={options.seed ?? ''} onChange={(event) => update({ seed: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="留空则每次不同" /><small>相同描述使用相同编号，便于生成接近的结果。</small></label>
+      <div className="cangyuan-music-text-field"><span>保存格式</span><SelectMenu value={options.audio_format ?? ''} ariaLabel="音乐输出格式" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: '', label: '自动选择' }, { value: 'mp3', label: 'MP3 · 通用播放' }, { value: 'wav', label: 'WAV · 后期编辑' }, { value: 'm4a', label: 'M4A · 便于分享' }]} onChange={(value) => update({ audio_format: value ? value as CangyuanMusicOptions['audio_format'] : undefined })} /></div>
+    </div>;
     return (
-      <div className="cangyuan-music-options">
+      <div className="cangyuan-music-options cangyuan-music-options-lyria">
         <div className="cangyuan-music-fields-grid">
           <label className="cangyuan-music-text-field"><span>曲名</span><input value={options.title ?? ''} maxLength={profile.titleMaxLength} onChange={(event) => update({ title: event.target.value || undefined })} placeholder={profile.titleMaxLength ? `可选，最多 ${profile.titleMaxLength} 字符` : '可选'} /></label>
           <label className="cangyuan-music-text-field"><span>目标时长（秒）</span><input type="number" min={durationRange?.[0]} max={durationRange?.[1]} step="1" value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={durationRange ? `自动，或填写 ${durationRange[0]}–${durationRange[1]}` : '自动'} /></label>
         </div>
         <label className="cangyuan-checkbox-field"><input type="checkbox" checked={options.instrumental ?? false} onChange={(event) => update({ instrumental: event.target.checked })} /><span>纯音乐</span></label>
         <label className="cangyuan-music-text-field"><span>歌词</span><textarea value={options.lyrics ?? ''} maxLength={profile.lyricsMaxLength} rows={5} onChange={(event) => update({ lyrics: event.target.value || undefined })} placeholder={profile.lyricsMaxLength ? `可选，最多 ${profile.lyricsMaxLength.toLocaleString('zh-CN')} 字符；与创作描述分开填写` : '可选；与创作描述分开填写'} /></label>
-        <details className="cangyuan-music-advanced">
+        {alwaysVisible ? <section className="cangyuan-music-advanced is-always-visible" aria-label="节奏与输出">
+          <strong>节奏与输出</strong>
+          {tempoAndOutput}
+        </section> : <details className="cangyuan-music-advanced">
           <summary>节奏与输出</summary>
-          <div className="cangyuan-music-fields-grid">
-            <label className="cangyuan-music-text-field"><span>节奏速度</span><input aria-label="节奏速度，每分钟节拍数" type="number" min={bpmRange?.[0]} max={bpmRange?.[1]} step="1" value={options.bpm ?? ''} onChange={(event) => update({ bpm: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={bpmRange ? `自动，或填写 ${bpmRange[0]}–${bpmRange[1]}` : '自动'} /><small>每分钟的节拍数，越大节奏越快。</small></label>
-            <label className="cangyuan-music-text-field"><span>固定生成编号</span><input aria-label="固定生成编号" type="number" min={seedRange?.[0]} max={seedRange?.[1]} step="1" value={options.seed ?? ''} onChange={(event) => update({ seed: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder="留空则每次不同" /><small>相同描述使用相同编号，便于生成接近的结果。</small></label>
-            <div className="cangyuan-music-text-field"><span>保存格式</span><SelectMenu value={options.audio_format ?? ''} ariaLabel="音乐输出格式" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: '', label: '自动选择' }, { value: 'mp3', label: 'MP3 · 通用播放' }, { value: 'wav', label: 'WAV · 后期编辑' }, { value: 'm4a', label: 'M4A · 便于分享' }]} onChange={(value) => update({ audio_format: value ? value as CangyuanMusicOptions['audio_format'] : undefined })} /></div>
-          </div>
-        </details>
+          {tempoAndOutput}
+        </details>}
         <p className="cangyuan-model-note">每次生成 1 首；时长与节奏速度是目标提示，实际成片以结果为准。{profile.modelId === 'lyria-3-pro' ? 'Lyria 3 Pro 的成片最长约 184 秒。' : ''}</p>
       </div>
     );
@@ -224,9 +229,7 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
       'audioWeight', 'negativeTags', 'personaId', 'styleWeight', 'version', 'vocalGender', 'weirdnessConstraint',
     ].includes(key));
 
-    const advancedOptions = hasAdvancedOptions && (
-      <details className="cangyuan-music-advanced">
-        <summary>更多设置</summary>
+    const advancedFields = <>
         <div className="cangyuan-music-fields-grid">
           {supports('sourceAudioId') && (modelId !== 'suno-cover-audio' || !options.uploadUrl) && <label className="cangyuan-music-text-field"><span>指定结果曲目编号</span><input maxLength={200} value={options.sourceAudioId ?? ''} onChange={(event) => update({ sourceAudioId: event.target.value || undefined, sourceTrack: undefined })} placeholder="可从作品记录中复制" /><small>需同时提供源作品任务编号</small></label>}
           {supports('sourceTrack') && (modelId !== 'suno-cover-audio' || !options.uploadUrl) && <label className="cangyuan-music-text-field"><span>曲目序号（从 0 开始）</span><input type="number" min="0" max="11" step="1" value={options.sourceTrack ?? ''} onChange={(event) => update({ sourceTrack: event.target.value === '' ? undefined : Number(event.target.value), sourceAudioId: undefined })} placeholder="自动选择" /><small>需同时提供源作品任务编号</small></label>}
@@ -246,8 +249,16 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
           {numberField('风格贴合度', 'styleWeight')}
           {numberField('创作变化程度', 'weirdnessConstraint')}
         </div>
-      </details>
-    );
+    </>;
+    const advancedOptions = hasAdvancedOptions && (alwaysVisible
+      ? <section className="cangyuan-music-advanced is-always-visible" aria-label="更多设置">
+          <strong>更多设置</strong>
+          {advancedFields}
+        </section>
+      : <details className="cangyuan-music-advanced">
+          <summary>更多设置</summary>
+          {advancedFields}
+        </details>);
 
     return (
       <div className="cangyuan-music-options">

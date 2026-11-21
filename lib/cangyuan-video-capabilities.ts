@@ -5,11 +5,18 @@ import { cangyuanVideoParameterLabel, cangyuanVideoParameterLabelByName, getCang
 
 export const CANGYUAN_SEEDANCE_FAST_MODEL = 'sd20-seedance-2.0-fast';
 export const CANGYUAN_VIDEO_MAX_REFERENCE_IMAGE_BYTES = 30 * 1024 * 1024;
+export const CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH = 6000;
 
 export function isCangyuanVideoModelSelectable(publicModel: string) {
   const spec = getCangyuanVideoModelSpec(publicModel);
   const profile = getCangyuanVideoModelProfile(publicModel);
   return Boolean(spec?.params.length && profile?.publicModel === publicModel);
+}
+
+export function getCangyuanVideoPromptMaxLength(publicModel: string) {
+  const spec = getCangyuanVideoModelSpec(publicModel);
+  const maxLength = spec && getCangyuanVideoParameter(spec, 'prompt')?.maxLength;
+  return typeof maxLength === 'number' && Number.isInteger(maxLength) && maxLength > 0 ? maxLength : undefined;
 }
 
 export type CangyuanVideoModelProfile = {
@@ -59,6 +66,7 @@ export type CangyuanVideoModelProfile = {
   allowsFramesWithReferences?: boolean;
   allowsFramesWithAudio?: boolean;
   allowsNoReferences?: boolean;
+  requiresReferenceImage?: boolean;
   requiresImageWithVideoOrAudio?: boolean;
 };
 
@@ -385,7 +393,7 @@ export function getCangyuanVideoModelProfile(publicModel: string): CangyuanVideo
     maxReferenceImages: documented.maxReferenceImages ?? curated.maxReferenceImages,
     maxReferenceVideos: documented.maxReferenceVideos ?? curated.maxReferenceVideos,
     maxReferenceAudios: documented.maxReferenceAudios ?? curated.maxReferenceAudios,
-    maxTotalInputs: curated.maxTotalInputs,
+    maxTotalInputs: documented.maxTotalInputs ?? curated.maxTotalInputs,
     maxReferenceImageFileBytes: documented.maxReferenceImageFileBytes ?? curated.maxReferenceImageFileBytes,
     maxReferenceVideoFileBytes: documented.maxReferenceVideoFileBytes ?? curated.maxReferenceVideoFileBytes,
     maxReferenceAudioFileBytes: documented.maxReferenceAudioFileBytes ?? curated.maxReferenceAudioFileBytes,
@@ -398,6 +406,7 @@ export function getCangyuanVideoModelProfile(publicModel: string): CangyuanVideo
     allowsFramesWithReferences: curated.allowsFramesWithReferences ?? documented.allowsFramesWithReferences,
     allowsFramesWithAudio: curated.allowsFramesWithAudio ?? documented.allowsFramesWithAudio,
     allowsNoReferences: curated.allowsNoReferences ?? documented.allowsNoReferences,
+    requiresReferenceImage: curated.requiresReferenceImage ?? documented.requiresReferenceImage,
     requiresImageWithVideoOrAudio: curated.requiresImageWithVideoOrAudio ?? documented.requiresImageWithVideoOrAudio,
   });
 }
@@ -415,6 +424,7 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
   const firstFrame = parameter('first_image_url');
   const lastFrame = parameter('last_image_url');
   const mode = parameter('mode');
+  const maxTotalInputs = totalInputLimit(spec);
   const supportedModes = normalizedValues(mode?.enum);
   const durationDefault = numericValue(duration?.suggestedDefault);
   const describedDurationBounds = durationBounds(duration, spec);
@@ -446,6 +456,7 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
       ? { maxReferenceVideos: parameter('reference_videos')?.maxItems }
       : video ? { maxReferenceVideos: 1 } : {}),
     ...(audioReference?.maxItems !== undefined ? { maxReferenceAudios: audioReference.maxItems } : {}),
+    ...(maxTotalInputs !== undefined ? { maxTotalInputs } : {}),
     ...(parameterMaximumBytes(image) !== undefined ? { maxReferenceImageFileBytes: parameterMaximumBytes(image) } : {}),
     ...(parameterMaximumBytes(video) !== undefined ? { maxReferenceVideoFileBytes: parameterMaximumBytes(video) } : {}),
     ...(parameterMaximumBytes(audioReference) !== undefined ? { maxReferenceAudioFileBytes: parameterMaximumBytes(audioReference) } : {}),
@@ -471,7 +482,18 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
     ...(hasRule(rules, /首尾帧[^。\n]*不能[^。\n]*参考音频|首尾帧[^。\n]*不能[^。\n]*音频/) ? { allowsFramesWithAudio: false } : {}),
     ...(hasRule(rules, /参考视频或音频[^。\n]*(?:必须|至少)[^。\n]*参考图|参考视频[^。\n]*(?:必须|至少)[^。\n]*参考图/) ? { requiresImageWithVideoOrAudio: true } : {}),
     allowsNoReferences: !requiredMedia,
+    ...(image?.required ? { requiresReferenceImage: true } : {}),
   });
+}
+
+function totalInputLimit(spec: CangyuanVideoModelSpec) {
+  const descriptions = [spec.intro, ...spec.params.map((item) => item.description || '')]
+    .filter(Boolean)
+    .join('\n');
+  const matches = [...descriptions.matchAll(/(?:合计|总计|总数)(?:最多|不超过|不能超过)?\s*(\d+)\s*(?:个|项)/gu)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+  return matches.length ? Math.min(...matches) : undefined;
 }
 
 function cangyuanVideoRuleText(spec: CangyuanVideoModelSpec) {
@@ -670,6 +692,14 @@ export function validateCangyuanVideoInput(
   if (!spec.params.length) throw new Error(`沧元算力 ${publicModel} 的官方参数说明尚未补齐，请选择其他型号。`);
   const profile = getCangyuanVideoModelProfile(publicModel);
   if (!profile) throw new Error(`沧元算力 ${publicModel} 缺少可验证的参数规格。`);
+  const documentedPromptMaxLength = getCangyuanVideoPromptMaxLength(publicModel);
+  const promptMaxLength = documentedPromptMaxLength ?? CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH;
+  if (input.prompt.trim().length > promptMaxLength) {
+    const message = documentedPromptMaxLength !== undefined
+      ? `沧元算力 ${publicModel} 的画面描述最多 ${promptMaxLength} 个字符。`
+      : `当前平台对未注明提示词上限的沧元型号，限制画面描述最多 ${promptMaxLength} 个字符。`;
+    throw new Error(message);
+  }
   const videoSourceParameter = getCangyuanVideoParameter(spec, 'video');
   const modeParameter = getCangyuanVideoParameter(spec, 'mode');
   const rawReferenceVideos = mediaValues(input.referenceVideos, videoSourceParameter ? undefined : input.referenceVideo);
@@ -771,6 +801,9 @@ export function validateCangyuanVideoInput(
   }
   if (profile.allowsNoReferences === false && !hasReferences && !hasFrames && !sourceVideo) {
     throw new Error(`沧元算力 ${profile.publicModel} 必须至少提供一项参考素材或首尾帧。`);
+  }
+  if (profile.requiresReferenceImage && !referenceImages.length) {
+    throw new Error(`沧元算力 ${profile.publicModel} 必须至少提供一张参考图。`);
   }
   if (input.seed !== undefined) {
     if (!Number.isSafeInteger(input.seed)) throw new Error('沧元算力 seed 必须是安全整数。');

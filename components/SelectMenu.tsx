@@ -3,6 +3,7 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
+import { CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT } from '@/components/canvas/overlay-events';
 
 export type SelectMenuOption<T extends string | number> = {
   value: T;
@@ -99,6 +100,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', positionMenu);
     window.addEventListener('scroll', positionMenu, true);
+    window.addEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, positionMenu);
     const resizeObserver = typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(positionMenu)
       : null;
@@ -111,6 +113,7 @@ export default function SelectMenu<T extends string | number>({ value, options, 
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('resize', positionMenu);
       window.removeEventListener('scroll', positionMenu, true);
+      window.removeEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, positionMenu);
     };
   }, [menuWidth, open, value]);
 

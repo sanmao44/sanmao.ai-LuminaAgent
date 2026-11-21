@@ -81,6 +81,14 @@ test('配音地址兼容带与不带 /v1 的服务商地址', () => {
   assert.equal(speech.speechEndpoint({ baseUrl: 'https://api.example.com' }), 'https://api.example.com/v1/audio/speech');
 });
 
+test('Cangyuan MiniMax 2.8 TTS uses the documented public API host', () => {
+  const provider = cangyuanRuntime().provider;
+  assert.equal(speech.speechEndpoint(provider, 'minimax-speech-2.8-hd-tts'), 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+  assert.equal(speech.speechEndpoint(provider, 'minimax-speech-2.8-turbo-tts'), 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+  assert.equal(speech.speechEndpoint(provider, 'gemini-tts'), 'https://ai.cangyuansuanli.cn/v1/audio/speech');
+  assert.equal(speech.speechEndpoint({ baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', platform: 'cangyuan' }, 'minimax-speech-2.8-hd-tts'), 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+});
+
 test('留空音色时不发送 voice，避免 Gitee 这类没有该参数的服务商直接 400', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {
@@ -126,6 +134,66 @@ test('registered ElevenLabs voice ids take precedence over preset voices in the 
     assert.deepEqual(stub.calls[0].body, {
       model: 'elevenlabs-v4-tts', input: '使用自备音色', voice_id: 'registered-voice',
     });
+  } finally { stub.restore(); }
+});
+
+test('MiniMax 2.8 HD/Turbo speech maps documented controls to provider field names', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  const input = {
+    text: '请用指定音色读这句话。', voiceId: 'minimax-voice', format: 'mp3', speed: 1.25,
+    aigcWatermark: false, bitrate: '128000', channel: '2', effectIntensity: -15, effectPitch: 20,
+    effectTimbre: -5, emotion: 'whisper', language: 'Chinese,Yue', latexRead: true, pitch: -3,
+    pronunciationTone: '轻柔语气', sampleRate: '44100', soundEffects: 'robotic',
+    textNormalizationMode: 'quality', volume: 1.4,
+  };
+  try {
+    for (const model of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+      await speech.synthesizeSpeech(cangyuanRuntime(model), input);
+      assert.deepEqual(stub.calls.at(-1).body, {
+        model, input: input.text, response_format: 'mp3', voice_id: 'minimax-voice', speed: 1.25,
+        aigc_watermark: false, bitrate: '128000', channel: '2', effect_intensity: -15,
+        effect_pitch: 20, effect_timbre: -5, emotion: 'whisper', language: 'Chinese,Yue',
+        latex_read: true, pitch: -3, pronunciation_tone: '轻柔语气', sample_rate: '44100',
+        sound_effects: 'robotic', text_normalization_mode: 'quality', volume: 1.4,
+      });
+    }
+    assert.equal(stub.calls.length, 2);
+  } finally { stub.restore(); }
+});
+
+test('MiniMax system voice IDs preserve official casing and internal spaces in the provider request', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    const voiceId = 'Chinese (Mandarin)_Reliable_Executive';
+    await speech.synthesizeSpeech(cangyuanRuntime('minimax-speech-2.8-hd-tts'), {
+      text: '核对系统音色编号', voiceId,
+    });
+    assert.equal(stub.calls[0].body.voice_id, voiceId);
+    assert.equal(stub.calls[0].url, 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+  } finally { stub.restore(); }
+});
+
+test('MiniMax TTS rejects missing voices, unsupported options, invalid bounds, and bitrate on non-MP3', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    const runtime = cangyuanRuntime('minimax-speech-2.8-hd-tts');
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: '缺少音色编号' }), /必须填写已登记的音色编号/);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: '不支持种子', voiceId: 'id', seed: 1 }), /不支持这些设置.*随机种子/);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: '比特率与 WAV 冲突', voiceId: 'id', format: 'wav', bitrate: '128000' }), /仅支持 MP3/);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: '参数越界', voiceId: 'id', volume: 10.1 }), /音量超出允许范围/);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: '语速越界', voiceId: 'id', speed: 2.1 }), /速度必须在 0.5–2 之间/);
+    await assert.rejects(() => speech.synthesizeSpeech(runtime, { text: 'x'.repeat(10001), voiceId: 'id' }), /最多 10000 个字符/);
+    assert.equal(stub.calls.length, 0);
+  } finally { stub.restore(); }
+});
+
+test('voice-clone-tts does not expose MiniMax engines from its former mixed engine list', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+      text: '引擎应被拒绝', voiceId: 'id', engine: 'minimax-speech-2.8-hd',
+    }), /所选语音引擎不在当前型号支持范围内/);
+    assert.equal(stub.calls.length, 0);
   } finally { stub.restore(); }
 });
 

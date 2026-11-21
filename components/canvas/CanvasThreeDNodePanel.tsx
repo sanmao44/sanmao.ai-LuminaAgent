@@ -5,16 +5,17 @@ import type { RegistryModel } from "@/lib/types";
 import type { CanvasThreeDDraft, CanvasThreeDTaskSnapshot } from "@/lib/canvas/types";
 import SelectMenu from "@/components/SelectMenu";
 import CangyuanMediaUploadField from "@/components/cangyuan/CangyuanMediaUploadField";
+import CangyuanThreeDScenarioPicker from "@/components/cangyuan/CangyuanThreeDScenarioPicker";
+import CangyuanReferenceImagePreview from "@/components/cangyuan/CangyuanReferenceImagePreview";
 import CangyuanTripoQualityOptions, { applyTripoQualityOptions } from "@/components/cangyuan/CangyuanTripoQualityOptions";
-import ThreeDModelPreview from "@/components/ThreeDModelPreview";
-import { buildCanvasThreeDRequest, canvasThreeDOutputDownload, canvasThreeDPreviewUrl, isCanvasThreeDModelOutput, isCanvasThreeDPreviewOutput } from "@/lib/canvas/three-d-generation";
+import { buildCanvasThreeDRequest } from "@/lib/canvas/three-d-generation";
+import type { CangyuanThreeDScenario } from "@/components/cangyuan/three-d-presets";
 import {
   getCangyuan3DModelProfile,
   reconcileCangyuan3DMode,
   type Cangyuan3DMode,
   type Cangyuan3DOptions,
   type Cangyuan3DView,
-  type CangyuanMediaOutput,
   type CangyuanMediaTask,
   type CangyuanMediaTaskStatus,
 } from "@/packages/contracts/cangyuan-media";
@@ -35,6 +36,15 @@ const VIEWS: readonly { key: Cangyuan3DView; label: string }[] = [
 ];
 
 const ACTIVE_STATUSES = new Set<CangyuanMediaTaskStatus>(["pending", "queued", "running", "waiting"]);
+
+function taskStatusLabel(status: CangyuanMediaTaskStatus) {
+  if (status === "succeeded") return "已完成";
+  if (status === "failed") return "生成失败";
+  if (status === "cancelled") return "已取消";
+  if (status === "waiting") return "等待服务处理";
+  if (status === "pending" || status === "queued") return "排队中";
+  return "生成中";
+}
 
 export type CanvasThreeDNodePanelProps = {
   nodeId: string;
@@ -60,15 +70,6 @@ function snapshot(task: CangyuanMediaTask): CanvasThreeDTaskSnapshot {
     createdAt: task.createdAt,
     updatedAt: task.completedAt || task.startedAt,
   };
-}
-
-function taskStatusLabel(status: CangyuanMediaTaskStatus) {
-  if (status === "succeeded") return "已完成";
-  if (status === "failed") return "生成失败";
-  if (status === "cancelled") return "已取消";
-  if (status === "waiting") return "等待服务处理";
-  if (status === "pending" || status === "queued") return "排队中";
-  return "生成中";
 }
 
 function readError(payload: unknown, fallback: string) {
@@ -165,14 +166,15 @@ export default function CanvasThreeDNodePanel({
     commitDraft({ ...localDraft, options: { ...localDraft.options, ...patch } });
   }
 
-  function handleUploadState(fieldId: string, uploading: boolean) {
+  const handleUploadState = useCallback((fieldId: string, uploading: boolean) => {
     setUploadingFields((current) => {
+      if (current.has(fieldId) === uploading) return current;
       const next = new Set(current);
       if (uploading) next.add(fieldId);
       else next.delete(fieldId);
       return next;
     });
-  }
+  }, []);
 
   async function submit() {
     if (!model || !canSubmit || busy) return;
@@ -216,6 +218,21 @@ export default function CanvasThreeDNodePanel({
     commitDraft({ ...localDraft, modelId: nextModel.id, options: nextOptions });
   }
 
+  function applyScenario(scenario: CangyuanThreeDScenario) {
+    const nextOptions: Cangyuan3DOptions = { ...localDraft.options, mode };
+    if (scenario.tripo) {
+      nextOptions.texture = scenario.tripo.texture;
+      nextOptions.pbr = scenario.tripo.pbr;
+    }
+    if (scenario.trellis) {
+      for (const key of ["textureSize", "seed", "meshSimplify", "ssGuidanceStrength", "ssSamplingSteps", "slatGuidanceStrength", "slatSamplingSteps"] as const) {
+        delete nextOptions[key];
+      }
+      Object.assign(nextOptions, scenario.trellis);
+    }
+    commitDraft({ ...localDraft, options: nextOptions });
+  }
+
   function updateMultiview(view: Cangyuan3DView, url: string) {
     const next = { ...multiviewImages };
     if (url) next[view] = url;
@@ -223,156 +240,166 @@ export default function CanvasThreeDNodePanel({
     updateOptions({ multiviewImages: next });
   }
 
-  function rangeField(label: string, key: "meshSimplify" | "ssGuidanceStrength" | "ssSamplingSteps" | "slatGuidanceStrength" | "slatSamplingSteps", min: number, max: number, step: number, help: string) {
+  function rangeField(label: string, key: "meshSimplify" | "ssGuidanceStrength" | "ssSamplingSteps" | "slatGuidanceStrength" | "slatSamplingSteps", min: number, max: number, step: number, help: string, compactHelp: string) {
     const value = options[key] ?? (key === "meshSimplify" ? 0.95 : key.endsWith("SamplingSteps") ? 12 : 5);
     return (
       <label className={styles.rangeField} key={key}>
         <span>{label}</span>
         <input type="range" min={min} max={max} step={step} value={value} onChange={(event) => updateOptions({ [key]: Number(event.target.value) })} />
         <output>{Number(value).toFixed(step < 1 ? 2 : 0)}</output>
-        <small>{help}</small>
+        <small role="note" aria-label={help} title={help}>{compactHelp}</small>
       </label>
     );
   }
 
   return (
     <section className={styles.panel} aria-label="三维生成">
-      <div className={styles.field}>
-        <span className={styles.label}>生成模型</span>
-        {availableModels.length ? (
-          <SelectMenu
-            value={model?.id || ""}
-            ariaLabel="选择三维生成模型"
-            options={availableModels.map((item) => ({ value: item.id, label: item.displayName, description: item.providerName }))}
-            onChange={chooseModel}
-          />
-        ) : <p className={styles.empty}>尚未配置支持三维生成的模型。</p>}
-      </div>
-
-      {profile && (
-        <>
-          {profile.supportedModes.length > 1 && (
-            <div className={styles.modeGroup} role="group" aria-label="三维生成方式">
+      <div className={styles.workbench}>
+        <div className={styles.toolbar}>
+          <div className={`${styles.field} ${styles.modelField}`}>
+            <span className={styles.label}>生成模型</span>
+            {availableModels.length ? (
+              <SelectMenu
+                value={model?.id || ""}
+                ariaLabel="选择三维生成模型"
+                options={availableModels.map((item) => ({ value: item.id, label: item.displayName, description: item.providerName }))}
+                onChange={chooseModel}
+              />
+            ) : <p className={styles.empty}>尚未配置支持三维生成的模型。</p>}
+          </div>
+          {profile?.supportedModes.length ? (
+            <div className={styles.modeGroup} data-mode-count={profile.supportedModes.length} role="group" aria-label="三维生成方式">
               {profile.supportedModes.map((value) => (
                 <button key={value} type="button" aria-pressed={mode === value} className={mode === value ? styles.modeActive : ""} onClick={() => updateOptions({ mode: value })}>
                   {MODE_LABELS[value]}
                 </button>
               ))}
             </div>
-          )}
+          ) : <div className={styles.modePlaceholder} aria-hidden="true" />}
+        </div>
 
-          <label className={styles.field}>
-            <span className={styles.label}>物体描述{promptRequired ? " · 必填" : " · 可选"}</span>
-            <textarea value={localDraft.prompt} maxLength={5000} rows={3} placeholder="描述形状、材质、比例与风格" onChange={(event) => commitDraft({ ...localDraft, prompt: event.target.value })} />
-          </label>
+        {profile && (
+          <>
+            <div className={styles.editorColumns} data-mode={mode}>
+              <div className={styles.inputColumn}>
+                <label className={styles.field}>
+                  <span className={styles.label}>物体描述{promptRequired ? " · 必填" : " · 可选"}</span>
+                  <textarea value={localDraft.prompt} maxLength={5000} rows={3} placeholder="描述形状、材质、比例与风格" onChange={(event) => commitDraft({ ...localDraft, prompt: event.target.value })} />
+                </label>
 
-          {singleImageRequired && (
-            <CangyuanMediaUploadField
-              fieldId={`canvas-${nodeId}-3d-image`}
-              kind="image"
-              label="参考图片"
-              value={localDraft.options.imageUrl || ""}
-              onChange={(url) => updateOptions({ imageUrl: url || undefined })}
-              onUploadingChange={handleUploadState}
-              note={profile.family === "trellis" ? "Trellis 必须提供图片；文件会通过项目中转服务生成可访问链接。" : "文件会通过项目中转服务生成可访问链接。"}
-            />
-          )}
+                {singleImageRequired && (
+                  <div className={styles.referenceImage}>
+                    <CangyuanMediaUploadField
+                      fieldId={`canvas-${nodeId}-3d-image`}
+                      kind="image"
+                      label="参考图片"
+                      value={localDraft.options.imageUrl || ""}
+                      onChange={(url) => updateOptions({ imageUrl: url || undefined })}
+                      onUploadingChange={handleUploadState}
+                      note={profile.family === "trellis" ? "此模型必须提供图片；文件会通过项目中转服务生成可访问链接。" : "文件会通过项目中转服务生成可访问链接。"}
+                    />
+                    <CangyuanReferenceImagePreview url={localDraft.options.imageUrl || ""} />
+                  </div>
+                )}
 
-          {mode === "multiview-to-3d" && (
-            <div className={styles.multiview}>
-              <div className={styles.sectionHeading}><strong>多视角参考</strong><span>{multiviewCount}/4 张</span></div>
-              <div className={styles.viewGrid}>
-                {VIEWS.map((view) => (
-                  <CangyuanMediaUploadField
-                    key={view.key}
-                    fieldId={`canvas-${nodeId}-3d-${view.key}`}
-                    kind="image"
-                    label={view.label}
-                    value={multiviewImages[view.key] || ""}
-                    onChange={(url) => updateMultiview(view.key, url)}
-                    onUploadingChange={handleUploadState}
-                    maxFileBytes={30 * 1024 * 1024}
-                  />
-                ))}
+                {profile.family === "trellis" && (
+                  <section className={styles.settingsSection} aria-label="输出与复现参数">
+                    <h3 className={styles.sectionTitle}>输出与复现</h3>
+                    <div className={styles.optionGrid}>
+                      <label className={styles.field}>
+                        <span className={styles.label}>贴图边长</span>
+                        <SelectMenu value={options.textureSize || "1024"} ariaLabel="贴图边长" options={[{ value: "512", label: "512 · 文件较小" }, { value: "1024", label: "1024 · 推荐" }, { value: "2048", label: "2048 · 细节更清晰" }]} onChange={(value) => updateOptions({ textureSize: value })} />
+                      </label>
+                      <label className={styles.field}>
+                        <span className={styles.label}>随机种子</span>
+                        <input inputMode="numeric" value={options.seed || ""} placeholder="模型自动选择" onChange={(event) => updateOptions({ seed: event.target.value || undefined })} />
+                        <small>相同参考图可复现相近结果。</small>
+                      </label>
+                    </div>
+                  </section>
+                )}
+
+                {mode === "multiview-to-3d" && (
+                  <div className={styles.multiview}>
+                    <div className={styles.sectionHeading}><strong>多视角参考</strong><span>{multiviewCount}/4 张</span></div>
+                    <div className={styles.viewGrid}>
+                      {VIEWS.map((view) => (
+                        <div className={styles.referenceImage} key={view.key}>
+                          <CangyuanMediaUploadField
+                            fieldId={`canvas-${nodeId}-3d-${view.key}`}
+                            kind="image"
+                            label={view.label}
+                            value={multiviewImages[view.key] || ""}
+                            onChange={(url) => updateMultiview(view.key, url)}
+                            onUploadingChange={handleUploadState}
+                            maxFileBytes={30 * 1024 * 1024}
+                          />
+                          <CangyuanReferenceImagePreview url={multiviewImages[view.key] || ""} />
+                        </div>
+                      ))}
+                    </div>
+                    <p className={styles.hint}>至少需要 2 张不同方向的图片，并包含正面图。</p>
+                  </div>
+                )}
               </div>
-              <p className={styles.hint}>至少需要 2 张不同方向的图片，并包含正面图。</p>
+
+              <div className={styles.settingsColumn} aria-label="模型参数">
+                {(profile.modelId === "tripo3d" || profile.modelId === "trellis") && (
+                  <div className={styles.scenarioPicker}>
+                    <CangyuanThreeDScenarioPicker key={profile.modelId} modelId={profile.modelId} onApply={applyScenario} />
+                  </div>
+                )}
+
+                {profile.family === "tripo-legacy" && (
+                  <section className={styles.settingsSection} aria-label="材质与贴图参数">
+                    <h3 className={styles.sectionTitle}>材质与贴图</h3>
+                    <div className={styles.optionGrid}>
+                      <label className={styles.field}>
+                        <span className={styles.label}>贴图质量</span>
+                        <SelectMenu value={typeof options.texture === "string" ? options.texture : "standard"} ariaLabel="贴图质量" options={[{ value: "no", label: "无贴图" }, { value: "standard", label: "标准" }, { value: "HD", label: "高清" }]} onChange={(value) => updateOptions({ texture: value as Cangyuan3DOptions["texture"] })} />
+                      </label>
+                      <SwitchField label="PBR 材质" checked={options.pbr === true} onChange={(value) => updateOptions({ pbr: value })} />
+                    </div>
+                  </section>
+                )}
+
+                {profile.family === "tripo" && (
+                  <section className={styles.settingsSection} aria-label="生成质量参数">
+                    <h3 className={styles.sectionTitle}>生成质量</h3>
+                    <CangyuanTripoQualityOptions profile={profile} options={options} alwaysVisible onChange={(next) => commitDraft({ ...localDraft, options: applyTripoQualityOptions(profile, localDraft.options, next) })} />
+                  </section>
+                )}
+
+                {profile.family === "trellis" && (
+                  <section className={styles.settingsSection} aria-label="模型质量与网格参数">
+                    <h3 className={styles.sectionTitle}>模型质量与网格</h3>
+                    <div className={styles.trellisGrid}>
+                      {rangeField("网格简化", "meshSimplify", 0.9, 0.98, 0.01, "越大模型越轻，表面细节会减少。", "数值越大，网格越轻")}
+                      {rangeField("结构引导", "ssGuidanceStrength", 0, 10, 0.1, "提高后轮廓会更贴合参考图。", "提升轮廓贴合度")}
+                      {rangeField("结构采样步数", "ssSamplingSteps", 1, 50, 1, "增加步数会改善轮廓，也会延长生成时间。", "步数越多，耗时越长")}
+                      {rangeField("细节引导", "slatGuidanceStrength", 0, 10, 0.1, "控制表面细节和颜色对参考图的贴合度。", "提升细节贴合度")}
+                      {rangeField("细节采样步数", "slatSamplingSteps", 1, 50, 1, "增加步数可细化表面，也会延长生成时间。", "步数越多，耗时越长")}
+                    </div>
+                  </section>
+                )}
+              </div>
             </div>
-          )}
 
-          {profile.family === "tripo-legacy" && (
-            <details className={styles.advanced}>
-              <summary>材质与贴图</summary>
-              <div className={styles.optionGrid}>
-                <label className={styles.field}>
-                  <span className={styles.label}>贴图质量</span>
-                  <SelectMenu value={typeof options.texture === "string" ? options.texture : "standard"} ariaLabel="贴图质量" options={[{ value: "no", label: "无贴图" }, { value: "standard", label: "标准" }, { value: "HD", label: "高清" }]} onChange={(value) => updateOptions({ texture: value as Cangyuan3DOptions["texture"] })} />
-                </label>
-                <SwitchField label="PBR 材质" checked={options.pbr === true} onChange={(value) => updateOptions({ pbr: value })} />
+            <div className={styles.footer}>
+              <div className={styles.footerMeta}>
+                <span>{model?.displayName || profile.modelId} · {mode === "text-to-3d" ? "文字生成" : mode === "image-to-3d" ? "单图生成" : "多视图生成"}</span>
+                {task && <small>{task.modelName} · {taskStatusLabel(task.status)}{task.providerStatus ? ` · ${task.providerStatus}` : ""}</small>}
+                {task && ACTIVE_STATUSES.has(task.status) && <div className={styles.taskProgress} role="progressbar" aria-label="三维模型生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuetext={taskStatusLabel(task.status)}><span /></div>}
+                {task?.error && <small className={styles.taskError} role="status">{task.error}</small>}
+                {error && <small className={styles.taskError} role="alert">{error}</small>}
               </div>
-            </details>
-          )}
-
-          {profile.family === "tripo" && (
-            <div className={styles.advanced}><CangyuanTripoQualityOptions profile={profile} options={options} onChange={(next) => commitDraft({ ...localDraft, options: applyTripoQualityOptions(profile, localDraft.options, next) })} /></div>
-          )}
-
-          {profile.family === "trellis" && (
-            <details className={styles.advanced}>
-              <summary>模型质量与网格</summary>
-              <div className={styles.trellisGrid}>
-                <label className={styles.field}>
-                  <span className={styles.label}>贴图边长</span>
-                  <SelectMenu value={options.textureSize || "1024"} ariaLabel="贴图边长" options={[{ value: "512", label: "512 · 文件较小" }, { value: "1024", label: "1024 · 推荐" }, { value: "2048", label: "2048 · 细节更清晰" }]} onChange={(value) => updateOptions({ textureSize: value })} />
-                </label>
-                <label className={styles.field}>
-                  <span className={styles.label}>随机种子</span>
-                  <input inputMode="numeric" value={options.seed || ""} placeholder="模型自动选择" onChange={(event) => updateOptions({ seed: event.target.value || undefined })} />
-                  <small>相同参考图使用相同种子，可复现相近结果。</small>
-                </label>
-                {rangeField("网格简化", "meshSimplify", 0.9, 0.98, 0.01, "越大模型越轻，表面细节会减少。")}
-                {rangeField("结构引导", "ssGuidanceStrength", 0, 10, 0.1, "提高后轮廓会更贴合参考图。")}
-                {rangeField("结构采样步数", "ssSamplingSteps", 1, 50, 1, "增加步数会改善轮廓，也会延长生成时间。")}
-                {rangeField("细节引导", "slatGuidanceStrength", 0, 10, 0.1, "控制表面细节和颜色对参考图的贴合度。")}
-                {rangeField("细节采样步数", "slatSamplingSteps", 1, 50, 1, "增加步数可细化表面，也会延长生成时间。")}
-              </div>
-            </details>
-          )}
-
-          <button type="button" className={styles.submit} disabled={!canSubmit} onClick={() => void submit()}>
-            {uploadPending ? "正在上传参考图…" : busy ? "正在提交…" : activeTask ? "任务处理中…" : "生成三维模型"}
-          </button>
-        </>
-      )}
-
-      {error && <p className={styles.error} role="alert">{error}</p>}
-      {task && (
-        <section className={styles.task} aria-label="三维任务结果">
-          <div className={styles.taskHeader}>
-            <div><strong>{task.modelName}</strong><span>{taskStatusLabel(task.status)}</span></div>
-            {task.providerStatus && <small>{task.providerStatus}</small>}
-          </div>
-          {ACTIVE_STATUSES.has(task.status) && <div className={styles.taskProgress} role="progressbar" aria-label="三维模型生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuetext={taskStatusLabel(task.status)}><span /></div>}
-          {task.error && <p className={styles.error} role="status">{task.error}</p>}
-          {task.outputs.filter(isCanvasThreeDModelOutput).map((output, index) => {
-            const outputIndex = task.outputs.indexOf(output);
-            const download = canvasThreeDOutputDownload({ taskId: task.id, outputIndex, output });
-            let previewUrl = "";
-            if (isCanvasThreeDPreviewOutput(output)) {
-              try { previewUrl = canvasThreeDPreviewUrl(task.id, outputIndex); } catch { previewUrl = ""; }
-            }
-            return (
-              <article className={styles.output} key={`${task.id}-${output.jobId || outputIndex}`}>
-                {previewUrl && <ThreeDModelPreview url={previewUrl} label={output.name || `模型结果 ${index + 1}`} />}
-                <div className={styles.outputMeta}>
-                  <div><strong>{output.name || output.title || `模型结果 ${index + 1}`}</strong><span>{output.artifactType?.toUpperCase() || "模型文件"}</span></div>
-                  {output.url && <a href={download.href} target={download.targetBlank ? "_blank" : undefined} rel={download.targetBlank ? "noreferrer" : undefined} download>{download.label}</a>}
-                </div>
-              </article>
-            );
-          })}
-          {!ACTIVE_STATUSES.has(task.status) && !task.outputs.some(isCanvasThreeDModelOutput) && !task.error && <p className={styles.hint}>任务已完成，但服务暂未返回可预览的模型文件。</p>}
-        </section>
-      )}
+              <button type="button" className={styles.submit} disabled={!canSubmit} onClick={() => void submit()}>
+                {uploadPending ? "正在上传参考图…" : busy ? "正在提交…" : activeTask ? "任务处理中…" : "生成三维模型"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </section>
   );
 }

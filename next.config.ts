@@ -2,6 +2,7 @@ import type { NextConfig } from 'next';
 import path from 'node:path';
 
 const nextConfig: NextConfig = {
+  distDir: process.env.SANMAO_QA_DIST_DIR || '.next',
   reactStrictMode: true,
   serverExternalPackages: ['@anthropic-ai/claude-agent-sdk'],
   outputFileTracingRoot: path.resolve(process.cwd()),

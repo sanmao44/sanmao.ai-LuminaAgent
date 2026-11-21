@@ -14,10 +14,15 @@ export type CangyuanImageParameterProfile = {
   readonly aspectRatioRecommendations: readonly string[];
   readonly resolutionEnum?: readonly string[];
   readonly resolutionDefault?: string;
+  readonly qualityDefault?: string;
+  readonly promptMaxLength?: number;
+  readonly supportsCustomDimensions?: boolean;
   readonly tierEnum?: readonly string[];
   readonly seriesEnum?: readonly string[];
   readonly seriesDefault?: string;
   readonly seriesRequired?: boolean;
+  readonly variantEnum?: readonly string[];
+  readonly variantDefault?: string;
   readonly supportsSeed?: boolean;
   readonly seedInteger?: boolean;
   readonly supportsPromptExpansion?: boolean;
@@ -108,6 +113,7 @@ const PROFILE_SETS: readonly CangyuanImageParameterProfile[] = [
   {"nMax":1,"supportsSize":true,"sizeEnum":[],"sizeRecommendations":["auto","21:9","2:1","16:9","3:2","7:5","4:3","5:4","1:1","4:5","3:4","5:7","2:3","9:16","1:2","9:21"],"qualityEnum":[],"backgroundEnum":[],"outputFormatEnum":[],"imagesMaxItems":10,"supportsMask":false,"supportsAspectRatio":false,"aspectRatioEnum":[],"aspectRatioRecommendations":[]},
   {"nMax":1,"supportsSize":true,"sizeEnum":[],"sizeRecommendations":["1:1","16:9","9:16","4:3","3:4","3:2","2:3","21:9","9:21","auto"],"qualityEnum":[],"backgroundEnum":[],"outputFormatEnum":["png","jpeg","webp"],"imagesMaxItems":10,"supportsMask":false,"supportsAspectRatio":false,"aspectRatioEnum":[],"aspectRatioRecommendations":[]},
   {"nMax":1,"supportsSize":true,"sizeEnum":[],"sizeRecommendations":["1:1","16:9","9:16","4:3","3:4","3:2","2:3"],"qualityEnum":[],"backgroundEnum":[],"outputFormatEnum":["png","jpeg","webp"],"imagesMaxItems":4,"supportsMask":false,"supportsAspectRatio":false,"aspectRatioEnum":[],"aspectRatioRecommendations":[]},
+  {"nMax":4,"supportsSize":true,"sizeEnum":[],"sizeRecommendations":["auto","21:9","16:9","3:2","4:3","1:1","3:4","2:3","9:16","9:21"],"qualityEnum":["1k","2k","4k"],"backgroundEnum":[],"outputFormatEnum":[],"imagesMaxItems":16,"supportsMask":false,"supportsAspectRatio":false,"aspectRatioEnum":[],"aspectRatioRecommendations":[]},
 ];
 
 const PROFILE_INDEX_BY_PUBLIC_MODEL: Readonly<Record<string, number>> = Object.freeze(
@@ -183,7 +189,8 @@ const PROFILE_INDEX_BY_PUBLIC_MODEL: Readonly<Record<string, number>> = Object.f
     "flux-pro-2": 40,
     "flux-3-image": 41,
     "flux-3-klein": 42,
-    "mu1-muse-image": 43
+    "mu1-muse-image": 43,
+    "minimax-h3-image": 44
   }
 );
 
@@ -191,7 +198,8 @@ const PROFILE_INDEX_BY_PUBLIC_MODEL: Readonly<Record<string, number>> = Object.f
 // they must not be folded into `size` or inferred from model-name suffixes.
 const MODEL_PARAMETER_OVERRIDES: Readonly<Record<string, Pick<
   CangyuanImageParameterProfile,
-  "resolutionEnum" | "resolutionDefault" | "tierEnum" | "seriesEnum" | "seriesDefault" | "seriesRequired"
+  "resolutionEnum" | "resolutionDefault" | "qualityDefault" | "promptMaxLength" | "supportsCustomDimensions"
+  | "tierEnum" | "seriesEnum" | "seriesDefault" | "seriesRequired" | "variantEnum" | "variantDefault"
   | "fixedOutputCount"
   | "supportsSeed" | "supportsPromptExpansion" | "promptExpansionDefault" | "seedInteger"
   | "supportsStyle" | "supportsNegativePrompt" | "supportsLayerDecomposition"
@@ -203,6 +211,13 @@ const MODEL_PARAMETER_OVERRIDES: Readonly<Record<string, Pick<
   "doubao-seedream-5-0-pro-x": { resolutionEnum: ["1K", "2K"], resolutionDefault: "1K" },
   "doubao-seedream-5-5-x": { resolutionEnum: ["1K", "1.5K", "2K"], resolutionDefault: "1K" },
   "doubao-seedream-5-0-lite-x": { resolutionEnum: ["2K", "3K", "4K"], resolutionDefault: "2K" },
+  "minimax-h3-image": {
+    qualityDefault: "1k",
+    promptMaxLength: 8000,
+    supportsCustomDimensions: false,
+    variantEnum: ["standard", "highspeed"],
+    variantDefault: "standard",
+  },
   "flux-3-image": { resolutionEnum: ["768sq", "1K", "1.5K", "2K", "4K"], resolutionDefault: "1K" },
   "flux-3-klein": {
     resolutionEnum: ["1K", "2K", "4K"],
@@ -309,5 +324,6 @@ export function getCangyuanImageModelProfile(
     ...(parameterOverrides?.resolutionEnum ? { resolutionEnum: [...parameterOverrides.resolutionEnum] } : {}),
     ...(parameterOverrides?.tierEnum ? { tierEnum: [...parameterOverrides.tierEnum] } : {}),
     ...(parameterOverrides?.seriesEnum ? { seriesEnum: [...parameterOverrides.seriesEnum] } : {}),
+    ...(parameterOverrides?.variantEnum ? { variantEnum: [...parameterOverrides.variantEnum] } : {}),
   };
 }

@@ -102,6 +102,8 @@ export type ModelCapability =
   | 'upscale'
   | 'fast'
   | 'speech'
+  | 'voice-conversion'
+  | 'audio-isolation'
   | 'transcription'
   | 'music-generate'
   | 'sound-effect'

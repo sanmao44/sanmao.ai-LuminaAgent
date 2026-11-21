@@ -310,6 +310,7 @@ test("create menu uses separators instead of spacious group headings", () => {
   const upscalePosition = createMenu.indexOf('create("upscale")');
   const workflowPosition = createMenu.indexOf('create("workflowImage")');
   assert.ok(basicNodesPosition >= 0 && upscalePosition > basicNodesPosition && workflowPosition > upscalePosition, "create menu should place upscale after basic nodes");
+  assert.ok(createMenu.indexOf('create("text")') < createMenu.indexOf('create("threeD")'), "Agent node should appear before the 3D model node");
   assert.doesNotMatch(createMenu, /角度控制节点|addNode\("angle"/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\{[^}]*border-top:1px solid/);
   assert.match(styles, /\.canvas-create-context-menu \.canvas-menu-item-tool\+\.canvas-menu-group\{[^}]*border-top:1px solid/);

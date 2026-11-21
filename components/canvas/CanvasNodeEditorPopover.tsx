@@ -13,6 +13,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
+import { notifyCanvasNodeEditorOverlayPositionChange } from "@/components/canvas/overlay-events";
 import { incomingReferences, isCanvasReadyImageSource, nodeSize } from "@/lib/canvas/model";
 import { canvasImageReferencesForContinuation } from "@/lib/canvas/reference-edges";
 import { resolveCanvasVideoInputs } from "@/lib/canvas/references";
@@ -44,7 +45,11 @@ import { BUILTIN_IMAGE_PRESETS, type CustomImagePreset, type ImagePreset, visibl
 import { IMAGE_QUALITY_OPTIONS, resolveAvailableCreationModel, type CreationSettings, type VideoCreationSettings } from "@/lib/creation/settings";
 import { requestPromptOptimization } from "@/lib/creation/agent";
 import { canvasNodeSupportsImagePresets } from "@/lib/canvas/image-presets";
-import { placeCanvasNodeEditorDock } from "@/lib/canvas/editor-layout";
+import {
+  canvasNodeEditorPanDelta,
+  canvasZoomResponsiveNodeEditorWidth,
+  placeCanvasNodeEditor,
+} from "@/lib/canvas/editor-layout";
 import { canvasVisibleStageWidth } from "@/lib/canvas/menu-layout";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { replaceNaturalReferenceLabels, resolveCreativeReferenceRoles } from "@/lib/creative-references";
@@ -93,6 +98,7 @@ export type CanvasNodeEditorPopoverProps = {
   onLocalEdit?: () => void;
   onLocalEditRemove?: () => void;
   onToggleEditor: (node: CanvasNode) => void;
+  onRequestCanvasPan: (deltaY: number) => void;
   onGenerate: (
     node: CanvasNode,
     options?: { useCurrentImageAsReference?: boolean; presetId?: string; presetName?: string; excludedProjectReferenceAssetIds?: string[] },
@@ -175,6 +181,7 @@ function CanvasNodeEditorPopover({
   onLocalEdit,
   onLocalEditRemove,
   onToggleEditor,
+  onRequestCanvasPan,
   onGenerate,
   projectVisualReferences = [],
   onOneTake,
@@ -228,16 +235,16 @@ function CanvasNodeEditorPopover({
 }: CanvasNodeEditorPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const promptRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<ReturnType<typeof placeCanvasNodeEditorDock>>({
+  const [position, setPosition] = useState({
     left: 18,
     top: 86,
-    placement: "bottom",
+    placement: "bottom" as const,
   });
+  const [editorWidth, setEditorWidth] = useState(0);
+  const lastEditorPanLayoutRef = useRef("");
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
   const [isCompact, setIsCompact] = useState(false);
-  const [promptExpanded, setPromptExpanded] = useState(
-    node.type === "media" && node.data.kind === "audio",
-  );
+  const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOptimizing, setPromptOptimizing] = useState(false);
   const [promptBeforeOptimization, setPromptBeforeOptimization] = useState<string | null>(null);
   const [oneTakeDurationOpen, setOneTakeDurationOpen] = useState(false);
@@ -254,7 +261,7 @@ function CanvasNodeEditorPopover({
   const audioNode = node.type === "media" && data.kind === "audio";
   const threeDNode = node.type === "media" && data.kind === "3d";
   useEffect(() => {
-    setPromptExpanded(audioNode);
+    setPromptExpanded(false);
   }, [audioNode, node.id]);
   const isImageNode = !audioNode && !threeDNode && node.type !== "prompt" && node.type !== "upscale" && data.kind !== "video";
   const isVariantGenerator = node.type === "generator" && data.kind === "video";
@@ -564,6 +571,8 @@ function CanvasNodeEditorPopover({
         ? "视频节点"
         : audioNode
           ? "音频素材"
+          : threeDNode
+            ? "三维模型"
           : node.type === "upscale"
             ? (upscaleMissingInput ? "超分节点 · 请连接一张已完成的图片" : "超分节点 · 已连接图片")
             : node.type === "media" && data.kind === "image" && data.url
@@ -722,15 +731,11 @@ function CanvasNodeEditorPopover({
     if (!stage || !portalRoot) return;
     const zoom = Math.max(0.12, document.camera.zoom || 1);
     const stageWidth = stage.clientWidth;
-    const stageHeight = stage.clientHeight;
     const nextCompact = stageWidth < 960 || zoom < 0.58;
-    const microEditor = zoom < 0.35;
     if (nextCompact !== isCompact) setIsCompact(nextCompact);
-    const popover = popoverRef.current;
-    const popoverWidth = promptExpanded
-      ? Math.min(860, window.innerWidth - 32)
-      : popover?.offsetWidth || (microEditor ? 360 : nextCompact ? 510 : 640);
     const stageRect = stage.getBoundingClientRect();
+    const stageHeight = stage.clientHeight;
+    const visibleStage = { width: canvasVisibleStageWidth(stage), height: stageHeight };
     const nodeElement = Array.from(
       stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
     ).find((element) => element.dataset.canvasNodeId === node.id);
@@ -752,21 +757,69 @@ function CanvasNodeEditorPopover({
     // panel may clamp to the stage margins when it is wider than the node,
     // but it must not be recentered independently from the node.
     /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
-    const visibleStage = { width: canvasVisibleStageWidth(stage), height: stageHeight };
-    // Keep the full editor below its node; the workspace portal escapes stage clipping.
-    const dockPosition = placeCanvasNodeEditorDock(
+    const workspaceRect = portalRoot.getBoundingClientRect();
+    const viewport = {
+      width: Math.max(1, portalRoot.clientWidth),
+      height: Math.max(1, portalRoot.clientHeight),
+    };
+    const widthProfile = audioNode
+      ? { base: 520, min: 420, max: 660 }
+      : threeDNode
+        ? { base: 500, min: 420, max: 620 }
+        : isDockNode
+          ? { base: 680, min: 600, max: 760 }
+          : { base: 680, min: 560, max: 760 };
+    const popoverWidth = promptExpanded
+      ? Math.max(1, Math.min(860, viewport.width - 32))
+      : canvasZoomResponsiveNodeEditorWidth(
+          visibleStage.width,
+          zoom,
+          widthProfile.base,
+          widthProfile.min,
+          widthProfile.max,
+        );
+    setEditorWidth((current) => current === popoverWidth ? current : popoverWidth);
+    const editorElement = popoverRef.current;
+    const editorHeight = editorElement?.getBoundingClientRect().height || 0;
+    const otherNodeAnchors = Array.from(
+      stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
+    ).flatMap((element) => {
+      if (element.dataset.canvasNodeId === node.id) return [];
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return [];
+      return [{
+        left: rect.left - stageRect.left,
+        top: rect.top - stageRect.top,
+        width: rect.width,
+        height: rect.height,
+      }];
+    });
+    // Keep the editor below its node. Shift it sideways when that avoids
+    // covering another visible node; it stays vertically attached either way.
+    const editorPosition = placeCanvasNodeEditor(
       anchor,
       visibleStage,
-      { width: popoverWidth },
+      { width: popoverWidth, height: editorHeight },
       14,
       12,
+      otherNodeAnchors,
     );
-    const workspaceRect = portalRoot.getBoundingClientRect();
     const nextPosition = {
-      ...dockPosition,
-      left: stageRect.left - workspaceRect.left + dockPosition.left,
-      top: stageRect.top - workspaceRect.top + dockPosition.top,
+      left: editorPosition.left + stageRect.left - workspaceRect.left,
+      top: editorPosition.top + stageRect.top - workspaceRect.top,
+      placement: "bottom" as const,
     };
+    const anchorTop = anchor.top + stageRect.top - workspaceRect.top;
+    const panLayoutKey = `${node.id}:${popoverWidth}:${editorHeight}:${viewport.width}:${viewport.height}:${Math.round(anchorTop)}`;
+    if (editorHeight > 0 && lastEditorPanLayoutRef.current !== panLayoutKey) {
+      lastEditorPanLayoutRef.current = panLayoutKey;
+      const panDelta = canvasNodeEditorPanDelta(
+        nextPosition.top + editorHeight,
+        viewport.height,
+        12,
+      );
+      if (panDelta > 0) onRequestCanvasPan(panDelta);
+    }
     setPosition((current) =>
       current.left === nextPosition.left &&
       current.top === nextPosition.top &&
@@ -774,7 +827,7 @@ function CanvasNodeEditorPopover({
         ? current
         : nextPosition,
     );
-  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.id, node.x, node.y, portalRoot, promptExpanded, size.h, size.w, stackedEditor, stageRef]);
+  }, [audioNode, document.camera.x, document.camera.y, document.camera.zoom, isCompact, isDockNode, isImageNode, node.id, node.x, node.y, onRequestCanvasPan, portalRoot, promptExpanded, size.h, size.w, stackedEditor, stageRef, threeDNode]);
 
   useLayoutEffect(() => {
     reposition();
@@ -802,19 +855,26 @@ function CanvasNodeEditorPopover({
     };
   }, [reposition]);
 
+  useLayoutEffect(() => {
+    notifyCanvasNodeEditorOverlayPositionChange();
+  }, [position.left, position.top]);
+
   return portalRoot ? createPortal(
     <div
       ref={popoverRef}
-      className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${audioNode ? " is-audio-editor" : ""}${!audioNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
+      className={`canvas-node-editor-popover canvas-node-editor-dock${isDockNode ? " is-image-dock" : ""}${isVariantGenerator ? " is-video-variant" : ""}${audioNode ? " is-audio-editor" : ""}${threeDNode ? " is-three-d-editor" : ""}${!audioNode && !threeDNode && !isDockNode ? " is-columns-node" : ""}${promptExpanded ? " is-prompt-expanded" : ""}`}
       data-placement={position.placement}
       data-density={isCompact ? "compact" : "comfortable"}
-      data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : "image"}
+      data-node-kind={node.type === "prompt" ? "agent" : node.type === "upscale" ? "upscale" : data.kind === "video" ? "video" : data.kind === "audio" ? "audio" : data.kind === "3d" ? "3d" : "image"}
       data-prompt-expanded={promptExpanded ? "true" : "false"}
       data-node-id={node.id}
       aria-label={`${nodeLabel(node)}编辑器`}
-      style={{
+        style={{
         left: position.left,
         top: position.top,
+        width: `${editorWidth || (promptExpanded ? 860 : audioNode ? 520 : threeDNode ? 500 : 680)}px`,
+        "--canvas-node-editor-width": `${editorWidth || (promptExpanded ? 860 : audioNode ? 520 : threeDNode ? 500 : 680)}px`,
+        ...(promptExpanded ? { height: "760px" } : {}),
       } as CSSProperties}
       onPointerDown={(event) => {
         const target = event.target as Node;
@@ -838,7 +898,7 @@ function CanvasNodeEditorPopover({
         </div>
         <div className="canvas-node-editor-head-actions">
           <span>编辑中</span>
-           {(audioNode || node.type !== "upscale") && <button
+           {!audioNode && node.type !== "upscale" && <button
             type="button"
             className="canvas-node-editor-expand"
             title={promptExpanded ? "收回编辑" : "放大编辑"}
@@ -1261,7 +1321,7 @@ function CanvasNodeEditorPopover({
           </div>
          </div>}
        </div>
-        {!audioNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
+        {!audioNode && !threeDNode && (promptExpanded || !isDockNode) && <div className="canvas-node-editor-actions">
           <span>{promptExpanded ? "编辑完成后点击保存" : node.type === "upscale" ? "连接图片后提交超分" : node.type === "prompt" ? "Enter 发送 · Shift + Enter 换行" : inPlaceVideo ? "引用图片 · 生成新视频" : node.type === "media" && data.kind === "image" && data.url ? "当前图片作参考 · 右侧生成新图" : "Ctrl/Cmd + Enter 生成"}</span>
           <div className="canvas-node-editor-action-buttons">
             {isAgentNode && !promptExpanded && readyOneTakeReferences.length >= 2 && (

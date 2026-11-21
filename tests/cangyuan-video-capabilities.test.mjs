@@ -4,11 +4,13 @@ import { createTsRequire } from './ts-require.mjs';
 
 const {
   CANGYUAN_SEEDANCE_FAST_MODEL,
+  CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH,
   CANGYUAN_VIDEO_MAX_REFERENCE_IMAGE_BYTES,
   buildCangyuanVideoPayload,
   cangyuanVideoImageDataUrlBytes,
   cangyuanVideoImageSizeError,
   getCangyuanVideoModelProfile,
+  getCangyuanVideoPromptMaxLength,
   isCangyuanVideoModelSelectable,
   validateCangyuanVideoInput,
 } = createTsRequire(process.cwd())('./lib/cangyuan-video-capabilities');
@@ -48,7 +50,7 @@ test('Cangyuan Seedance profiles use exact documented sdN model IDs', () => {
 
 test('the official current video catalog is complete and models with empty specs are blocked', () => {
   const catalog = getCangyuanVideoModelCatalog();
-  assert.equal(catalog.length, 140);
+  assert.equal(catalog.length, 145);
   assert.ok(catalog.some((entry) => entry.publicModel === 'sd23-seedance-2.5-2'));
   assert.ok(catalog.every((entry) => entry.status === 'current' && entry.spec.publicModel === entry.publicModel));
   for (const entry of catalog.filter((model) => model.spec.params.length > 0)) {
@@ -62,6 +64,91 @@ test('the official current video catalog is complete and models with empty specs
   }
   assert.equal(isCangyuanVideoModelSelectable('sd20-seedance-2.0-fast'), true);
   assert.throws(() => validateCangyuanVideoInput('unlisted-video-model', { prompt: 'scene' }), /未出现在当前官方目录/);
+});
+
+test('recently added video models are selectable with their documented controls and limits', () => {
+  const expected = [
+    ['vd1-vidu-q4', 2, 16, ['480p', '720p', '1080p'], 10, undefined, 3],
+    ['wan7-wan3.0-3', 5, 30, ['720p', '1080p'], 10, 5, 5],
+    ['sd24-seedance-2.0', 4, 15, ['720p'], 9, undefined, 3],
+    ['sd24-seedance-2.0-2', 5, 15, ['720p'], 9, 3, 3],
+    ['sd24-seedance-2.5-1080p', 5, 30, ['1080p'], 9, undefined, 3],
+    ['sd24-seedance-2.5-3', 4, 30, ['480p', '720p'], 30, 10, 10],
+  ];
+  for (const [model, minSeconds, maxSeconds, resolutions, images, videos, audios] of expected) {
+    const spec = getCangyuanVideoModelSpec(model);
+    const profile = getCangyuanVideoModelProfile(model);
+    assert.ok(spec, `${model} should be in the official catalog`);
+    assert.equal(isCangyuanVideoModelSelectable(model), true, `${model} should be selectable`);
+    assert.equal(profile?.publicModel, model);
+    assert.deepEqual([profile.minSeconds, profile.maxSeconds], [minSeconds, maxSeconds]);
+    assert.deepEqual(profile.suggestedResolutions, resolutions);
+    assert.equal(profile.maxReferenceImages, images);
+    assert.equal(profile.maxReferenceVideos, videos);
+    assert.equal(profile.supportsReferenceVideos, videos !== undefined);
+    assert.equal(profile.maxReferenceAudios, audios);
+  }
+
+  assert.equal(getCangyuanVideoModelProfile('vd1-vidu-q4').requiresReferenceImage, true);
+  assert.equal(getCangyuanVideoModelProfile('sd24-seedance-2.0-2').maxTotalInputs, 12);
+  assert.equal(getCangyuanVideoModelProfile('sd24-seedance-2.5-3').maxTotalInputs, 50);
+
+  assert.throws(() => validateCangyuanVideoInput('vd1-vidu-q4', {
+    prompt: 'animate a scene', seconds: 5, aspectRatio: '16:9',
+  }), /必须提供参考图片/);
+  validateCangyuanVideoInput('vd1-vidu-q4', {
+    prompt: 'animate a scene', seconds: 5, aspectRatio: '16:9',
+    referenceImages: ['https://assets.example/reference.png'],
+  });
+  assert.throws(() => validateCangyuanVideoInput('sd24-seedance-2.0-2', {
+    prompt: 'animate a scene', seconds: 5, aspectRatio: '9:16',
+    referenceImages: Array(9).fill('https://assets.example/ref.png'),
+    referenceVideos: Array(3).fill('https://assets.example/ref.mp4'),
+    audios: ['https://assets.example/ref.wav'],
+  }), /参考素材总数不能超过 12 个/);
+});
+
+test('Cangyuan prompt length limits follow each documented model and are enforced server-side', () => {
+  const documentedLimits = getCangyuanVideoModelCatalog()
+    .map((entry) => [entry.publicModel, entry.spec.params.find((parameter) => parameter.name === 'prompt')?.maxLength])
+    .filter(([, maxLength]) => maxLength !== undefined);
+  assert.equal(documentedLimits.length, 12);
+
+  for (const [model, maxLength] of documentedLimits) {
+    assert.equal(getCangyuanVideoPromptMaxLength(model), maxLength, `${model} should expose its documented prompt limit`);
+    assert.throws(
+      () => validateCangyuanVideoInput(model, { prompt: 'x'.repeat(maxLength + 1) }),
+      new RegExp(`画面描述最多 ${maxLength} 个字符`),
+      `${model} should reject prompts above its documented limit`,
+    );
+    let exactLimitError;
+    try {
+      validateCangyuanVideoInput(model, { prompt: 'x'.repeat(maxLength) });
+    } catch (error) {
+      exactLimitError = error;
+    }
+    assert.doesNotMatch(exactLimitError?.message || '', /画面描述最多/, `${model} should accept its exact documented limit`);
+  }
+
+  const model = 'sd10-seedance-2.0';
+  const maxLength = getCangyuanVideoPromptMaxLength(model);
+  assert.equal(maxLength, 10000);
+  assert.equal(getCangyuanVideoPromptMaxLength('suno-v6'), undefined);
+
+  const undocumentedModel = 'sd20-seedance-2.0-fast';
+  assert.equal(getCangyuanVideoPromptMaxLength(undocumentedModel), undefined);
+  assert.equal(CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH, 6000);
+  let exactDefaultLimitError;
+  try {
+    validateCangyuanVideoInput(undocumentedModel, { prompt: 'x'.repeat(CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH) });
+  } catch (error) {
+    exactDefaultLimitError = error;
+  }
+  assert.doesNotMatch(exactDefaultLimitError?.message || '', /提示词上限|画面描述最多/);
+  assert.throws(
+    () => validateCangyuanVideoInput(undocumentedModel, { prompt: 'x'.repeat(CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH + 1) }),
+    /当前平台对未注明提示词上限的沧元型号，限制画面描述最多 6000 个字符/,
+  );
 });
 
 test('Cangyuan profiles expose line-specific input and frame capabilities', () => {

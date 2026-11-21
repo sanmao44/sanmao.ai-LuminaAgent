@@ -11,6 +11,7 @@ import { MODEL_PICKER_QUICK_LIMIT, modelPickerMatches, modelPickerModelIsAvailab
 import { useBodyScrollLock } from '@/lib/use-body-scroll-lock';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
 import { isInternalIntentModel } from '@/lib/intent-classifier';
+import { CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT } from '@/components/canvas/overlay-events';
 
 type ModelPickerProps = {
   models: RegistryModel[];
@@ -37,7 +38,7 @@ type ModelPickerProps = {
 const capabilityLabels: Partial<Record<ModelCapability, string>> = {
   chat: '对话', generate: '生图', edit: '改图', upscale: '超分', reference: '参考图', vision: '视觉', typography: '文字', 'web-search': '联网',
   'video-generate': '视频', 'video-edit': '视频编辑', 'video-extend': '视频续写', 'video-first-frame': '首尾帧', 'video-reference': '视频参考', 'video-audio': '音频', speech: '配音', transcription: '转写',
-  'music-generate': '音乐', 'sound-effect': '音效', 'audio-conversation': '音频对话', '3d-generate': '三维',
+  'music-generate': '音乐', 'sound-effect': '音效', 'audio-conversation': '音频对话', 'voice-conversion': '变声', 'audio-isolation': '人声分离', '3d-generate': '三维',
 };
 
 const capabilityClasses: Partial<Record<ModelCapability, string>> = {
@@ -55,6 +56,8 @@ const capabilityClasses: Partial<Record<ModelCapability, string>> = {
   'music-generate': 'music',
   'sound-effect': 'sound-effect',
   'audio-conversation': 'audio-conversation',
+  'voice-conversion': 'voice-conversion',
+  'audio-isolation': 'audio-isolation',
   '3d-generate': 'three-dimensional',
 };
 
@@ -237,10 +240,12 @@ export default function ModelPicker({
     const handleViewportChange = () => updateQuickPosition();
     window.addEventListener('resize', handleViewportChange);
     window.addEventListener('scroll', handleViewportChange, true);
+    window.addEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, handleViewportChange);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener('resize', handleViewportChange);
       window.removeEventListener('scroll', handleViewportChange, true);
+      window.removeEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, handleViewportChange);
     };
   }, [quickOpen, availableModels.length, recentModels.length, favoriteModels.length]);
 

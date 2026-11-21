@@ -24,6 +24,7 @@ import { SKILL_MESSAGE_SOURCE } from "@/lib/skill-picker";
 import ReferenceMentionMenu, {
   type ReferenceMentionOption,
 } from "@/components/ReferenceMentionMenu";
+import { CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT } from "@/components/canvas/overlay-events";
 
 function mentionTokenLength(index: number) {
   return `@${index + 1}`.length;
@@ -347,6 +348,16 @@ const ReferenceMentionEditor = forwardRef<HTMLDivElement, ReferenceMentionEditor
     if (!menuPortal) return;
     setMenuAnchor(next ? computeMenuAnchor() : null);
   };
+
+  useEffect(() => {
+    if (!menuPortal || !mentionState) return;
+    const updateAnchor = () => {
+      const next = computeMenuAnchor();
+      if (next) setMenuAnchor(next);
+    };
+    window.addEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, updateAnchor);
+    return () => window.removeEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, updateAnchor);
+  }, [menuPortal, mentionState]);
 
   useImperativeHandle(forwardedRef, () => editorRef.current as HTMLDivElement);
 

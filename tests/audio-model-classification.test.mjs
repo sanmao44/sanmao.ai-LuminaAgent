@@ -16,11 +16,13 @@ test('official purpose wins over ambiguous model names', () => {
   assert.equal(result.requiresReview, false);
 });
 
-test('Cangyuan official model profiles distinguish dialogue, music, and sound effects', () => {
+test('Cangyuan official model profiles distinguish speech, dialogue, music, sound effects, conversion, and isolation', () => {
   const { inferModel } = createTsRequire(process.cwd())('./lib/store');
   const dialogue = inferModel('mu1-muse-audio', 'cangyuan');
   const soundEffect = inferModel('elevenlabs-sound-effects-v3', 'cangyuan');
   const music = inferModel('lyria-3.5', 'cangyuan');
+  const voiceChanger = inferModel('elevenlabs-voice-changer', 'cangyuan');
+  const audioIsolation = inferModel('elevenlabs-audio-isolation', 'cangyuan');
 
   assert.deepEqual(dialogue.classification?.purposes, ['conversation']);
   assert.ok(dialogue.capabilities.includes('audio-conversation'));
@@ -28,6 +30,12 @@ test('Cangyuan official model profiles distinguish dialogue, music, and sound ef
   assert.ok(soundEffect.capabilities.includes('sound-effect'));
   assert.equal(soundEffect.capabilities.includes('music-generate'), false);
   assert.deepEqual(music.classification?.purposes, ['music']);
+  assert.deepEqual(voiceChanger.classification?.purposes, ['voice-conversion']);
+  assert.ok(voiceChanger.capabilities.includes('voice-conversion'));
+  assert.equal(voiceChanger.capabilities.includes('speech'), false);
+  assert.deepEqual(audioIsolation.classification?.purposes, ['audio-isolation']);
+  assert.ok(audioIsolation.capabilities.includes('audio-isolation'));
+  assert.equal(audioIsolation.capabilities.includes('speech'), false);
 });
 
 test('generic audio models remain audio models without being routed to speech', () => {

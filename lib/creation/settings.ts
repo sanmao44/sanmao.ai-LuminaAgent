@@ -61,6 +61,7 @@ export function imageModelParametersFromSettings(settings: ImageCreationSettings
     resolution: settings.resolution,
     tier: settings.tier,
     series: settings.series,
+    variant: settings.variant,
     seed: settings.seed,
     enablePromptExpansion: settings.enablePromptExpansion,
     style: settings.style,
@@ -361,6 +362,9 @@ export function normalizeImageCreationSettings(
   const series = cangyuanProfile?.seriesEnum?.find((candidate) => candidate.toLowerCase() === seriesCandidate.toLowerCase())
     || cangyuanProfile?.seriesDefault
     || cangyuanProfile?.seriesEnum?.[0];
+  const variantCandidate = typeof raw.variant === "string" ? raw.variant.trim() : "";
+  const variant = cangyuanProfile?.variantEnum?.find((candidate) => candidate.toLowerCase() === variantCandidate.toLowerCase())
+    || cangyuanProfile?.variantDefault;
   const seedCandidate = typeof raw.seed === "string" ? raw.seed.trim() : "";
   const seed = cangyuanProfile?.supportsSeed
     && seedCandidate
@@ -431,7 +435,7 @@ export function normalizeImageCreationSettings(
   const stylize = advancedNumber("stylize", raw.stylize, 0, 1000, 10);
   const styleWeight = advancedNumber("sw", raw.styleWeight, 0, 1000, 10);
   const weird = advancedNumber("weird", raw.weird, 0, 3000, 50);
-  const sizeMode = raw.sizeMode === "custom" ? "custom" : "system";
+  const sizeMode = raw.sizeMode === "custom" && cangyuanProfile?.supportsCustomDimensions !== false ? "custom" : "system";
   const outputFormat = !layerDecomposition && (raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg")
     ? raw.outputFormat
     : "png";
@@ -443,8 +447,10 @@ export function normalizeImageCreationSettings(
       : "auto";
   const qualityValues = ["auto", "low", "medium", "high", "xhigh", "max", "1", "4", "1k", "2k", "4k"] as const;
   const quality = typeof raw.quality === "string" && qualityValues.includes(raw.quality as (typeof qualityValues)[number])
-    ? raw.quality as ImageCreationSettings["quality"]
-    : "自动";
+    ? cangyuanProfile?.qualityEnum.length && !cangyuanProfile.qualityEnum.includes(raw.quality)
+      ? (cangyuanProfile.qualityDefault || "自动") as ImageCreationSettings["quality"]
+      : raw.quality as ImageCreationSettings["quality"]
+    : (cangyuanProfile?.qualityDefault || "自动") as ImageCreationSettings["quality"];
   const cangyuanSizeValues = new Set([
     ...(cangyuanProfile?.sizeRecommendations || []),
     ...(cangyuanProfile?.aspectRatioRecommendations || []),
@@ -513,6 +519,7 @@ export function normalizeImageCreationSettings(
     resolution,
     ...(tier ? { tier } : {}),
     ...(series ? { series } : {}),
+    ...(variant ? { variant: variant as ImageCreationSettings["variant"] } : {}),
     ...(seed ? { seed } : {}),
     ...(enablePromptExpansion !== undefined ? { enablePromptExpansion } : {}),
     ...(style ? { style } : {}),
