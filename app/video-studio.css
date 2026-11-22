@@ -474,6 +474,11 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-task-actions{gap:4px;margin-top:2px;padding-top:5px}
 .video-task-actions a,.video-task-actions button{min-height:24px;padding:0 7px;border-radius:7px;font-size:8px}
 .video-task-error{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;font-size:8px}
+.video-task-error-detail{display:grid;gap:7px;min-width:0}
+.video-task-error-detail>.video-task-error,.video-task-error-detail>.creative-video-error{display:block;-webkit-line-clamp:unset;margin:0;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.video-task-error-detail details{min-width:0;color:var(--muted);font-size:12px}
+.video-task-error-detail summary{cursor:pointer;color:var(--accent-text);font-weight:800}
+.video-task-error-detail details pre{max-height:160px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--muted);font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow:auto;overflow-wrap:anywhere}
 .video-task-waiting{font-size:8px}
 .video-task-dialog{position:fixed;inset:0;z-index:241;display:grid;place-items:center;padding:18px;background:var(--overlay);backdrop-filter:blur(10px);overscroll-behavior:contain}
 .video-task-dialog-inner{position:relative;width:min(620px,calc(100vw - 32px));max-height:min(700px,calc(100dvh - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line-strong);border-radius:18px;background:var(--panel);box-shadow:var(--shadow)}

@@ -58,6 +58,7 @@ function CanvasNodeCard({
   onCancelAngle,
   onTextPreview,
   onLocalEdit,
+  onReplaceMedia,
   onUseAsImagePrompt,
   onRetryVariant,
   onRetryFailedVariants,
@@ -356,6 +357,7 @@ function CanvasNodeCard({
           maskState={maskState}
           onNaturalSize={onNaturalSize}
           onLocalEdit={onLocalEdit}
+          onReplaceMedia={onReplaceMedia}
           onRename={onRename}
           renaming={renaming}
           onRenamingChange={onRenamingChange}

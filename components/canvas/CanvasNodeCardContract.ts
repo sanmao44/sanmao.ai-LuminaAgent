@@ -33,6 +33,7 @@ export type CanvasNodeCardProps = {
   onCancelAngle: () => void;
   onTextPreview: () => void;
   onLocalEdit: () => void;
+  onReplaceMedia?: (file: File) => Promise<void>;
   onUseAsImagePrompt: () => void;
   onRetryVariant: (variantIndex: number) => void;
   onRetryFailedVariants: () => void;
@@ -100,6 +101,7 @@ export function areCanvasNodeCardPropsEqual(
     previous.onCancelAngle === next.onCancelAngle &&
     previous.onTextPreview === next.onTextPreview &&
     previous.onLocalEdit === next.onLocalEdit &&
+    previous.onReplaceMedia === next.onReplaceMedia &&
     previous.onUseAsImagePrompt === next.onUseAsImagePrompt &&
     previous.onRetryVariant === next.onRetryVariant &&
     previous.onRetryFailedVariants === next.onRetryFailedVariants &&

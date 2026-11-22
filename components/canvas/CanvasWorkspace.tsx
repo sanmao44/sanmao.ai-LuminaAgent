@@ -26,6 +26,7 @@ import { retryCanvasVideoLogs, type CanvasVideoRetryResult } from "@/lib/canvas/
 import { retryCanvasUpscaleLogs, type CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
 import { applyCanvasTaskRecordRecovery } from "@/lib/canvas/task-record-recovery";
 import { appendCanvasAudioTranscriptionDocument, canvasAudioSpeechHistory } from "@/lib/canvas/audio-tools";
+import { replaceCanvasMediaFile, withoutCanvasMediaMask } from "@/lib/canvas/media-replacement";
 import {
   addEdge,
   alignCanvasNodes,
@@ -9632,6 +9633,28 @@ export default function SuperCanvas() {
     [captureProjectTask, addLog, commit, notify, runtime],
   );
 
+  const replaceMediaNode = useCallback(async (nodeId: string, file: File) => {
+    const projectTask = captureProjectTask();
+    const asset = await replaceCanvasMediaFile({
+      nodeId,
+      file,
+      readDocument: projectTask.readDocument,
+      commit: projectTask.commit,
+      waitForPersistence: projectTask.waitForPersistence,
+      uploadAsset: uploadCanvasAsset,
+    });
+    addLog(`已替换${asset.kind === "video" ? "视频" : "图片"}素材：${file.name}`);
+    projectTask.setReuseDraft((current) => current?.sourceNodeId === nodeId ? null : current);
+    projectTask.ifActive(() => {
+      setEditorDrafts((current) => {
+        const draft = current[nodeId];
+        const params = withoutCanvasMediaMask(draft?.params);
+        return draft && params !== draft.params ? { ...current, [nodeId]: { ...draft, params } } : current;
+      });
+      notify("素材已替换，节点与连线已保留，可撤销此操作");
+    });
+  }, [addLog, captureProjectTask, notify]);
+
   const replaceAudioNode = useCallback(
     async (nodeId: string, file: File, speechGeneration?: CanvasAudioGenerationMeta) => {
       const projectTask = captureProjectTask();
@@ -14240,6 +14263,7 @@ export default function SuperCanvas() {
               onOpenVideoEditor={(node) => openCanvasVideoEditor(node.id)}
               onOutputPreview={(node) => openCanvasMediaViewer(node.id)}
               onLocalEdit={(node) => openCanvasMaskEditor(node.id)}
+              onReplaceMedia={replaceMediaNode}
               onTextPreview={(node) => openCanvasTextViewer(node.id)}
               onUseAsImagePrompt={(node) => useAgentResponseAsImagePrompt(node)}
               onRetryVariant={retryVariant}

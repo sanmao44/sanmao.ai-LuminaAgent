@@ -2198,6 +2198,8 @@ html[data-theme="light"] .sidebar.expanded{
 .agent-intent-preview-details p span{min-width:0;flex:1;overflow-wrap:anywhere}
 @media(max-width:780px){.agent-intent-preview>summary{min-height:44px}.agent-intent-preview-details{max-width:min(620px,calc(100vw - 88px))}}
 .message-body>p{color:var(--message-body);font-size:14px;line-height:1.85}
+.agent-page .message-body>p,.agent-page .assistant-markdown-content{overflow-wrap:anywhere}
+.agent-page .assistant-code-block pre{overflow-wrap:normal}
 .message-body>p.pending{color:var(--message-support)}
 .assistant-markdown{color:var(--message-body);font-size:14px;line-height:1.85}
 .assistant-markdown>p{margin:0 0 15px}

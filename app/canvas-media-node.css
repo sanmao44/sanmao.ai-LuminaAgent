@@ -21,6 +21,14 @@
 .canvas-node .canvas-media-state.missing>small{display:-webkit-box;max-width:min(240px,calc(100% - 20px));white-space:normal;line-height:1.45;-webkit-box-orient:vertical;-webkit-line-clamp:3}
 .canvas-media-retry{height:26px;padding:0 10px;border:1px solid color-mix(in srgb,var(--warning) 38%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--text-2);font-size:9px;font-weight:800;cursor:pointer}
 .canvas-media-retry:hover{border-color:var(--warning);color:var(--text)}
+.canvas-media-recovery{display:grid;justify-items:center;gap:7px;max-width:240px;width:100%}
+.canvas-media-recovery-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:6px}
+.canvas-media-replace{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-text)}
+.canvas-media-replace:hover{background:var(--accent-soft-2);border-color:var(--accent);color:var(--accent-text)}
+.canvas-media-retry:disabled{opacity:.6;cursor:wait}
+.canvas-media-retry:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.canvas-media-recovery-error{margin:0;color:var(--danger);font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+.canvas-node .canvas-media-state.temporary>small{max-width:240px;white-space:normal;line-height:1.45}
 @media (prefers-reduced-motion:reduce){html:not([data-motion="on"]) .canvas-media-state.pending>span{animation:none!important}}
 .canvas-node:has(.canvas-node-editor) .canvas-media-card{height:auto;min-height:150px}
 .canvas-node:has(.canvas-node-editor) .canvas-media-stage{height:170px;min-height:0}

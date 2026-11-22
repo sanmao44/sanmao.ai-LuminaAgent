@@ -7,6 +7,7 @@ import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import ModelLibraryProviderPicker from '@/components/ModelLibraryProviderPicker';
 import { modelLibraryEmptyStateCopy } from '@/components/model-library-empty-state';
+import { isModelLibraryGroupExpanded, resetModelLibraryGroupExpansion, toggleModelLibraryGroupExpansion } from '@/components/model-library-group-expansion';
 import UpdateNotice from '@/components/UpdateNotice';
 import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
@@ -2504,6 +2505,11 @@ export default function Page() {
     const [modelQuickFilter, setModelQuickFilter] = useState('all');
     const [bulkModelBusy, setBulkModelBusy] = useState(false);
     const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
+    const [modelProviderGroupExpansion, setModelProviderGroupExpansion] = useState({ filterKey: '', overrides: new Map() });
+    const modelGroupFilters = { search: modelSearch, provider: modelProviderFilter, kind: modelKindFilter, quick: modelQuickFilter };
+    useEffect(()=>{
+        setModelProviderGroupExpansion((current)=>resetModelLibraryGroupExpansion(current, modelGroupFilters));
+    }, [modelSearch, modelProviderFilter, modelKindFilter, modelQuickFilter]);
     const modelKindBusyRef = useRef(new Set());
     const [modelKindBusy, setModelKindBusy] = useState(new Set());
     const [modelFavorites, setModelFavorites] = useState([]);
@@ -5302,6 +5308,7 @@ export default function Page() {
             setModelProviderFilter(id);
             setModelSearch('');
             setExpandedModelProviders(new Set([id]));
+            setModelProviderGroupExpansion({ filterKey: '', overrides: new Map() });
             setSection('models');
         } catch (error) {
             notify(error instanceof Error ? error.message : '读取模型失败');
@@ -5332,6 +5339,7 @@ export default function Page() {
             setManualModelProvider(null);
             setModelProviderFilter(providerId);
             setExpandedModelProviders((current)=>new Set([...current, providerId]));
+            setModelProviderGroupExpansion({ filterKey: '', overrides: new Map() });
             setSection('models');
             notify(`已登记模型 ${data.model?.displayName || manualModelForm.rawId.trim()}，默认未启用`);
         } catch (error) {
@@ -5341,12 +5349,7 @@ export default function Page() {
         }
     }
     function toggleModelProviderGroup(providerId) {
-        setExpandedModelProviders((current)=>{
-            const next = new Set(current);
-            if (next.has(providerId)) next.delete(providerId);
-            else next.add(providerId);
-            return next;
-        });
+        setModelProviderGroupExpansion((current)=>toggleModelLibraryGroupExpansion(current, providerId, modelGroupFilters, expandedModelProviders));
     }
     async function toggleProviderModelLibrary(provider) {
         try {
@@ -12791,7 +12794,7 @@ export default function Page() {
                                             }) : /*#__PURE__*/ _jsx("div", {
                                                 className: "model-groups",
                                                 children: modelProviderGroups.map(([providerId, group])=>{
-                                                    const expanded = Boolean(modelSearch.trim()) || modelQuickFilter !== 'all' || modelProviderFilter !== 'all' || expandedModelProviders.has(providerId);
+                                                    const expanded = isModelLibraryGroupExpanded(providerId, modelGroupFilters, expandedModelProviders, modelProviderGroupExpansion);
                                                     const groupKindSummary = [
                                                         group.some((model)=>model.kind === 'chat') ? '对话' : '',
                                                         group.some((model)=>model.kind === 'image') ? '图片' : '',
