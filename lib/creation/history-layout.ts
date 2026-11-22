@@ -1,3 +1,10 @@
+/** Match an auto-fill grid's capacity while allowing one card in a narrow container. */
+export function historyGridColumnCapacity(width: number, minimum: number, gap: number): number {
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(minimum) || minimum <= 0) return 1;
+  const spacing = Number.isFinite(gap) ? Math.max(0, gap) : 0;
+  return Math.max(1, Math.floor((width + spacing) / (minimum + spacing)));
+}
+
 /** Keep automatic pages on complete grid rows without shrinking the page. */
 export function completeHistoryPageSize(columnCount: number, minimumPageSize: number): number {
   const columns = Number.isFinite(columnCount) ? Math.max(1, Math.floor(columnCount)) : 1;

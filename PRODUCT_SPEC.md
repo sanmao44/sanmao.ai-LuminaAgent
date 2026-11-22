@@ -1,5 +1,7 @@
 # SANMAO.AI 0.5 产品结构
 
+> 历史文档：本文件保留 0.5 版本的产品结构与当时的阶段建议，不作为当前功能状态或缺失功能清单。当前产品方向见 [PRODUCT.md](PRODUCT.md)，架构约束见 [ARCHITECTURE.md](ARCHITECTURE.md)，当前计划与增量路线见 [PLANS.md](PLANS.md) 和 [产品升级路线](docs/product-modernization.md)。
+
 核心原则：不是无限画布；是“对话 + 生图 + 图片迭代 + 历史复用”的结构化创作平台。
 
 ## 一级入口

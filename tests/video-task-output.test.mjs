@@ -58,6 +58,20 @@ test('technical error details redact credentials and limit long provider respons
   assert.ok(output.videoTaskErrorPresentation('x'.repeat(1000)).detail.length <= 600);
 });
 
+test('technical details hide complete Basic and Digest authorization and OAuth tokens', () => {
+  for (const error of [
+    'Authorization: Basic RklYVFVSRTpTRUNSRVQ=',
+    'Authorization: Digest username="fixture-user", response="fixture-secret"',
+    '{"authorization":"Basic fixture-secret","message":"request failed"}',
+    JSON.stringify({ authorization: 'Digest username="fixture-user", response="fixture-secret"', message: 'request failed' }),
+    'https://example.test?access_token=fixture-access&refresh_token=fixture-refresh&client_secret=fixture-secret',
+    'access_token=fixture-access refresh_token="fixture-refresh" client_secret=fixture-secret',
+  ]) {
+    const { detail } = output.videoTaskErrorPresentation(error);
+    assert.doesNotMatch(detail, /fixture-(?:user|secret|access|refresh)|RklYVFVSRTpTRUNSRVQ=/);
+  }
+});
+
 test('worker removal accepts a task with a result even when its stored status is stale', async (t) => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-remove-'));
   const mediaFile = path.join(dataDir, 'video.mp4');

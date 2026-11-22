@@ -38,9 +38,7 @@
     ".next-canvas-qa/types/**/*.ts",
     ".next-canvas-qa/dev/types/**/*.ts",
     ".next-minimax-voice-qa/types/**/*.ts",
-    ".next-minimax-voice-qa/dev/types/**/*.ts",
-    ".next-quality-dev/types/**/*.ts",
-    ".next-quality-dev/dev/types/**/*.ts"
+    ".next-minimax-voice-qa/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

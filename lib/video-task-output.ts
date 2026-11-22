@@ -12,10 +12,11 @@ export type VideoTaskErrorPresentation = {
 
 function sanitizeVideoTaskError(value: string) {
   return value
+    .replace(/(["']?\bauthorization["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|[^\r\n]+)/gi, '$1[已隐藏]')
     .replace(/[A-Za-z]:\\[^\"'<>|?*\r\n]+/g, '[本机路径]')
     .replace(/\/(?:Users|home|var|tmp|mnt|opt|workspace)\/[^\s\"'<>]+/g, '[本机路径]')
-    .replace(/([?&](?:api[_-]?key|token|secret|password|key)=)[^&\s]+/gi, '$1[已隐藏]')
-    .replace(/(\b(?:authorization|api[_-]?key|token|secret|password)\b["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s,"'&}]+/gi, '$1[已隐藏]')
+    .replace(/([?&](?:api[_-]?key|(?:access[_-]?|refresh[_-]?)?token|client[_-]?secret|secret|password|key)=)[^&\s]+/gi, '$1[已隐藏]')
+    .replace(/(\b(?:api[_-]?key|(?:access[_-]?|refresh[_-]?)?token|client[_-]?secret|secret|password)\b["']?\s*[:=]\s*["']?)[^\s,"'&}]+/gi, '$1[已隐藏]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [已隐藏]')
     .trim()
     .slice(0, 600);
@@ -34,7 +35,7 @@ export function videoTaskErrorPresentation(
     ? '视频已生成，但本机保存失败，可再次保存'
     : options.isTracking
       ? '任务状态暂时无法更新，正在继续查询'
-    : transient
+      : transient
       ? '服务商或网络暂时不可用，可稍后重试'
       : '视频生成失败，可恢复参数后重新提交';
   return { summary, detail: sanitizeVideoTaskError(raw) };

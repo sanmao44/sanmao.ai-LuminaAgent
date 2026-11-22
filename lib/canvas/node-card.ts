@@ -14,12 +14,12 @@ export function canvasUpscaleSource(document: CanvasDocument, nodeId: string) {
 
 export function nodeStatus(node: CanvasNode) {
   if (node.data.status === "queued" || node.data.status === "running")
-    return node.data.statusLabel || "???";
+    return node.data.statusLabel || (node.data.status === "queued" ? "排队中" : "生成中");
   if (node.data.status === "failed")
-    return node.data.statusLabel || "????????";
+    return node.data.statusLabel || "生成失败";
   if (!node.data.url && node.data.status === "draft")
-    return node.data.statusLabel || "????????";
-  return node.data.role || "????";
+    return node.data.statusLabel || "等待生成";
+  return node.data.role || "素材";
 }
 
 export function progressValue(value: unknown) {

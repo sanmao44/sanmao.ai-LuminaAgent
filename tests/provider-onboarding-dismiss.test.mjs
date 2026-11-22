@@ -84,6 +84,94 @@ vm.runInNewContext(providerConnectionFieldsCompiled, {
 });
 const ProviderConnectionFields = providerConnectionFieldsModule.exports.default;
 
+const pageTree = ts.createSourceFile('page.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+function pageHandler(name, bindings) {
+  let handler;
+  function visit(node) {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) handler = node;
+    if (!handler) ts.forEachChild(node, visit);
+  }
+  visit(pageTree);
+  if (!handler) throw new Error(`Missing page handler: ${name}`);
+  const compiled = ts.transpileModule(handler.getText(pageTree), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return vm.runInNewContext(`${compiled}\n${name};`, bindings);
+}
+
+function connectionTestHarness({ platform = 'openai', payload = {}, ok = true, status = 200, response } = {}) {
+  const state = { busy: false, message: '', succeeded: false };
+  const run = pageHandler('testProvider', {
+    providerForm: { platform, baseUrl: 'https://example.test/v1', apiKey: 'fixture', videoTransport: '' },
+    providerEditId: null,
+    notify() {},
+    setProviderTestBusy(value) { state.busy = value; },
+    setProviderTestResult(value) { state.message = value; },
+    setProviderTestSucceeded(value) { state.succeeded = value; },
+    fetch: async () => response || { ok, status, json: async () => payload },
+  });
+  return { state, run };
+}
+
+test('connection failures attach Agnes credential guidance only to an upstream Agnes 401', async () => {
+  for (const scenario of [
+    { platform: 'openai', payload: { error: 'Incorrect API key provided', providerStatus: 401 }, agnesHint: false },
+    { platform: 'agnes', payload: { error: '需要管理员登录。' }, agnesHint: false },
+    { platform: 'agnes', payload: { error: 'invalid provider key', providerStatus: 401 }, agnesHint: true },
+    { platform: 'agnes', payload: { error: 'upstream unavailable', providerStatus: 503 }, agnesHint: false },
+  ]) {
+    const { state, run } = connectionTestHarness({ ...scenario, ok: false, status: 401 });
+    assert.equal(await run(), false);
+    assert.equal(state.succeeded, false);
+    assert.equal(state.busy, false);
+    assert.equal(state.message.includes('Agnes 已拒绝'), scenario.agnesHint, scenario.platform);
+    assert.ok(state.message.includes(scenario.payload.error));
+  }
+});
+
+test('connection feedback retains its pending state and records success independently of server wording', async () => {
+  let resolve;
+  const pending = new Promise((done) => { resolve = done; });
+  const { state, run } = connectionTestHarness({ response: pending });
+  const operation = run();
+  assert.equal(state.busy, true);
+  assert.equal(state.message, '');
+  assert.equal(state.succeeded, false);
+  resolve({ ok: true, status: 200, json: async () => ({ message: '即梦 CLI 已检测：fixture；已登录', count: 0 }) });
+  assert.equal(await operation, true);
+  assert.equal(state.busy, false);
+  assert.equal(state.succeeded, true);
+  assert.equal(state.message, '即梦 CLI 已检测：fixture；已登录');
+});
+
+test('connection result appearance follows the structured outcome instead of message prefixes', () => {
+  const Result = providerConnectionFieldsModule.exports.ProviderConnectionResult;
+  const success = renderToStaticMarkup(createElement(Result, { message: '即梦 CLI 已检测', succeeded: true }));
+  const failure = renderToStaticMarkup(createElement(Result, { message: '连接成功只是上游错误文本的一部分', succeeded: false }));
+  assert.match(success, /class="connection-result success"/);
+  assert.match(failure, /class="connection-result error"/);
+});
+
+test('successful model discovery opens the new provider with restrictive filters cleared', async () => {
+  const selected = { provider: 'old-provider', search: 'old', kind: 'image', quick: 'enabled', section: 'providers' };
+  const models = [{ providerId: 'new-provider', rawId: 'fixture-chat', enabled: false, published: false }];
+  const run = pageHandler('syncProvider', {
+    state: { models: [] },
+    fetch: async () => ({}),
+    applyReturnedState: async () => ({ count: 1, state: { models } }),
+    setSyncingId() {}, notify() {}, refreshState() {},
+    setModelProviderFilter(value) { selected.provider = value; },
+    setModelSearch(value) { selected.search = value; },
+    setModelKindFilter(value) { selected.kind = value; },
+    setModelQuickFilter(value) { selected.quick = value; },
+    setExpandedModelProviders() {}, setModelProviderGroupExpansion() {},
+    setSection(value) { selected.section = value; },
+  });
+  await run('new-provider');
+  assert.deepEqual(selected, { provider: 'new-provider', search: '', kind: 'all', quick: 'all', section: 'models' });
+});
+
 test('first-run provider setup modal can be dismissed', () => {
   assert.match(pageSource, /const PROVIDER_SETUP_DISMISSED_STORAGE_KEY = 'sanmao-provider-setup-dismissed';/);
   assert.match(pageSource, /const providerModalOpen = providerEditor \|\| !state\.providers\.length && !providerSetupDismissed;/);
