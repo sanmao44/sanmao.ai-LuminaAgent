@@ -31,6 +31,8 @@ export type VideoTask = {
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  /** Restarts the query timeout when recovering a previously failed status lookup. */
+  resultRecoveryStartedAt?: number;
   /** 用户主动取消的时间；取消后不再轮询服务商。 */
   cancelledAt?: string;
   /** 由哪条任务重试而来。 */
@@ -48,15 +50,60 @@ export type VideoTask = {
 const store = createTaskRepository<VideoTask>({ fileName: 'video-tasks.json' });
 
 export const VIDEO_TASK_RETRY_CLAIM_TTL_MS = 15 * 60 * 1000;
+export const VIDEO_TASK_SUBMISSION_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Only an explicitly rejected submission may be sent upstream again. */
+export async function claimVideoTaskSubmission(id: string, now = Date.now()) {
+  return store.mutate((tasks) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || (task.status !== 'pending' && task.status !== 'running')
+      || task.providerTaskId || task.errorCode !== 'VIDEO_SUBMISSION_RETRY'
+      || (task.nextPollAt && task.nextPollAt > now)) return null;
+    task.errorCode = 'VIDEO_SUBMISSION_IN_PROGRESS';
+    task.nextPollAt = now + VIDEO_TASK_SUBMISSION_TIMEOUT_MS;
+    return task;
+  });
+}
 
 export type VideoTaskRetryClaimResult =
   | { claimed: true; task: VideoTask; retryAttempt: number; claimedAt: number }
-  | { claimed: false; reason: 'not_found' | 'not_retryable' | 'already_claimed' | 'retry_in_progress' };
+  | { claimed: false; reason: 'not_found' | 'not_retryable' | 'already_claimed' | 'retry_in_progress'; task?: VideoTask };
 
 function hasVideoTaskOutput(task: VideoTask) {
   return [task.videoUrls, task.remoteVideoUrls].some((urls) =>
     Array.isArray(urls) && urls.some((url) => String(url || '').trim().length > 0),
   );
+}
+
+function providerResponseFailed(value: unknown, depth = 0): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 5) return false;
+  const record = value as Record<string, unknown>;
+  if (['status', 'state', 'gen_status', 'genStatus'].some((key) =>
+    typeof record[key] === 'string' && /fail|error|cancel|reject|expired|aborted/i.test(record[key]),
+  )) return true;
+  return ['data', 'result', 'task'].some((key) => providerResponseFailed(record[key], depth + 1));
+}
+
+export function canRecoverVideoTaskResult(task: Pick<VideoTask, 'status'> & Partial<Pick<VideoTask, 'providerTaskId' | 'providerResponse' | 'providerStatus' | 'errorCode' | 'videoUrls' | 'remoteVideoUrls'>>) {
+  return task.status === 'failed'
+    && Boolean(task.providerTaskId?.trim())
+    && ![task.videoUrls, task.remoteVideoUrls].some((urls) => urls?.some((url) => Boolean(url?.trim())))
+    && !/^(?:VIDEO_PROVIDER_FAILED|CANGYUAN_VIDEO_FAILED|AGNES_VIDEO_FAILED)$/.test(task.errorCode || '')
+    && !/^(?:failed|error|cancelled|canceled|rejected|expired|aborted)$/i.test(task.providerStatus || '')
+    && !providerResponseFailed(task.providerResponse);
+}
+
+/** Query recovery preserves the original task and can never revive cancelled work. */
+export async function resumeVideoTaskResultRecovery(id: string, now = Date.now()) {
+  return store.mutate((tasks) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task || !canRecoverVideoTaskResult(task)) return null;
+    Object.assign(task, {
+      status: 'pending', resultRecoveryStartedAt: now, nextPollAt: now,
+      error: undefined, errorCode: undefined, completedAt: undefined,
+    });
+    return task;
+  });
 }
 
 export async function createVideoTask(input: Omit<VideoTask, 'id' | 'createdAt' | 'pollCount' | 'videoUrls' | 'remoteVideoUrls' | 'localVideoPaths'>) {
@@ -72,19 +119,27 @@ export async function createVideoTask(input: Omit<VideoTask, 'id' | 'createdAt' 
 }
 
 export async function findVideoTask(id: string) { return store.find(id); }
-export async function claimFailedVideoTaskRetry(id: string, now = Date.now()): Promise<VideoTaskRetryClaimResult> {
+export async function claimFailedVideoTaskRetry(id: string, now = Date.now(), options: { manualRetry?: boolean } = {}): Promise<VideoTaskRetryClaimResult> {
   return store.mutate((tasks) => {
     const task = tasks.find((item) => item.id === id);
     if (!task) return { claimed: false, reason: 'not_found' };
-    if ((task.status !== 'failed' && task.status !== 'cancelled') || hasVideoTaskOutput(task)) {
+    const manualRetry = options.manualRetry === true;
+    if ((task.status !== 'failed' && task.status !== 'cancelled' && !(manualRetry && task.status === 'done'))
+      || (!manualRetry && hasVideoTaskOutput(task))
+      || /(?:^|_)SUBMISSION_UNCONFIRMED$/.test(task.errorCode || '')) {
       return { claimed: false, reason: 'not_retryable' };
+    }
+    const retries = tasks.filter((item) => item.retryOf === id);
+    const unconfirmedOrActive = retries.find((item) => item.status === 'pending' || item.status === 'running'
+      || /(?:^|_)SUBMISSION_UNCONFIRMED$/.test(item.errorCode || ''));
+    if (manualRetry && unconfirmedOrActive) {
+      return { claimed: false, reason: 'retry_in_progress', task: unconfirmedOrActive };
     }
     if (Number.isFinite(task.retryClaimedAt) && now - Number(task.retryClaimedAt) < VIDEO_TASK_RETRY_CLAIM_TTL_MS) {
       return { claimed: false, reason: 'already_claimed' };
     }
 
-    const retries = tasks.filter((item) => item.retryOf === id);
-    if (retries.some((item) => item.status === 'pending' || item.status === 'running' || item.status === 'done' || hasVideoTaskOutput(item))) {
+    if (unconfirmedOrActive || (!manualRetry && retries.some((item) => item.status === 'done' || hasVideoTaskOutput(item)))) {
       return { claimed: false, reason: 'retry_in_progress' };
     }
 

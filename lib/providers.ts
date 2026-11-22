@@ -352,6 +352,10 @@ function is65535Provider(provider: RuntimeProvider) {
 }
 
 export function inferVideoTransportFromMetadata(data: unknown, provider: RuntimeProvider): RuntimeProvider['videoTransport'] {
+  if (isCangyuanProvider(provider) && (!provider.videoTransport || provider.videoTransport === 'auto' || provider.videoTransport === 'openai-videos')) {
+    provider.videoTransport = 'cangyuan-videos';
+    return provider.videoTransport;
+  }
   if (provider.videoTransport && provider.videoTransport !== 'auto') return provider.videoTransport;
   if (is65535Provider(provider)) {
     provider.videoTransport = 'native-task';

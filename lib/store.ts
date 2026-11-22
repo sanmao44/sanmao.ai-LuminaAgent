@@ -14,7 +14,7 @@ import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
 import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternalIntentModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
-import { isCangyuanProvider } from './cangyuan-provider';
+import { isCangyuanProvider, usesCangyuanVideoProtocol } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 import type { ManualModelAudioTask, ManualProviderModelInput } from '@/packages/contracts/model-library';
@@ -315,10 +315,10 @@ export async function getPublicState(): Promise<PublicState> {
       responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
       textProtocol: p.textProtocol || 'chat-completions',
         creativeTaskProtocol: p.creativeTaskProtocol,
-      videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
+      videoTransport: usesCangyuanVideoProtocol(p) ? 'cangyuan-videos' : p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
       videoBaseUrl: p.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
       videoTaskPath: p.videoTaskPath || '/v1/tasks',
-      videoTaskStatusPath: p.videoTaskStatusPath || '/v1/tasks/{id}',
+      videoTaskStatusPath: usesCangyuanVideoProtocol(p) && (!p.videoTaskStatusPath || /^\/v1\/tasks\/\{(?:id|taskId|task_id)\}\/?$/.test(p.videoTaskStatusPath.trim())) ? '/v1/videos/{id}' : p.videoTaskStatusPath || '/v1/tasks/{id}',
       videoGenerationPath: p.videoGenerationPath || '/v1/videos',
       videoQueryPath: p.videoQueryPath || '',
       videoModelsPath: p.videoModelsPath || '/v1/models',

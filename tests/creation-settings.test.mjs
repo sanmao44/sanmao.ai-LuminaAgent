@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+import { createTsRequire } from './ts-require.mjs';
 
 async function compileTypeScript(path, transform = (source) => source) {
   const sourceUrl = new URL(path, import.meta.url);
@@ -31,8 +32,12 @@ const compiled = await compileTypeScript('../lib/creation/settings.ts', (source)
     'const getCangyuanImageModelProfile = () => null;',
   )
   .replace(
-    /^import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
-    'const isCangyuanProvider = () => false;',
+    /^import\s+\{\s*getCangyuanVideoModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
+    'const getCangyuanVideoModelProfile = () => null;',
+  )
+  .replace(
+    /^import\s+\{\s*isCangyuanProvider,\s*usesCangyuanVideoProtocol\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
+    'const isCangyuanProvider = () => false; const usesCangyuanVideoProtocol = () => false;',
   ));
 const compiledWithMocks = compiled
   .replace(
@@ -93,6 +98,58 @@ test('automatic video settings resolve the actual default video model', () => {
   const selected = settings.resolveAvailableCreationModel(settings.defaultVideoCreationSettings(videoRuntime), videoRuntime);
   assert.equal(selected.model?.id, 'agnes-v20');
   assert.equal(selected.model?.rawId, 'agnes-video-v2.0');
+});
+
+const actualVideoSettings = createTsRequire(process.cwd(), {
+  '../model-preferences': { getLastModelCall: () => null },
+})('./lib/creation/settings');
+const podcastRuntime = {
+  ...runtime,
+  models: [
+    { id: 'podcast', rawId: 'mu1-muse-podcast', displayName: 'Muse Podcast', providerId: 'cangyuan', kind: 'video', enabled: true, published: true, capabilities: ['video-generate'] },
+    { id: 'short-video', rawId: 'sd20-seedance-2.0-fast', displayName: 'Seedance Fast', providerId: 'cangyuan', kind: 'video', enabled: true, published: true, capabilities: ['video-generate'] },
+  ],
+  providers: [{ id: 'cangyuan', platform: 'cangyuan', videoTransport: 'cangyuan-videos' }],
+  settings: { ...runtime.settings, defaultVideoModelId: 'podcast', defaultProviderId: 'cangyuan' },
+};
+
+test('shared video settings preserve documented long podcast durations for manual and automatic models', () => {
+  for (const model of ['podcast', 'auto']) {
+    for (const duration of [30, 120, 1800]) {
+      const result = actualVideoSettings.normalizeVideoCreationSettings({ model, duration }, podcastRuntime);
+      assert.equal(result.duration, duration);
+      assert.equal(result.model, model);
+    }
+  }
+});
+
+test('shared video duration normalization respects each documented model range', () => {
+  for (const [duration, expected] of [[29, 30], [1801, 1800]]) {
+    assert.equal(actualVideoSettings.normalizeVideoCreationSettings({ model: 'podcast', duration }, podcastRuntime).duration, expected);
+  }
+  assert.equal(actualVideoSettings.normalizeVideoCreationSettings({ model: 'podcast' }, podcastRuntime).duration, 30);
+  assert.equal(actualVideoSettings.normalizeVideoCreationSettings({ model: 'short-video', duration: 120 }, podcastRuntime).duration, 15);
+});
+
+test('saved long video settings survive normalization without a loaded runtime catalog', () => {
+  for (const duration of [120, 1800]) {
+    const saved = actualVideoSettings.normalizeVideoCreationSettings({ model: 'podcast', duration }, podcastRuntime);
+    const restored = actualVideoSettings.normalizeVideoCreationSettings(JSON.parse(JSON.stringify(saved)));
+    assert.equal(restored.duration, duration);
+    assert.equal(restored.model, 'podcast');
+    assert.equal(actualVideoSettings.normalizeVideoCreationSettings(restored, podcastRuntime).duration, duration);
+  }
+  assert.equal(actualVideoSettings.normalizeVideoCreationSettings({ model: 'podcast', duration: 1801 }).duration, 1800);
+});
+
+test('shared video settings do not expand generic or explicit native-task provider limits by model name', () => {
+  for (const provider of [
+    { id: 'cangyuan', platform: 'custom', videoTransport: 'openai-videos' },
+    { id: 'cangyuan', platform: 'cangyuan', videoTransport: 'native-task' },
+  ]) {
+    const result = actualVideoSettings.normalizeVideoCreationSettings({ model: 'podcast', duration: 120 }, { ...podcastRuntime, providers: [provider] });
+    assert.equal(result.duration, 60);
+  }
 });
 
 test('video settings expose shared Agnes V2.0 presets and backward-compatible defaults', () => {

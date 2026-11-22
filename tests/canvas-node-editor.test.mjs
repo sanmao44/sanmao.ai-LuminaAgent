@@ -17,6 +17,7 @@ const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation
 const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-options");
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
 const editorUi = createTsRequire(process.cwd(), {
+  "./VideoDurationField.css": {},
   "./ModelPicker": { __esModule: true, default: () => null },
   "./EditableSuggestionField": { __esModule: true, default: () => null },
   "@/components/cangyuan/CangyuanImageModelOptions": { __esModule: true, default: () => null },

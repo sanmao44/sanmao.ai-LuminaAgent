@@ -1,23 +1,14 @@
-import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import test from "node:test";
-import ts from "typescript";
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createTsRequire } from './ts-require.mjs';
 
-const sourceUrl = new URL("../lib/canvas/video-capabilities.ts", import.meta.url);
-const source = (await readFile(sourceUrl, "utf8")).replace(/\r\n/g, "\n");
-const compiled = ts.transpileModule(source
-  .replace('import type { CanvasRuntimeState } from "./types";', '')
-  .replace('import type { CanvasVideoInputCapabilities } from "./references";', '')
-  .replace(
-    /import \{\n  resolveAvailableCreationModel,\n  type VideoCreationSettings,\n\} from "\.\.\/creation\/settings";/,
-    `const resolveAvailableCreationModel = (settings, runtime) => ({
-  model: runtime?.models?.find((model) => model.id === settings.model) || null,
-});`,
-  ), {
-  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  fileName: sourceUrl.pathname,
-}).outputText;
-const capabilities = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
+const capabilities = createTsRequire(process.cwd(), {
+  '../creation/settings': {
+    resolveAvailableCreationModel: (settings, runtime) => ({
+      model: runtime?.models?.find((model) => model.id === settings.model) || null,
+    }),
+  },
+})('./lib/canvas/video-capabilities');
 
 test("projects model capability names into the canvas input contract", () => {
   const runtime = {
@@ -64,4 +55,42 @@ test("treats an unavailable model as capability-neutral", () => {
   assert.equal(result.supportsFirstFrame, true);
   assert.equal(result.supportsFrames, true);
   assert.equal(result.supportsAudio, true);
+});
+
+test('official video profiles govern first frames and media slots for historical configurations', () => {
+  const project = (rawId) => capabilities.canvasVideoInputCapabilities(
+    {kind: 'video', model: 'selected'},
+    {models: [{id: 'selected', rawId, providerId: 'provider', capabilities: ['video-generate', 'video-audio']}],
+     providers: [{id: 'provider', platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport: 'openai-videos'}]},
+  );
+  const gemini = project('gf1-gemini-omni-1.2-flash');
+  assert.equal(gemini.supportsFirstFrame, true);
+  assert.equal(gemini.supportsFrames, true);
+  assert.equal(gemini.supportsAudio, false);
+  const veo = project('veo-3.1-fast');
+  assert.equal(veo.supportsReference, false);
+  assert.equal(veo.supportsFirstFrame, true);
+  assert.equal(veo.supportsFrames, true);
+  const undocumented = project('unknown-video');
+  assert.equal(undocumented.supportsFirstFrame, false);
+  assert.equal(undocumented.supportsAudio, false);
+});
+
+test('audio-only reference capability retains the reference-material input mode', () => {
+  const audioOnlyCapabilities = createTsRequire(process.cwd(), {
+    '../creation/settings': {
+      resolveAvailableCreationModel: () => ({ model: { id: 'audio-driven', rawId: 'audio-driven', providerId: 'provider', capabilities: ['video-generate'] } }),
+    },
+    '../cangyuan-video-capabilities': {
+      getCangyuanVideoModelProfile: () => ({ supportsReferenceImages: false, supportsReferenceVideos: false, supportsReferenceAudios: true }),
+    },
+  })('./lib/canvas/video-capabilities');
+  const result = audioOnlyCapabilities.canvasVideoInputCapabilities(
+    { kind: 'video', model: 'audio-driven' },
+    { providers: [{ id: 'provider', platform: 'cangyuan', videoTransport: 'cangyuan-videos' }] },
+  );
+  assert.equal(result.supportsReference, true);
+  assert.equal(result.supportsAudio, true);
+  assert.equal(result.supportsFirstFrame, false);
+  assert.equal(result.supportsFrames, false);
 });

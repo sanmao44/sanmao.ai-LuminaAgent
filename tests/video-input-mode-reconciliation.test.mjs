@@ -4,6 +4,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const componentStub = { __esModule: true, default: () => null };
 const { reconcileVideoInputMode } = createTsRequire(process.cwd(), {
+  './VideoDurationField': componentStub,
   '@/components/SelectMenu': componentStub,
   '@/components/EditableSuggestionField': componentStub,
   '@/components/ModelPicker': componentStub,
@@ -70,4 +71,11 @@ test('supported input mode remains selected without flagging a fallback', () => 
   assert.equal(result.didFallback, false);
   assert.equal(result.hasSelectedMedia, false);
   assert.equal(result.selectedMedia, selectedMedia);
+});
+
+test('required-reference models fall back to a supported media mode instead of text', () => {
+  const media = { referenceImages: [], referenceVideos: [], audios: [] };
+  const result = reconcileVideoInputMode('text', [{ value: 'reference' }], media);
+  assert.equal(result.inputMode, 'reference');
+  assert.equal(result.didFallback, true);
 });

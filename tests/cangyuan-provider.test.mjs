@@ -2,7 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
-const { cangyuanMediaBaseUrl, isCangyuanProvider } = createTsRequire(process.cwd())('./lib/cangyuan-provider');
+const { cangyuanMediaBaseUrl, isCangyuanProvider, usesCangyuanVideoProtocol } = createTsRequire(process.cwd())('./lib/cangyuan-provider');
+
+test('official video URLs repair legacy generic transport without changing explicit task protocols', () => {
+  const official = { platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1' };
+  for (const videoTransport of [undefined, 'auto', 'openai-videos', 'cangyuan-videos']) {
+    assert.equal(usesCangyuanVideoProtocol({ ...official, videoTransport }), true);
+  }
+  for (const videoTransport of ['native-task', 'agnes-videos', 'jimeng-cli']) {
+    assert.equal(usesCangyuanVideoProtocol({ ...official, videoTransport }), false);
+  }
+  assert.equal(usesCangyuanVideoProtocol({ baseUrl: 'https://gateway.example/v1', videoTransport: 'openai-videos' }), false);
+  assert.equal(usesCangyuanVideoProtocol({ baseUrl: 'https://gateway.example/v1', videoTransport: 'cangyuan-videos' }), true);
+});
 
 test('recognizes Cangyuan preset and exact official API hosts', () => {
   assert.equal(isCangyuanProvider({ platform: 'cangyuan' }), true);

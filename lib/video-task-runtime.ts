@@ -4,8 +4,8 @@ import type { VideoTaskStatus } from './video-task-store';
 export const VIDEO_TASK_STALE_AFTER_MS = 2 * 60 * 60 * 1000;
 
 /** Only a task accepted by the provider can become stale; submission retries stay active. */
-export function isStaleVideoTask(task: { createdAt: string; providerTaskId?: string }, now = Date.now()) {
-  const createdAt = Date.parse(task.createdAt);
+export function isStaleVideoTask(task: { createdAt: string; providerTaskId?: string; resultRecoveryStartedAt?: number }, now = Date.now()) {
+  const createdAt = task.resultRecoveryStartedAt ?? Date.parse(task.createdAt);
   return Boolean(task.providerTaskId?.trim())
     && Number.isFinite(createdAt)
     && now - createdAt > VIDEO_TASK_STALE_AFTER_MS;

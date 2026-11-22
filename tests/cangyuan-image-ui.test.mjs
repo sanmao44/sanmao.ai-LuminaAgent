@@ -6,6 +6,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const noop = () => null;
 const loader = createTsRequire(process.cwd(), {
+  './VideoDurationField.css': {},
   '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: noop },
   '@/components/cangyuan/CangyuanVideoModelParameters': { __esModule: true, default: noop },
   './EditableSuggestionField.css': {},

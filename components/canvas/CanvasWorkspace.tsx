@@ -20,11 +20,11 @@ import {
   type SetStateAction,
 } from "react";
 import { useRouter } from "next/navigation";
-import { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasNodeHasTask, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, mergeCanvasTaskImages, recoverCanvasTask, recoverCanvasUpscaleTask, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } from "@/lib/canvas/task-recovery";
+import { canRecoverCanvasTaskInBackground, canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasNodeHasTask, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, mergeCanvasTaskImages, recoverCanvasTask, recoverCanvasUpscaleTask, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } from "@/lib/canvas/task-recovery";
 import { canvasAudioGenerationRecoveryDraft, canvasImageGenerationRecoveryDraft, createCanvasAudioRecoveryDraftNode } from "@/lib/canvas/task-context-recovery";
 import { retryCanvasVideoLogs, type CanvasVideoRetryResult } from "@/lib/canvas/batch-video-retry";
 import { retryCanvasUpscaleLogs, type CanvasUpscaleRetryResult } from "@/lib/canvas/batch-upscale-retry";
-import { applyCanvasTaskRecordRecovery } from "@/lib/canvas/task-record-recovery";
+import { applyCanvasTaskRecordRecovery, applyCanvasVideoTaskRecovery } from "@/lib/canvas/task-record-recovery";
 import { appendCanvasAudioTranscriptionDocument, canvasAudioSpeechHistory } from "@/lib/canvas/audio-tools";
 import { replaceCanvasMediaFile, withoutCanvasMediaMask } from "@/lib/canvas/media-replacement";
 import {
@@ -2279,21 +2279,7 @@ export default function SuperCanvas() {
     const projectTask = captureProjectTask();
     const { updateDoc, readDocument } = projectTask;
     if (!ready || !mountedRef.current) return;
-    const candidates = readDocument().nodes.filter((node) => {
-      if (node.type === "upscale") {
-        return node.data.status === "running"
-          && Boolean(node.data.jobId)
-          && Boolean(node.data.upscaleRequestId)
-          && !node.data.url;
-      }
-      if (node.type !== "prompt" && node.type !== "media") return false;
-      if (node.type === "media" && node.data.kind === "video") return false;
-      const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
-      return Boolean(taskId)
-        && (node.data.status === "queued" || node.data.status === "running"
-          || node.data.taskTracking === "stale" || node.data.taskTracking === "stopped")
-        && !node.data.url;
-    });
+    const candidates = readDocument().nodes.filter(canRecoverCanvasTaskInBackground);
     for (const node of candidates) {
       const taskId = String(node.data.jobId || node.data.generation?.taskId || "").trim();
       const recoveryKey = `${projectTask.projectId}:${node.id}:${taskId}`;
@@ -2317,11 +2303,18 @@ export default function SuperCanvas() {
           }));
           continue;
         }
-        const isVideo = currentNode.type === "media" && currentNode.data.kind === "video";
-        const log = isVideo ? null : await getCanvasAgentGeneration(taskId);
-        const videoTask = isVideo ? await getCanvasVideoTask(taskId).catch(() => null) : null;
-        if (isVideo && !videoTask?.task) continue;
-        if (!isVideo && !log) {
+        if (currentNode.type === "media" && currentNode.data.kind === "video") {
+          await applyCanvasVideoTaskRecovery({
+            nodeId: node.id,
+            taskId,
+            imageParams: readSharedCreationSettings("image", runtime),
+            readTask: async (id) => (await getCanvasVideoTask(id)).task,
+            updateDocument: updateDoc,
+          });
+          continue;
+        }
+        const log = await getCanvasAgentGeneration(taskId);
+        if (!log) {
           const startedAt = Math.max(
             Number(currentNode.data.taskUpdatedAt) || 0,
             Number(currentNode.data.processingStartedAt) || 0,
@@ -2340,24 +2333,19 @@ export default function SuperCanvas() {
           }
           continue;
         }
-        const urls = isVideo
-          ? [canvasVideoTaskOutputUrl(videoTask!.task)].filter(Boolean)
-          : canvasImageTaskOutputUrls(log);
-        const videoProgress = isVideo ? canvasVideoTaskProgress(videoTask!.task) : null;
-        const lastActivityAt = isVideo ? 0 : Math.max(
+        const urls = canvasImageTaskOutputUrls(log);
+        const lastActivityAt = Math.max(
           Number(currentNode.data.taskUpdatedAt) || 0,
           Number(currentNode.data.processingStartedAt) || 0,
           Number(currentNode.data.generation?.updatedAt) || 0,
           Number(currentNode.data.generation?.createdAt) || 0,
-          Date.parse(log!.createdAt || "") || 0,
+          Date.parse(log.createdAt || "") || 0,
         );
-        const stale = !isVideo && Date.now() - lastActivityAt >= 15 * 60 * 1000;
-        const status = isVideo
-          ? (videoProgress?.status === "completed" ? "success" : videoProgress?.status === "failed" ? "error" : "pending")
-          : urls.length ? "success" : stale ? "stalled" : canvasGenerationLogRecoveryStatus(log!);
+        const stale = Date.now() - lastActivityAt >= 15 * 60 * 1000;
+        const status = urls.length ? "success" : stale ? "stalled" : canvasGenerationLogRecoveryStatus(log);
         updateDoc((value) => recoverCanvasTask(value, {
           nodeId: node.id, taskId, status, urls,
-          error: String(isVideo ? videoTask?.task.error || "视频生成失败" : stale ? "超过 15 分钟未收到完成回执；服务商可能仍在处理" : log?.error || "图片生成失败"),
+          error: String(stale ? "超过 15 分钟未收到完成回执；服务商可能仍在处理" : log.error || "图片生成失败"),
           imageParams: readSharedCreationSettings("image", runtime),
         }));
       } finally {
@@ -7119,6 +7107,7 @@ export default function SuperCanvas() {
         duration: params.duration,
         aspect: params.aspect,
         resolution: params.resolution,
+        audio: params.audio,
         agnesWidth: params.agnesWidth,
         agnesHeight: params.agnesHeight,
         agnesNumFrames: params.agnesNumFrames,
@@ -8183,6 +8172,7 @@ export default function SuperCanvas() {
           duration: videoParams.duration,
           aspect: videoParams.aspect,
           resolution: videoParams.resolution,
+          audio: videoParams.audio,
           agnesWidth: videoParams.agnesWidth,
           agnesHeight: videoParams.agnesHeight,
           agnesNumFrames: videoParams.agnesNumFrames,
@@ -8538,6 +8528,7 @@ export default function SuperCanvas() {
           duration,
           aspect,
           resolution,
+          audio: videoParams.audio,
           ...(usesAgnesV20 ? {
             agnesWidth: videoParams.agnesWidth,
             agnesHeight: videoParams.agnesHeight,

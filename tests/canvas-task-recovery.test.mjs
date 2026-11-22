@@ -5,8 +5,8 @@ import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(path.join(process.cwd(), 'lib'));
 const { normalizeDocument, createMedia, createPrompt } = load('./canvas/model');
-const { canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, recoverCanvasTask, recoverCanvasUpscaleTask, mergeCanvasTaskImages, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } = load('./canvas/task-recovery');
-const { applyCanvasTaskRecordRecovery } = load('./canvas/task-record-recovery');
+const { canRecoverCanvasTaskInBackground, canvasGenerationLogRecoveryStatus, canvasNodeForGenerationLog, canvasVideoTaskSnapshotExpired, canvasVideoTaskSnapshotRetryDelayMs, recoverCanvasTask, recoverCanvasUpscaleTask, mergeCanvasTaskImages, retainCanvasVideoTaskAfterMissingSnapshot, stopCanvasTaskTracking } = load('./canvas/task-recovery');
+const { applyCanvasTaskRecordRecovery, applyCanvasVideoTaskRecovery } = load('./canvas/task-record-recovery');
 const params = { kind: 'image', model: 'test', aspect: '1:1' };
 const input = { nodeId: 'pending', taskId: 'task-a', status: 'success', urls: ['/one.png', '/two.png', '/three.png'], imageParams: params };
 
@@ -147,6 +147,51 @@ function fixture(type = 'media') {
   return normalizeDocument({ nodes: [node], edges: [], groups: [] });
 }
 
+test('failed and paused video nodes remain candidates for late output recovery', () => {
+  const video = fixture().nodes[0];
+  video.data.kind = 'video';
+  for (const status of ['queued', 'running', 'completed']) {
+    video.data.status = status;
+    assert.equal(canRecoverCanvasTaskInBackground(video), false, status);
+  }
+  video.data.status = 'failed';
+  assert.equal(canRecoverCanvasTaskInBackground(video), true);
+  video.data.status = 'running';
+  video.data.taskTracking = 'stopped';
+  assert.equal(canRecoverCanvasTaskInBackground(video), true);
+  video.data.url = '/already-present.mp4';
+  assert.equal(canRecoverCanvasTaskInBackground(video), false);
+  video.data.url = '';
+  video.data.jobId = '';
+  assert.equal(canRecoverCanvasTaskInBackground(video), false);
+});
+
+test('video task recovery does not turn a temporary read failure or missing output into a new task', async () => {
+  let writes = 0;
+  const base = {
+    nodeId: 'pending', taskId: 'task-a', imageParams: params,
+    updateDocument: () => { writes += 1; },
+  };
+  assert.deepEqual(await applyCanvasVideoTaskRecovery({ ...base, readTask: async () => { throw new Error('network'); } }), { kind: 'unavailable' });
+  assert.deepEqual(await applyCanvasVideoTaskRecovery({ ...base, readTask: async () => ({ status: 'done' }) }), { kind: 'missing_output' });
+  assert.deepEqual(await applyCanvasVideoTaskRecovery({ ...base, readTask: async () => ({ status: 'failed', error: 'provider failure' }) }), { kind: 'terminal' });
+  assert.equal(writes, 0);
+});
+
+test('late video output cannot replace a newer task on the same node', async () => {
+  const document = fixture();
+  document.nodes[0].data.kind = 'video';
+  document.nodes[0].data.jobId = 'new-task';
+  let next;
+  const result = await applyCanvasVideoTaskRecovery({
+    nodeId: 'pending', taskId: 'task-a', imageParams: params,
+    readTask: async () => ({ status: 'done', videoUrls: ['/old-output.mp4'] }),
+    updateDocument: (updater) => { next = updater(document); },
+  });
+  assert.deepEqual(result, { kind: 'stale' });
+  assert.equal(next, document);
+});
+
 test('recovery retains every image, the placeholder identity, and its placement', () => {
   const document = recoverCanvasTask(fixture(), input);
   assert.deepEqual(document.nodes.map((node) => node.data.url), input.urls);
@@ -263,6 +308,34 @@ test('video recovery updates only its video placeholder', () => {
   assert.equal(result.nodes.length, 1);
   assert.equal(result.nodes[0].data.url, '/video.mp4');
   assert.equal(result.nodes[0].data.kind, 'video');
+});
+
+test('late video variant recovery updates its original generator batch but cannot overwrite a newer batch', () => {
+  const generator = load('./canvas/model').createGenerator('video', { x: 0, y: 0 });
+  generator.id = 'generator';
+  generator.data.variantBatchId = 'original-batch';
+  generator.data.status = 'failed';
+  generator.data.variantStates = [{
+    id: 'variant', instruction: '原镜头', status: 'failed', progress: 0, error: 'old polling error',
+    taskIds: ['task-a'], resultIds: ['pending'],
+  }];
+  const video = fixture().nodes[0];
+  video.data.kind = 'video';
+  video.data.status = 'failed';
+  video.data.generation = { kind: 'video', prompt: '原镜头', params: { kind: 'video', model: 'test' },
+    sourceGeneratorId: generator.id, variantIndex: 0, variantBatchId: 'original-batch' };
+  const document = normalizeDocument({ nodes: [generator, video], edges: [], groups: [] });
+  const result = recoverCanvasTask(document, { ...input, urls: ['/video.mp4'] });
+  assert.equal(result.nodes[0].data.status, 'completed');
+  assert.equal(result.nodes[0].data.variantStates[0].status, 'completed');
+  assert.equal(result.nodes[0].data.variantStates[0].error, undefined);
+  assert.deepEqual(result.nodes[0].data.variantStates[0].resultIds, ['pending']);
+  assert.equal(result.nodes[1].data.url, '/video.mp4');
+
+  document.nodes[0].data.variantBatchId = 'new-batch';
+  const newer = recoverCanvasTask(document, { ...input, urls: ['/video.mp4'] });
+  assert.equal(newer.nodes[0], document.nodes[0]);
+  assert.equal(newer.nodes[0].data.variantStates[0].status, 'failed');
 });
 
 test('upscale task snapshots update the existing node only after a retained output is available', () => {

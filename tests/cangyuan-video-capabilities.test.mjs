@@ -17,6 +17,93 @@ const {
 const { getCangyuanVideoModelCatalog, getCangyuanVideoModelSpec } = createTsRequire(process.cwd())('./lib/cangyuan-video-model-catalog');
 const { parseVideoModelParameterValues } = createTsRequire(process.cwd())('./packages/contracts/video-generation');
 
+function minimalDocumentedVideoInput(entry) {
+  const profile = getCangyuanVideoModelProfile(entry.publicModel);
+  assert.ok(profile, `${entry.publicModel} needs a verified profile`);
+  const input = { prompt: 'A calm landscape with natural light.' };
+  for (const parameter of entry.spec.params.filter((item) => item.required)) {
+    switch (parameter.name) {
+      case 'model':
+      case 'prompt':
+        break;
+      case 'duration':
+        input.seconds = profile.durationDefault ?? profile.fixedSeconds ?? profile.minSeconds;
+        break;
+      case 'aspect_ratio':
+        input.aspectRatio = profile.aspectRatioDefault ?? profile.suggestedAspectRatios[0] ?? '16:9';
+        break;
+      case 'resolution':
+        input.resolution = profile.resolutionDefault ?? profile.allowedResolutions?.[0] ?? profile.suggestedResolutions[0];
+        break;
+      default:
+        assert.fail(`${entry.publicModel} added an uncovered required field: ${parameter.name}`);
+    }
+  }
+  if (profile.requiresReferenceImage || profile.allowsNoReferences === false) {
+    if (profile.supportsReferenceImages) input.referenceImages = ['https://assets.example/reference.png'];
+    else if (profile.supportsFirstFrame) input.firstFrame = 'https://assets.example/first.png';
+    else if (entry.spec.params.some((parameter) => parameter.name === 'video')) input.referenceVideo = 'https://assets.example/source.mp4';
+    else if (profile.supportsReferenceVideos) input.referenceVideos = ['https://assets.example/reference.mp4'];
+    else assert.fail(`${entry.publicModel} requires media but exposes no supported visual input`);
+    if (input.firstFrame && profile.allowsFirstFrameWithoutLastFrame === false) input.lastFrame = 'https://assets.example/last.png';
+  }
+  return input;
+}
+
+const videoWireCatalog = getCangyuanVideoModelCatalog();
+test('official video wire matrix covers all 138 documented models and eight blocked empty specs', () => {
+  assert.equal(videoWireCatalog.filter((entry) => entry.spec.params.length > 0).length, 138);
+  assert.equal(videoWireCatalog.filter((entry) => entry.spec.params.length === 0).length, 8);
+});
+
+for (const entry of videoWireCatalog) {
+  test(`official video wire matrix: ${entry.publicModel}`, () => {
+    if (entry.spec.params.length === 0) {
+      assert.equal(isCangyuanVideoModelSelectable(entry.publicModel), false);
+      assert.throws(() => buildCangyuanVideoPayload(entry.publicModel, { prompt: 'scene' }), /参数说明尚未补齐/);
+      return;
+    }
+    const input = minimalDocumentedVideoInput(entry);
+    const payload = buildCangyuanVideoPayload(entry.publicModel, input);
+    assert.equal(isCangyuanVideoModelSelectable(entry.publicModel), true);
+    assert.equal(payload.model, entry.publicModel);
+    assert.equal(payload.prompt, input.prompt);
+    const declaredParameters = new Map(entry.spec.params.map((parameter) => [parameter.name, parameter]));
+    for (const [name, value] of Object.entries(payload)) {
+      const parameter = declaredParameters.get(name);
+      assert.ok(parameter, `${entry.publicModel} sent undeclared field ${name}`);
+      if (parameter.type === 'array') {
+        assert.ok(Array.isArray(value), `${entry.publicModel}.${name} must be an array`);
+        assert.ok(parameter.maxItems === undefined || value.length <= parameter.maxItems, `${entry.publicModel}.${name} exceeds its documented item cap`);
+      } else {
+        assert.equal(typeof value, parameter.type, `${entry.publicModel}.${name} has the wrong wire type`);
+      }
+      if (typeof value === 'number') {
+        assert.ok(parameter.minimum === undefined || value >= parameter.minimum, `${entry.publicModel}.${name} is below its documented minimum`);
+        assert.ok(parameter.maximum === undefined || value <= parameter.maximum, `${entry.publicModel}.${name} is above its documented maximum`);
+      }
+      const allowed = Array.isArray(parameter.enum) ? parameter.enum : typeof parameter.enum === 'string' ? [parameter.enum] : [];
+      if (allowed.length) {
+        for (const item of Array.isArray(value) ? value : [value]) {
+          assert.ok(allowed.includes(item), `${entry.publicModel}.${name} is outside its explicit enum`);
+        }
+      }
+    }
+    for (const parameter of entry.spec.params.filter((item) => item.required)) {
+      assert.ok(payload[parameter.name] !== undefined && payload[parameter.name] !== '', `${entry.publicModel} omitted required ${parameter.name}`);
+    }
+    // Defaults are inserted while serializing. Revalidate those actual wire
+    // values too, so a default cannot violate its own profile or combination.
+    validateCangyuanVideoInput(entry.publicModel, {
+      ...input,
+      ...(payload.duration !== undefined ? { seconds: payload.duration } : {}),
+      ...(payload.aspect_ratio !== undefined ? { aspectRatio: payload.aspect_ratio } : {}),
+      ...(payload.resolution !== undefined ? { resolution: payload.resolution } : {}),
+      ...(typeof payload.generate_audio === 'boolean' ? { generateAudio: payload.generate_audio } : {}),
+    });
+  });
+}
+
 test('Cangyuan Seedance profiles use exact documented sdN model IDs', () => {
   const profiles = [
     ['sd10-seedance-2.0', 4, 15], ['sd10-seedance-2.0-fast', 4, 15], ['sd10-seedance-2.0-mini', 5, 10],
@@ -48,9 +135,19 @@ test('Cangyuan Seedance profiles use exact documented sdN model IDs', () => {
   assert.equal(getCangyuanVideoModelProfile('doubao-seedance-2-0-fast-260128').publicModel, 'doubao-seedance-2-0-fast-260128');
 });
 
+test('a documented suggestion outside its explicit duration range is never offered or sent as the default', () => {
+  const model = 'sd17-seedance-2.5-3';
+  const parameter = getCangyuanVideoModelSpec(model).params.find((item) => item.name === 'duration');
+  assert.deepEqual([parameter.minimum, parameter.maximum, parameter.suggestedDefault], [5, 15, 30]);
+  assert.equal(getCangyuanVideoModelProfile(model).durationDefault, undefined);
+  assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene' }).duration, undefined);
+  assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene', seconds: 15 }).duration, 15);
+  assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'scene', seconds: 30 }), /5–15/);
+});
+
 test('the official current video catalog is complete and models with empty specs are blocked', () => {
   const catalog = getCangyuanVideoModelCatalog();
-  assert.equal(catalog.length, 145);
+  assert.equal(catalog.length, 146);
   assert.ok(catalog.some((entry) => entry.publicModel === 'sd23-seedance-2.5-2'));
   assert.ok(catalog.every((entry) => entry.status === 'current' && entry.spec.publicModel === entry.publicModel));
   for (const entry of catalog.filter((model) => model.spec.params.length > 0)) {
@@ -95,7 +192,10 @@ test('recently added video models are selectable with their documented controls 
 
   assert.throws(() => validateCangyuanVideoInput('vd1-vidu-q4', {
     prompt: 'animate a scene', seconds: 5, aspectRatio: '16:9',
-  }), /必须提供参考图片/);
+  }), /必须至少提供/);
+  assert.throws(() => validateCangyuanVideoInput('vd1-vidu-q4', {
+    prompt: 'animate a scene', seconds: 5, aspectRatio: '16:9', audios: ['https://assets.example/audio.mp3'],
+  }), /必须至少提供一张参考图/);
   validateCangyuanVideoInput('vd1-vidu-q4', {
     prompt: 'animate a scene', seconds: 5, aspectRatio: '16:9',
     referenceImages: ['https://assets.example/reference.png'],
@@ -106,6 +206,140 @@ test('recently added video models are selectable with their documented controls 
     referenceVideos: Array(3).fill('https://assets.example/ref.mp4'),
     audios: ['https://assets.example/ref.wav'],
   }), /参考素材总数不能超过 12 个/);
+});
+
+test('required reference media constraints remain enforced when they are documented in prose', () => {
+  for (const model of ['grok-video-1.5', 'omni-v2v', 'omni-v2v-no-water']) {
+    assert.equal(getCangyuanVideoModelProfile(model).allowsNoReferences, false);
+    assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'needs a source' }), /必须至少提供一项参考素材/);
+    assert.deepEqual(buildCangyuanVideoPayload(model, {
+      prompt: 'animate a source', referenceImages: ['https://assets.example/ref.png'],
+    }).reference_image_urls, ['https://assets.example/ref.png']);
+  }
+});
+
+test('explicit resolution prohibitions are enforced without closing recommendation lists', () => {
+  for (const [model, unsupported, valid] of [
+    ['kling-o3', ['4k'], ['480p', '720p', '1080p', 'custom-resolution']],
+    ['sd11-seedance-2.0', ['4k'], ['480p', '720p', '1080p', 'custom-resolution']],
+    ['sd18-seedance-2.5', ['480p', '1080p', '4k'], ['720p', 'custom-resolution']],
+  ]) {
+    assert.deepEqual(getCangyuanVideoModelProfile(model).unsupportedResolutions, unsupported);
+    for (const resolution of unsupported.flatMap((value) => [value, value.toUpperCase()])) {
+      assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'scene', resolution }), /不支持 .* 画面清晰度/);
+    }
+    for (const resolution of valid) {
+      assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene', resolution }).resolution, resolution);
+    }
+  }
+  const contradictory = getCangyuanVideoModelProfile('wan6-wan3.0');
+  assert.equal(contradictory.unsupportedResolutions, undefined);
+  assert.equal(contradictory.unsupportedSecondsByResolution, undefined);
+  assert.equal(buildCangyuanVideoPayload('wan6-wan3.0', { prompt: 'scene', resolution: '1080P' }).resolution, '1080P');
+});
+
+test('SD10 Seedance 2.5 enforces the documented 720p duration combination', () => {
+  const model = 'sd10-seedance-2.5';
+  const profile = getCangyuanVideoModelProfile(model);
+  assert.deepEqual(profile.unsupportedSecondsByResolution, { '720p': Array.from({ length: 16 }, (_, index) => index + 13) });
+  for (const seconds of [4, 12]) {
+    assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene', resolution: '720p', seconds }).duration, seconds);
+  }
+  for (const seconds of [13, 28]) {
+    assert.throws(() => buildCangyuanVideoPayload(model, {
+      prompt: 'scene', resolution: '720P', seconds,
+    }), /720p 清晰度下不支持 .* 秒/);
+  }
+  assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene', resolution: '480p', seconds: 28 }).duration, 28);
+  const defaults = buildCangyuanVideoPayload(model, { prompt: 'scene', seconds: 28 });
+  assert.equal(defaults.resolution, '480p');
+  assert.equal(defaults.duration, 28);
+  assert.equal(buildCangyuanVideoPayload(model, { prompt: 'scene', resolution: '720p' }).duration, 10);
+});
+
+test('the newly documented Gemini video line supports first-frame input with its exact enums', () => {
+  const model = 'gemini-omni-1.2-flash';
+  const profile = getCangyuanVideoModelProfile(model);
+  assert.equal(isCangyuanVideoModelSelectable(model), true);
+  assert.equal(profile.supportsFirstFrame, true);
+  assert.equal(profile.supportsLastFrame, false);
+  assert.equal(profile.supportsGenerateAudio, false);
+  assert.deepEqual([profile.minSeconds, profile.maxSeconds], [3, 15]);
+  assert.deepEqual(profile.suggestedAspectRatios, ['16:9', '9:16']);
+  assert.deepEqual(profile.allowedResolutions, ['360P', '720P', '1080P', '4K']);
+
+  assert.deepEqual(buildCangyuanVideoPayload(model, {
+    prompt: 'animate the first frame', seconds: 15, aspectRatio: '9:16', resolution: '1080p',
+    firstFrame: 'https://assets.example/first.png',
+  }), {
+    model, prompt: 'animate the first frame', duration: 15, aspect_ratio: '9:16', resolution: '1080P',
+    first_image_url: 'https://assets.example/first.png',
+  });
+  assert.equal(buildCangyuanVideoPayload(model, { prompt: 'high resolution', resolution: '4k' }).resolution, '4K');
+  assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'invalid ratio', aspectRatio: '1:1' }), /画面比例仅支持 16:9 \/ 9:16/);
+  assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'invalid resolution', resolution: '480p' }), /resolution 仅支持 360P \/ 720P \/ 1080P \/ 4K/);
+  assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'unsupported tail', lastFrame: 'https://assets.example/last.png' }), /不支持或未核实.*尾帧/);
+  assert.throws(() => buildCangyuanVideoPayload(model, {
+    prompt: 'mixed inputs', firstFrame: 'https://assets.example/first.png', referenceImages: ['https://assets.example/reference.png'],
+  }), /不能与参考图、参考视频或参考音频同时使用/);
+  assert.throws(() => buildCangyuanVideoPayload(model, { prompt: 'unsupported audio', generateAudio: true }), /不支持或未核实.*generate_audio/);
+});
+
+test('documented video enum sets are enforced while recommendation lists remain open', () => {
+  assert.throws(() => buildCangyuanVideoPayload('sd19-seedance-2.5', {
+    prompt: 'invalid ratio', aspectRatio: 'auto',
+  }), /画面比例仅支持/);
+  assert.equal(buildCangyuanVideoPayload('sd10-seedance-2.0', {
+    prompt: 'canonical resolution', resolution: '720P',
+  }).resolution, '720p');
+  assert.equal(buildCangyuanVideoPayload('gf1-gemini-omni-1.2-flash', {
+    prompt: 'open recommendation', aspectRatio: 'custom-ratio', resolution: 'custom-resolution',
+  }).resolution, 'custom-resolution');
+});
+
+test('video inputs are rejected when the selected model cannot serialize them', () => {
+  const video = 'https://assets.example/source.mp4';
+  for (const input of [
+    { referenceVideo: video },
+    { referenceVideos: [video] },
+    { referenceVideo: video, referenceVideos: [video] },
+  ]) {
+    assert.throws(() => buildCangyuanVideoPayload('gemini-omni-flash', {
+      prompt: 'unsupported source video', ...input,
+    }), /参考视频/);
+  }
+});
+
+test('single-video aliases preserve documented reference arrays without hiding excess or discarded media', () => {
+  const first = 'https://assets.example/first.mp4';
+  const second = 'https://assets.example/second.mp4';
+  const third = 'https://assets.example/third.mp4';
+  const model = 'gf1-gemini-omni-1.2-flash';
+  assert.deepEqual(buildCangyuanVideoPayload(model, {
+    prompt: 'single reference alias', referenceVideo: first,
+  }).reference_videos, [first]);
+  assert.deepEqual(buildCangyuanVideoPayload(model, {
+    prompt: 'redundant legacy alias', referenceVideo: first, referenceVideos: [first, second, third],
+  }).reference_videos, [first, second, third]);
+  assert.throws(() => buildCangyuanVideoPayload(model, {
+    prompt: 'distinct alias would be lost', referenceVideo: first, referenceVideos: [second],
+  }), /参考视频/);
+  assert.throws(() => buildCangyuanVideoPayload(model, {
+    prompt: 'alias cannot bypass the cap', referenceVideo: first,
+    referenceVideos: [first, second, third, 'https://assets.example/fourth.mp4'],
+  }), /最多接收 3 个参考视频/);
+});
+
+test('models with a documented source-video slot retain source and reference video inputs', () => {
+  const source = 'https://assets.example/source.mp4';
+  const reference = 'https://assets.example/reference.mp4';
+  const payload = buildCangyuanVideoPayload('sd18-seedance-2.5', {
+    prompt: 'documented source and reference', operation: 'edit',
+    referenceVideo: source, referenceVideos: [reference],
+  });
+  assert.equal(payload.video, source);
+  assert.deepEqual(payload.reference_videos, [reference]);
+  assert.equal(payload.mode, 'edit');
 });
 
 test('Cangyuan prompt length limits follow each documented model and are enforced server-side', () => {

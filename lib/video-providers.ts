@@ -216,18 +216,28 @@ function jimengErrorMessage(value: unknown, fallback: string) {
 }
 
 async function requestJson(url: string, init: RequestInit, signal?: AbortSignal) {
+  const submission = String(init.method || 'GET').toUpperCase() === 'POST';
   let response: Response;
   try {
     response = await fetch(url, { ...init, cache: 'no-store', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000) });
   } catch (error) {
     throw new VideoProviderError(error instanceof Error ? error.message : '视频服务商连接失败', {
       // A POST can reach the provider even when its response is lost. Keep the
-      // local task recoverable and let the idempotency key reconcile it later.
-      possiblyAccepted: String(init.method || 'GET').toUpperCase() === 'POST',
+      // uncertainty explicit so callers do not create another billable task.
+      possiblyAccepted: submission || undefined,
     });
   }
+  const possiblyAccepted = submission && (response.ok || response.status === 408 || response.status >= 500);
   const contentType = response.headers.get('content-type') || '';
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await response.arrayBuffer());
+  } catch (error) {
+    throw new VideoProviderError(error instanceof Error ? error.message : '视频服务商响应读取失败', {
+      status: response.status,
+      possiblyAccepted: possiblyAccepted || undefined,
+    });
+  }
   if (!response.ok) {
     let data: any = {};
     try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch {}
@@ -235,11 +245,14 @@ async function requestJson(url: string, init: RequestInit, signal?: AbortSignal)
     throw new VideoProviderError(errorFrom(data, `视频服务商返回 HTTP ${response.status}`), {
       status: response.status,
       retryAfterMs: retryAfter > 0 ? retryAfter * 1000 : undefined,
+      possiblyAccepted: possiblyAccepted || undefined,
     });
   }
   if (/^video\//i.test(contentType) && bytes.byteLength <= 64 * 1024 * 1024) return { data: `data:${contentType.split(';', 1)[0]};base64,${Buffer.from(bytes).toString('base64')}` };
   const text = Buffer.from(bytes).toString('utf8');
-  try { return { data: text ? JSON.parse(text) : {} }; } catch { throw new VideoProviderError('视频服务商返回了无法解析的结果'); }
+  try { return { data: text ? JSON.parse(text) : {} }; } catch {
+    throw new VideoProviderError('视频服务商返回了无法解析的结果', { possiblyAccepted: possiblyAccepted || undefined });
+  }
 }
 
 function waitForRetry(delayMs: number, signal?: AbortSignal) {
@@ -589,7 +602,7 @@ async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, i
   const status = videos.length ? 'done' : statusFromResponse;
   const progress = agnesProgressFrom(data);
   if (status === 'failed') return { providerTaskId: videoId || undefined, videoId: videoId || undefined, model: rawModelId, providerStatus, progress, status, videos, raw: data, error: agnesErrorFrom(data), errorCode: 'AGNES_VIDEO_FAILED' };
-  if (!videos.length && !videoId) throw new VideoProviderError('Agnes 视频接口已响应，但没有返回 video_id、task_id 或 id。', { code: 'AGNES_VIDEO_ID_MISSING' });
+  if (!videos.length && !videoId) throw new VideoProviderError('Agnes 视频接口已响应，但没有返回 video_id、task_id 或 id。', { code: 'AGNES_VIDEO_ID_MISSING', possiblyAccepted: true });
   return { providerTaskId: videoId || undefined, videoId: videoId || undefined, model: rawModelId, providerStatus, progress, status, videos, raw: data };
 }
 
@@ -621,7 +634,7 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
     const progress = cangyuanProgressFrom(data);
     const usage = cangyuanUsageFrom(data);
     if (status === 'failed') return { providerTaskId, status, videos, progress, usage, error: errorFrom(data, '沧元算力视频任务失败'), errorCode: 'CANGYUAN_VIDEO_FAILED', raw: data };
-    if (!videos.length && !providerTaskId) throw new VideoProviderError('沧元算力视频接口已响应，但没有返回视频地址或 task_id。', { code: 'CANGYUAN_VIDEO_TASK_ID_MISSING' });
+    if (!videos.length && !providerTaskId) throw new VideoProviderError('沧元算力视频接口已响应，但没有返回视频地址或 task_id。', { code: 'CANGYUAN_VIDEO_TASK_ID_MISSING', possiblyAccepted: true });
     return { providerTaskId: providerTaskId || undefined, status, videos, progress, usage, raw: data };
   }
   const preparedInput = transport === 'openai-videos' && requiresPublicMediaRelay(provider, { hasVideoModel: true })
@@ -638,7 +651,7 @@ export async function submitRemoteVideo(provider: RuntimeProvider, rawModelId: s
   const videos = statusFromResponse === 'failed' ? [] : videosFrom(data);
   const status = videos.length ? 'done' : statusFromResponse;
   if (status === 'failed') return { providerTaskId, status, videos, error: errorFrom(data, '视频任务失败'), raw: data };
-  if (!videos.length && !providerTaskId) throw new VideoProviderError('视频接口已响应，但没有返回视频地址或任务编号');
+  if (!videos.length && !providerTaskId) throw new VideoProviderError('视频接口已响应，但没有返回视频地址或任务编号', { possiblyAccepted: true });
   return { providerTaskId: providerTaskId || undefined, status: videos.length ? 'done' : status, videos, costUsd: Number(data?.cost_usd || data?.costUsd || data?.data?.cost_usd || 0) || undefined, raw: data };
 }
 
@@ -646,13 +659,16 @@ export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId:
   if (isAgnesVideoProvider(provider)) return pollAgnesVideo(provider, providerTaskId, rawModelId, signal);
   const transport = resolveVideoTransport(provider);
   const cangyuan = transport === 'cangyuan-videos';
+  const statusPath = provider.videoTaskStatusPath?.trim();
+  const legacyTaskStatusPath = statusPath?.replaceAll('{taskId}', '{id}').replaceAll('{task_id}', '{id}').replace(/\/+$/, '') === '/v1/tasks/{id}';
   // Old configurations stored /v1/tasks/{id} for every provider. In auto
   // mode that value must not override the standard OpenAI-compatible status
-  // endpoint; explicit transports and custom paths remain authoritative.
+  // endpoint. Cangyuan also used to inherit that default, but its documented
+  // task query is /v1/videos/{id}. Preserve genuinely custom query paths.
   const configured = cangyuan
-    ? provider.videoTaskStatusPath || '/v1/videos/{id}'
-    : provider.videoTaskStatusPath && !(provider.videoTransport === 'auto' && !is65535Provider(provider) && provider.videoTaskStatusPath.replaceAll('{taskId}', '{id}').replaceAll('{task_id}', '{id}') === '/v1/tasks/{id}')
-      ? provider.videoTaskStatusPath
+    ? statusPath && !legacyTaskStatusPath ? statusPath : '/v1/videos/{id}'
+    : statusPath && !(provider.videoTransport === 'auto' && !is65535Provider(provider) && legacyTaskStatusPath)
+      ? statusPath
       : (transport === 'native-task' ? '/v1/tasks/{id}' : '/v1/videos/{id}');
   if (!configured) throw new VideoProviderError('未配置视频任务查询地址');
   const pathValue = configured.replaceAll('{id}', encodeURIComponent(providerTaskId)).replaceAll('{taskId}', encodeURIComponent(providerTaskId)).replaceAll('{task_id}', encodeURIComponent(providerTaskId));
@@ -674,8 +690,11 @@ export async function pollRemoteVideo(provider: RuntimeProvider, providerTaskId:
 }
 
 export function resolveVideoTransport(provider: Pick<RuntimeProvider, 'videoTransport' | 'platform' | 'baseUrl' | 'videoBaseUrl'>): 'native-task' | 'openai-videos' | 'cangyuan-videos' {
-  if (provider.videoTransport === 'native-task' || provider.videoTransport === 'openai-videos' || provider.videoTransport === 'cangyuan-videos') return provider.videoTransport;
+  if (provider.videoTransport === 'native-task' || provider.videoTransport === 'cangyuan-videos') return provider.videoTransport;
+  // Discovery previously persisted openai-videos for Cangyuan connections.
+  // That payload silently drops documented first/reference-image fields.
   if (isCangyuanProvider(provider)) return 'cangyuan-videos';
+  if (provider.videoTransport === 'openai-videos') return provider.videoTransport;
   return is65535Provider(provider as RuntimeProvider) ? 'native-task' : 'openai-videos';
 }
 

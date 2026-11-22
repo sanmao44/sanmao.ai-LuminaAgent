@@ -190,6 +190,16 @@ test('detects native task transport from endpoint metadata', () => {
   assert.equal(provider.videoTransport, 'native-task');
 });
 
+test('Cangyuan model discovery does not persist the generic video protocol for official endpoints', () => {
+  for (const videoTransport of [undefined, 'auto', 'openai-videos']) {
+    const provider = { platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport };
+    assert.equal(providers.inferVideoTransportFromMetadata({ endpoints: ['/v1/videos'] }, provider), 'cangyuan-videos');
+    assert.equal(provider.videoTransport, 'cangyuan-videos');
+  }
+  const native = { platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport: 'native-task' };
+  assert.equal(providers.inferVideoTransportFromMetadata({}, native), 'native-task');
+});
+
 test('prepares local chat media for every provider while preserving remote URLs', async () => {
   const calls = [];
   const prepared = await providers.prepareProviderChatMessages([

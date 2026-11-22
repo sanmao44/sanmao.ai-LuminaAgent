@@ -99,7 +99,9 @@ function normalizeDraft(value: unknown): VideoStudioDraft | null {
     modelId,
     operation,
     inputMode,
-    seconds: boundedInteger(value.seconds, 5, 1, 60),
+    // Draft restoration has no model catalog yet. Retain long-form durations;
+    // the runtime applies the selected model's actual range before submission.
+    seconds: boundedInteger(value.seconds, 5, 1, 1800),
     ratio,
     resolution: typeof value.resolution === 'string' && value.resolution.length <= 20 ? value.resolution : '720p',
     agnesWidth: agnesWidth % 64 === 0 ? agnesWidth : 1152,

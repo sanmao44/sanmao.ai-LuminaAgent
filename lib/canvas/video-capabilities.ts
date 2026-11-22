@@ -1,5 +1,7 @@
 import type { CanvasRuntimeState } from "./types";
 import type { CanvasVideoInputCapabilities } from "./references";
+import { usesCangyuanVideoProtocol } from "../cangyuan-provider";
+import { getCangyuanVideoModelProfile } from "../cangyuan-video-capabilities";
 import {
   resolveAvailableCreationModel,
   type VideoCreationSettings,
@@ -22,6 +24,17 @@ export function canvasVideoInputCapabilities(
   const resolved = resolveAvailableCreationModel(settings, runtime);
   const model = resolved.model;
   const capabilities = model?.capabilities || [];
+  const provider = runtime?.providers?.find((item) => item.id === model?.providerId);
+  if (model && usesCangyuanVideoProtocol(provider)) {
+    const profile = getCangyuanVideoModelProfile(model.rawId);
+    return {
+      supportsReference: Boolean(profile?.supportsReferenceImages || profile?.supportsReferenceVideos || profile?.supportsReferenceAudios),
+      supportsFirstFrame: Boolean(profile?.supportsFirstFrame && profile.allowsFirstFrameWithoutLastFrame !== false),
+      supportsFrames: Boolean(profile?.supportsFirstFrame && profile.supportsLastFrame),
+      supportsAudio: Boolean(profile?.supportsReferenceAudios),
+      model,
+    };
+  }
   return {
     supportsReference:
       !model ||

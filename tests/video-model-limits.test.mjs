@@ -4,6 +4,16 @@ import { createTsRequire } from './ts-require.mjs';
 
 const limits = createTsRequire(process.cwd())('./lib/video-model-limits');
 
+test('legacy official video configurations use the documented model limits', () => {
+  const canonical = limits.getVideoModelLimits({ rawId: 'gf1-gemini-omni-1.2-flash' }, { videoTransport: 'cangyuan-videos' });
+  const legacy = limits.getVideoModelLimits({ rawId: 'gf1-gemini-omni-1.2-flash' }, {
+    platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport: 'openai-videos',
+  });
+  assert.deepEqual(legacy, canonical);
+  assert.ok(legacy.maxSeconds >= 15);
+  assert.ok(legacy.resolutions.some((value) => value.toLowerCase() === '1080p'));
+});
+
 test('applies documented model limits only to 65535', () => {
   const seedance65535 = limits.getVideoModelLimits({ rawId: 'seedance-2.0' }, { platform: '65535' });
   assert.equal(seedance65535.minSeconds, 5);
@@ -94,7 +104,7 @@ test('uses per-line Cangyuan video limits only for exact documented public model
   assert.equal(unverified.maxReferenceImages, 0);
   assert.equal(unverified.maxReferenceVideos, 0);
   assert.equal(unverified.maxAudios, 0);
-  assert.match(unverified.notes.join(' '), /只允许提交模型和提示词/);
+  assert.match(unverified.notes.join(' '), /暂不可生成/);
 });
 
 test('Cangyuan limits expose per-model controls and only documented total input caps', () => {

@@ -192,3 +192,40 @@ test("explains invalid video input modes without mutating the resolved inputs", 
   assert.match(videoInputValidation.canvasVideoInputError(referenceInputs, "reference", { ...limits, maxReferenceVideos: 0 }), /不支持参考视频/);
   assert.deepEqual(referenceInputs.media.map((item) => item.id), ["video"]);
 });
+
+test("video reference mode accepts audio-only inputs without requiring an unrelated image", () => {
+  const audio = node("audio", "media", "audio");
+  const limits = { maxReferenceImages: 0, maxReferenceVideos: 0, maxAudios: 1 };
+  const inputs = references.resolveCanvasVideoInputs([audio], "reference", undefined, { ...limits, supportsAudio: true });
+  assert.equal(videoInputValidation.canvasVideoInputError(inputs, "reference", limits), undefined);
+  assert.deepEqual(inputs.audios.map((item) => item.id), ["audio"]);
+  assert.deepEqual(inputs.unused, []);
+
+  const empty = references.resolveCanvasVideoInputs([], "reference", undefined, limits);
+  assert.match(videoInputValidation.canvasVideoInputError(empty, "reference", limits), /参考素材模式请先连接/u);
+});
+
+test("video validation rejects unsupported and truncated reference audio instead of silently discarding it", () => {
+  const audios = [node("audio-1", "media", "audio"), node("audio-2", "media", "audio")];
+  const limits = { maxReferenceImages: 0, maxReferenceVideos: 0, maxAudios: 1 };
+  const unsupported = references.resolveCanvasVideoInputs(audios, "reference", undefined, { maxAudios: 0, supportsAudio: false });
+  assert.match(videoInputValidation.canvasVideoInputError(unsupported, "reference", { ...limits, maxAudios: 0 }), /不支持参考音频/u);
+
+  const truncated = references.resolveCanvasVideoInputs(audios, "reference", undefined, { maxAudios: 1, supportsAudio: true });
+  assert.equal(truncated.audios.length, 1);
+  assert.match(videoInputValidation.canvasVideoInputError(truncated, "reference", limits), /最多接收 1 段参考音频/u);
+  assert.deepEqual(truncated.orderedAudios.map((item) => item.id), ["audio-1", "audio-2"]);
+
+  const filtered = references.resolveCanvasVideoInputs([audios[0]], "reference", undefined, { maxAudios: 1, supportsAudio: false });
+  assert.match(videoInputValidation.canvasVideoInputError(filtered, "reference", limits), /无法使用全部参考音频/u);
+});
+
+test("connected audio is explicitly rejected outside the reference-material mode", () => {
+  const audio = node("audio", "media", "audio");
+  const image = node("image", "media", "image");
+  const limits = { maxReferenceImages: 2, maxReferenceVideos: 1, maxAudios: 1 };
+  const textInputs = references.resolveCanvasVideoInputs([audio], "text", undefined, limits);
+  assert.match(videoInputValidation.canvasVideoInputError(textInputs, "text", limits), /文生视频模式/u);
+  const firstFrameInputs = references.resolveCanvasVideoInputs([image, audio], "first-frame", undefined, limits);
+  assert.match(videoInputValidation.canvasVideoInputError(firstFrameInputs, "first-frame", limits), /请切换到参考素材模式/u);
+});

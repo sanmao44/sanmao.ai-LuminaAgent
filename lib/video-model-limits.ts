@@ -1,5 +1,6 @@
 import { is65535Provider, isJimengLegacyCli, isJimengProvider, type VideoProviderIdentity } from './video-platform';
 import { getCangyuanVideoModelProfile } from './cangyuan-video-capabilities';
+import { usesCangyuanVideoProtocol } from './cangyuan-provider';
 
 function isAgnesProvider(provider?: VideoProviderIdentity | null) {
   if (!provider) return false;
@@ -191,7 +192,7 @@ export function getVideoModelLimits(model?: { rawId?: string; displayName?: stri
   const providerIdentity: VideoProviderIdentity = typeof provider === 'string' ? { platform: provider } : (provider || {});
   const originalRawId = String(model?.rawId || model?.displayName || '');
   const rawId = originalRawId.toLowerCase();
-  if (providerIdentity.videoTransport === 'cangyuan-videos') {
+  if (usesCangyuanVideoProtocol(providerIdentity)) {
     const profile = getCangyuanVideoModelProfile(originalRawId);
     if (profile) {
       return {
@@ -207,9 +208,9 @@ export function getVideoModelLimits(model?: { rawId?: string; displayName?: stri
         maxAudios: profile.supportsReferenceAudios ? profile.maxReferenceAudios ?? defaults.maxAudios : 0,
         ...(profile.maxTotalInputs !== undefined ? { maxTotalInputs: profile.maxTotalInputs } : {}),
         notes: [
-          `沧元 ${profile.publicModel}：${profile.minSeconds}–${profile.maxSeconds} 秒整数时长`,
-          '画面比例使用文档建议值，不代表完整允许枚举',
-          ...(profile.allowedResolutions ? ['分辨率使用文档明确支持的枚举值'] : ['分辨率使用文档建议值，不代表完整允许枚举']),
+          ...(profile.supportsDuration ? [`${profile.publicModel}：${profile.minSeconds}–${profile.maxSeconds} 秒整数时长`] : []),
+          ...(profile.supportsAspectRatio ? ['画面比例按当前型号文档配置'] : []),
+          ...(profile.supportsResolution ? [profile.allowedResolutions ? '分辨率使用文档明确支持的枚举值' : '分辨率使用文档建议值，不代表完整允许枚举'] : []),
           ...(profile.requiresDuration ? ['必须指定视频时长'] : []),
           ...(profile.requiresAspectRatio ? ['必须指定画面比例'] : []),
           ...(profile.allowedResolutions ? [`分辨率仅支持 ${profile.allowedResolutions.join(' / ')}`] : []),
@@ -234,7 +235,7 @@ export function getVideoModelLimits(model?: { rawId?: string; displayName?: stri
       maxReferenceImages: 0,
       maxReferenceVideos: 0,
       maxAudios: 0,
-      notes: ['该沧元视频型号未核实专属参数文档，只允许提交模型和提示词'],
+      notes: ['该视频型号的参数说明尚未完善，暂不可生成，请选择已有完整说明的型号'],
     };
   }
   if (isAgnesProvider(providerIdentity) || rawId.startsWith('agnes-video-')) return agnesLimits(rawId);

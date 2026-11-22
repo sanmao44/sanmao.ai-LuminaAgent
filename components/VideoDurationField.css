@@ -1,0 +1,10 @@
+.video-duration-field{display:grid;gap:4px;min-width:0}
+.video-duration-field-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(64px,.65fr);align-items:center;gap:6px;min-width:0}
+.video-duration-field-controls>.select-menu{width:100%;min-width:0}
+.video-duration-field-controls .select-menu-trigger{width:100%;min-width:0}
+.video-duration-field-custom{display:flex;align-items:center;gap:4px;min-width:0;color:var(--muted);font-size:10px}
+.video-duration-field-custom>input{box-sizing:border-box;width:100%;min-width:0;height:32px;padding:0 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font:inherit;font-size:11px;outline:0}
+.video-duration-field-custom>input:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent)}
+.video-duration-field-custom>input:disabled{opacity:.5}
+.video-duration-field>small{color:var(--muted);font-size:9px;line-height:1.4;overflow-wrap:anywhere}
+.video-duration-field>small.video-duration-field-error{color:var(--danger,#ef7777)}

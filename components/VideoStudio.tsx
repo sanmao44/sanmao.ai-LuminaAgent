@@ -4,12 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProviderConnection, RegistryModel, VideoGenerationInput } from '@/lib/types';
 import type { JimengAccount } from '@/lib/jimeng-cli';
 import SelectMenu from '@/components/SelectMenu';
+import VideoDurationField from './VideoDurationField';
 import EditableSuggestionField from '@/components/EditableSuggestionField';
 import ModelPicker from '@/components/ModelPicker';
 import ReferenceMentionEditor from '@/components/ReferenceMentionEditor';
 import JimengAccountSummary from '@/components/JimengAccountSummary';
 import CangyuanMediaUploadField from '@/components/cangyuan/CangyuanMediaUploadField';
 import CangyuanVideoModelParameters from '@/components/cangyuan/CangyuanVideoModelParameters';
+import { usesCangyuanVideoProtocol } from '@/lib/cangyuan-provider';
 import { allRatios, getVideoModelLimits, getVideoModelLimitsForInput } from '@/lib/video-model-limits';
 import { clearVideoStudioDraft, hasVideoStudioDraftContent, loadVideoStudioDraft, saveVideoStudioDraft } from '@/lib/video-studio-draft';
 import { is65535Provider, isJimengProvider, isAgnesProvider, requiresPublicMediaRelay } from '@/lib/video-platform';
@@ -18,7 +20,7 @@ import { nearestOneTakeVideoDuration, normalizeOneTakeDuration } from '@/lib/one
 import { requestPromptOptimization } from '@/lib/creation/agent';
 import { AGNES_V20_DIMENSION_PRESETS, AGNES_V20_DURATION_PRESETS } from '@/lib/creation/settings';
 import { videoTaskErrorPresentation, videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
-import { getCangyuanVideoAdvancedParameters, getCangyuanVideoModelSpec } from '@/lib/cangyuan-video-model-catalog';
+import { cangyuanVideoParameterValueLabel, getCangyuanVideoAdvancedParameters, getCangyuanVideoModelSpec, getCangyuanVideoParameter } from '@/lib/cangyuan-video-model-catalog';
 import type { VideoModelParameterValues } from '@/packages/contracts/video-generation';
 import {
   cangyuanVideoImageDataUrlBytes,
@@ -94,7 +96,7 @@ export function reconcileVideoInputMode<TSelection extends VideoInputMediaSelect
     || selectedMedia.cangyuanImageUrl || selectedMedia.cangyuanVideoUrl || selectedMedia.cangyuanAudioUrl,
   );
   return {
-    inputMode: isSupported ? inputMode : 'text' as const,
+    inputMode: isSupported ? inputMode : options.find((option) => option.value === 'text')?.value || options[0]?.value || 'text' as const,
     didFallback: !isSupported,
     hasSelectedMedia,
     selectedMedia,
@@ -270,7 +272,7 @@ function cangyuanVideoParameterValues(publicModel: string, values: VideoModelPar
 function initialVideoModelParameters(modelId: string, models: RegistryModel[], providers: ProviderConnection[]): VideoModelParameterValues {
   const model = models.find((item) => item.id === modelId);
   const provider = providers.find((item) => item.id === model?.providerId);
-  return provider?.videoTransport === 'cangyuan-videos' && model
+  return usesCangyuanVideoProtocol(provider) && model
     ? cangyuanVideoParameterValues(model.rawId)
     : {};
 }
@@ -278,7 +280,7 @@ function initialVideoModelParameters(modelId: string, models: RegistryModel[], p
 function initialVideoGenerateAudio(modelId: string, models: RegistryModel[], providers: ProviderConnection[]): boolean {
   const model = models.find((item) => item.id === modelId);
   const provider = providers.find((item) => item.id === model?.providerId);
-  const profile = provider?.videoTransport === 'cangyuan-videos'
+  const profile = usesCangyuanVideoProtocol(provider)
     ? getCangyuanVideoModelProfile(model?.rawId || '')
     : null;
   return profile?.generateAudioDefault ?? true;
@@ -300,17 +302,17 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const can = (name: string) => capabilities.includes(name as never);
   const uses65535Policy = is65535Provider(provider);
   const usesJimengCli = isJimengProvider(provider);
-  const cangyuanProfile = provider?.videoTransport === 'cangyuan-videos'
+  const cangyuanProfile = usesCangyuanVideoProtocol(provider)
     ? getCangyuanVideoModelProfile(modelForLimits?.rawId || '')
     : null;
-  const usesCangyuan = provider?.videoTransport === 'cangyuan-videos';
+  const usesCangyuan = usesCangyuanVideoProtocol(provider);
   const supportsEdit = usesCangyuan ? Boolean(cangyuanProfile?.supportsEdit) : can('video-edit');
   const supportsExtend = usesCangyuan ? Boolean(cangyuanProfile?.supportsExtend) : can('video-extend');
   const supportsFirst = usesCangyuan
     ? Boolean(cangyuanProfile?.supportsFirstFrame)
     : can('video-first-frame') || can('video-generate') || uses65535Policy;
   const supportsFirstAlone = usesCangyuan
-    ? Boolean(cangyuanProfile?.supportsFirstFrame && (cangyuanProfile.allowsFirstFrameWithoutLastFrame ?? !cangyuanProfile.supportsLastFrame))
+    ? Boolean(cangyuanProfile?.supportsFirstFrame && cangyuanProfile.allowsFirstFrameWithoutLastFrame !== false)
     : supportsFirst;
   const supportsFrames = usesCangyuan
     ? Boolean(cangyuanProfile?.supportsFirstLastFrames && cangyuanProfile.supportsFirstFrame && cangyuanProfile.supportsLastFrame)
@@ -397,7 +399,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
   const inputReferenceVideo = cleanUrl(input.referenceVideo)
     || (Array.isArray(input.referenceVideos) ? input.referenceVideos.map(cleanUrl).find(Boolean) || '' : '');
   const referenceVideo = inputReferenceVideo && (operation !== 'generate' || (usesAgnes25 && !usesAgnesFlash && inputMode === 'reference')) ? uploadSlot(inputReferenceVideo, '参考视频', 'video') : null;
-  if (provider?.videoTransport === 'cangyuan-videos') {
+  if (usesCangyuanVideoProtocol(provider)) {
     const cangyuanVideoUrls = input.referenceVideos?.length
       ? input.referenceVideos.map(cleanUrl).filter(Boolean)
       : inputReferenceVideo ? [inputReferenceVideo] : [];
@@ -417,7 +419,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     warnings.push('当前模型不支持音频输入，已清除音频素材');
   }
 
-  if (provider?.videoTransport === 'cangyuan-videos' && (referenceVideos.length || audios.length)) inputMode = 'reference';
+  if (usesCangyuanVideoProtocol(provider) && (referenceVideos.length || audios.length)) inputMode = 'reference';
 
   const baseLimits = getVideoModelLimits(modelForLimits, provider);
   const limits = getVideoModelLimitsForInput(modelForLimits, provider, {
@@ -434,7 +436,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     : durationValues.find((value) => value >= limits.minSeconds && value <= limits.maxSeconds) || limits.minSeconds;
   if (input.seconds !== undefined && seconds !== requestedSeconds) warnings.push(`时长已调整为当前模型支持的 ${seconds} 秒`);
 
-  const requestedRatio = provider?.videoTransport === 'cangyuan-videos'
+  const requestedRatio = usesCangyuanVideoProtocol(provider)
     ? typeof input.aspectRatio === 'string' && input.aspectRatio.trim() ? input.aspectRatio : '16:9'
     : limits.aspectRatioSource === 'first-reference'
       ? 'auto'
@@ -445,7 +447,7 @@ function buildVideoRestorePlan(task: VideoTask, models: RegistryModel[], provide
     : typeof input.videoSize === 'string'
       ? input.videoSize
       : '720p';
-  const resolution = provider?.videoTransport === 'cangyuan-videos'
+  const resolution = usesCangyuanVideoProtocol(provider)
     ? requestedResolution
     : limits.resolutions.find((value) => value.toLowerCase() === requestedResolution.trim().toLowerCase()) || limits.resolutions[0] || '720p';
   if (input.resolution && resolution.toLowerCase() !== input.resolution.trim().toLowerCase()) warnings.push(`分辨率已调整为 ${resolution}`);
@@ -519,6 +521,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const [restoreCandidate, setRestoreCandidate] = useState<VideoTask | null>(null);
   const [mobilePanel, setMobilePanel] = useState<VideoMobilePanel>('compose');
   const [busy, setBusy] = useState(false);
+  const submissionInProgress = useRef(false);
   const [mediaStatus, setMediaStatus] = useState<MediaTransportStatus | null>(null);
   const [mediaStatusBusy, setMediaStatusBusy] = useState(false);
   const [jimengAccount, setJimengAccount] = useState<JimengAccount | null>(null);
@@ -655,7 +658,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const defaultProvider = providers.find((provider) => provider.id === defaultModel?.providerId);
   const videoPickerModels = useMemo(() => {
     const cangyuanProviderIds = new Set(providers
-      .filter((provider) => provider.videoTransport === 'cangyuan-videos')
+      .filter((provider) => usesCangyuanVideoProtocol(provider))
       .map((provider) => provider.id));
     return models.filter((model) => !cangyuanProviderIds.has(model.providerId) || isCangyuanVideoModelSelectable(model.rawId));
   }, [models, providers]);
@@ -690,7 +693,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   const nativeTask = selectedProvider?.videoTransport === 'native-task' || selectedProvider?.platform === '65535';
   const uses65535Policy = is65535Provider(selectedProvider);
-  const usesCangyuan = selectedProvider?.videoTransport === 'cangyuan-videos';
+  const usesCangyuan = usesCangyuanVideoProtocol(selectedProvider);
   const cangyuanProfile = usesCangyuan && selectedModel && isCangyuanVideoModelSelectable(selectedModel.rawId)
     ? getCangyuanVideoModelProfile(selectedModel.rawId)
     : null;
@@ -764,7 +767,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     ? Boolean(cangyuanProfile?.supportsFirstFrame)
     : can('video-first-frame') || can('video-generate') || uses65535Policy;
   const supportsFirstAlone = usesCangyuan
-    ? Boolean(cangyuanProfile?.supportsFirstFrame && (cangyuanProfile.allowsFirstFrameWithoutLastFrame ?? !cangyuanProfile.supportsLastFrame))
+    ? Boolean(cangyuanProfile?.supportsFirstFrame && cangyuanProfile.allowsFirstFrameWithoutLastFrame !== false)
     : supportsFirst;
   const supportsFrames = usesCangyuan
     ? Boolean(cangyuanProfile?.supportsFirstLastFrames && cangyuanProfile.supportsFirstFrame && cangyuanProfile.supportsLastFrame)
@@ -793,7 +796,8 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
   const operationOptions = [{ value: 'generate' as const, label: '生成视频', description: '根据提示词和画面输入生成视频' }, ...(supportsEdit ? [{ value: 'edit' as const, label: '视频编辑', description: '参考已有视频进行修改' }] : []), ...(supportsExtend ? [{ value: 'extend' as const, label: '视频扩展', description: '延续已有视频的镜头' }] : [])];
   const showOperationField = operationOptions.length > 1;
   const inputModeOptions = useMemo(() => [
-    { value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' },
+    ...(!usesCangyuan || cangyuanProfile && cangyuanProfile.allowsNoReferences !== false && !cangyuanProfile.requiresReferenceImage
+      ? [{ value: 'text' as const, label: '纯文本 · 不使用图片', description: '从提示词直接生成' }] : []),
     ...(!usesCangyuan && supportsFirst ? [
       { value: 'first-frame' as const, label: '首帧 · 控制开场画面', description: '上传一张开场参考图' },
       { value: 'frames' as const, label: uses65535Policy ? '双参考图 · 控制起止' : '首尾帧 · 约束镜头起止', description: uses65535Policy ? '65535 将首帧和尾帧按两张参考图提交' : '上传首帧和尾帧' },
@@ -811,7 +815,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         ? `支持${[supportsReferenceImages ? `图片（本站上限 ${modelLimits.maxReferenceImages} 张）` : '', supportsReferenceVideos ? `视频（本站上限 ${modelLimits.maxReferenceVideos} 个）` : '', supportsReferenceAudios ? `音频（本站上限 ${modelLimits.maxAudios} 段）` : ''].filter(Boolean).join('、')}`
         : `最多添加 ${modelLimits.maxReferenceImages} 张参考图`,
     }] : []),
-  ], [modelLimits.maxAudios, modelLimits.maxReferenceImages, modelLimits.maxReferenceVideos, supportsFirst, supportsFirstAlone, supportsFrames, supportsReference, supportsReferenceAudios, supportsReferenceImages, supportsReferenceVideos, uses65535Policy, usesCangyuan]);
+  ], [cangyuanProfile, modelLimits.maxAudios, modelLimits.maxReferenceImages, modelLimits.maxReferenceVideos, supportsFirst, supportsFirstAlone, supportsFrames, supportsReference, supportsReferenceAudios, supportsReferenceImages, supportsReferenceVideos, uses65535Policy, usesCangyuan]);
   const durationOptions = useMemo(() => {
     const values = modelLimits.fixedSeconds
       ? [modelLimits.fixedSeconds]
@@ -819,10 +823,16 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         { length: Math.max(0, modelLimits.maxSeconds - modelLimits.minSeconds + 1) },
         (_, index) => modelLimits.minSeconds + index,
       );
-    return values.filter((value) => value >= modelLimits.minSeconds && value <= modelLimits.maxSeconds).map((value) => ({ value, label: `${value} 秒` }));
-  }, [modelLimits]);
-  const ratioOptions = (usesCangyuan && cangyuanProfile ? cangyuanProfile.suggestedAspectRatios : allRatios).map((value) => ({ value, label: value === 'auto' ? 'Auto' : value, description: value === 'auto' ? '模型自选 / 跟随首帧' : value.includes(':') ? (value.split(':')[0] === value.split(':')[1] ? '方形' : Number(value.split(':')[0]) > Number(value.split(':')[1]) ? '横屏' : '竖屏') : '模型自选' }));
+    const excluded = cangyuanProfile?.unsupportedSecondsByResolution?.[resolution.toLowerCase()] || [];
+    return values.filter((value) => value >= modelLimits.minSeconds && value <= modelLimits.maxSeconds && !excluded.includes(value)).map((value) => ({ value, label: `${value} 秒` }));
+  }, [modelLimits, cangyuanProfile, resolution]);
+  const ratioOptions = (usesCangyuan && cangyuanProfile ? cangyuanProfile.suggestedAspectRatios : allRatios).map((value) => ({ value, label: value === 'auto' ? '自动' : value, description: value === 'auto' ? '模型自选 / 跟随首帧' : value.includes(':') ? (value.split(':')[0] === value.split(':')[1] ? '方形' : Number(value.split(':')[0]) > Number(value.split(':')[1]) ? '横屏' : '竖屏') : '模型自选' }));
   const resolutionOptions = modelLimits.resolutions.map((value) => ({ value, label: value, description: value === '480p' ? '快速生成' : value === '1080p' ? '高清' : '推荐' }));
+  const cangyuanAspectEnum = cangyuanSpec && getCangyuanVideoParameter(cangyuanSpec, 'aspect_ratio')?.enum;
+  const cangyuanAspectOptions = Array.isArray(cangyuanAspectEnum) ? cangyuanAspectEnum.map(String) : cangyuanAspectEnum ? [String(cangyuanAspectEnum)] : [];
+  const cangyuanResolutions = (cangyuanProfile?.allowedResolutions || cangyuanProfile?.suggestedResolutions || [])
+    .filter((value) => !cangyuanProfile?.unsupportedResolutions?.includes(value.toLowerCase()));
+  const cangyuanResolutionValue = cangyuanResolutions.find((value) => value.toLowerCase() === resolution.toLowerCase()) || resolution;
   const selectedAgnesV20Duration = AGNES_V20_DURATION_PRESETS.find((preset) => preset.frames === agnesNumFrames && preset.frameRate === agnesFrameRate);
   const selectedAgnesV20Dimensions = AGNES_V20_DIMENSION_PRESETS.find((preset) => preset.width === agnesWidth && preset.height === agnesHeight);
 
@@ -886,15 +896,20 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     const reconciliation = reconcileVideoInputMode(inputMode, inputModeOptions, selection);
     if (!reconciliation.didFallback) return;
     setInputMode(reconciliation.inputMode);
-    setInputModeFallbackNotice(reconciliation.hasSelectedMedia
-      ? '当前型号不支持原输入方式，已切换到文生视频。之前选择的素材已保留，文生视频不会提交这些素材；切回支持的型号并选择相应输入方式后可继续使用。'
-      : '当前型号不支持原输入方式，已切换到文生视频。');
+    const modeLabel = inputModeOptions.find((option) => option.value === reconciliation.inputMode)?.label || '可用输入方式';
+    setInputModeFallbackNotice(`当前型号不支持原输入方式，已切换到${modeLabel}。${reconciliation.hasSelectedMedia ? '之前选择的素材已保留；请确认当前模式使用的素材后再生成。' : ''}`);
   }, [inputMode, inputModeOptions, firstFrame, lastFrame, referenceImages, referenceVideo, referenceVideos, audios, cangyuanImageUrl, cangyuanVideoUrl, cangyuanAudioUrl]);
 
   useEffect(() => {
     if (!durationOptions.some((option) => option.value === seconds)) setSeconds(durationOptions[0]?.value || modelLimits.minSeconds);
-    if (!modelLimits.resolutions.includes(resolution)) setResolution(modelLimits.resolutions[0] || '720p');
-  }, [durationOptions, modelLimits, resolution, seconds]);
+    if (usesCangyuan && cangyuanProfile) {
+      if (cangyuanProfile.supportsResolution && (cangyuanProfile.unsupportedResolutions?.includes(resolution.toLowerCase())
+        || cangyuanProfile.allowedResolutions && !cangyuanProfile.allowedResolutions.some((value) => value.toLowerCase() === resolution.toLowerCase()))) {
+        setResolution(cangyuanResolutions[0] || cangyuanProfile.resolutionDefault || '720p');
+      }
+      if (cangyuanAspectOptions.length && !cangyuanAspectOptions.includes(ratio)) setRatio(cangyuanAspectOptions[0]);
+    } else if (!modelLimits.resolutions.includes(resolution)) setResolution(modelLimits.resolutions[0] || '720p');
+  }, [durationOptions, modelLimits, resolution, seconds, usesCangyuan, cangyuanProfile, ratio]);
 
   useEffect(() => {
     if (modelLimits.aspectRatioSource === 'first-reference' && ratio !== 'auto') setRatio('auto');
@@ -1168,7 +1183,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       setModelId(draft.modelId);
       const draftModel = models.find((item) => item.id === draft.modelId);
       const draftProvider = providers.find((item) => item.id === draftModel?.providerId);
-      setModelParameters(draftProvider?.videoTransport === 'cangyuan-videos' && draftModel
+      setModelParameters(usesCangyuanVideoProtocol(draftProvider) && draftModel
         ? cangyuanVideoParameterValues(draftModel.rawId, draft.modelParameters)
         : {});
       setCangyuanGenerateAudio(draft.generateAudio ?? initialVideoGenerateAudio(draft.modelId, models, providers));
@@ -1239,6 +1254,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (submissionInProgress.current) return;
     if (cangyuanUploadInProgress) return onNotify('请等待参考素材上传完成后再生成。');
     if (!prompt.trim()) return onNotify('请先输入视频提示词');
     if (prompt.length > promptMaxLength) return onNotify(`当前型号的提示词最多 ${promptMaxLength} 个字符，请精简后再生成。`);
@@ -1247,15 +1263,19 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
     if (inputMode === 'first-frame' && !firstFrame) return onNotify('请先添加首帧图片');
     if (inputMode === 'frames' && (!firstFrame || !lastFrame)) return onNotify(`${uses65535Policy ? '双参考图' : '首尾帧'}模式请先添加首帧和尾帧图片`);
     if (inputMode === 'reference' && !referenceImages.length && !referenceVideos.length && !referenceVideo && !audios.length) return onNotify('参考素材模式请先添加图片、视频或音频素材');
-    if (referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
-    if (audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
+    if (inputMode === 'reference' && referenceImages.length > modelLimits.maxReferenceImages) return onNotify(`当前模型最多接收 ${modelLimits.maxReferenceImages} 张参考图`);
+    if ((inputMode === 'reference' || !usesCangyuan) && audios.length > modelLimits.maxAudios) return onNotify(`当前模型最多接收 ${modelLimits.maxAudios} 段音频`);
     if (usesAgnesV20 && (!Number.isInteger(agnesNumFrames) || agnesNumFrames < 1 || agnesNumFrames > 441 || (agnesNumFrames - 1) % 8 !== 0)) return onNotify('Agnes V2.0 帧数必须不超过 441 且满足 8n + 1');
     if (usesAgnesV20 && (!Number.isInteger(agnesWidth) || !Number.isInteger(agnesHeight) || agnesWidth < 64 || agnesHeight < 64 || agnesWidth > 3840 || agnesHeight > 3840 || agnesWidth % 64 !== 0 || agnesHeight % 64 !== 0)) return onNotify('Agnes V2.0 宽度和高度必须是 64 的倍数，范围为 64–3840');
     if (usesAgnesV20 && (!Number.isInteger(agnesFrameRate) || agnesFrameRate < 1 || agnesFrameRate > 60)) return onNotify('Agnes V2.0 帧率必须在 1–60 之间');
     if (uses65535Policy && audios.length && !can('video-audio')) return onNotify('当前 65535 视频模型未声明音频输入，已自动阻止提交；移除音频即可继续生成。');
     if (usesCangyuan && !cangyuanProfile && inputMode !== 'text') return onNotify('该沧元型号尚未核实参考素材能力，请改用文生视频。');
     if (usesCangyuan && cangyuanProfile) {
-      const localImages = [firstFrame?.url, lastFrame?.url, ...referenceImages.map((item) => item.url)]
+      const localImages = [
+        ...(['first-frame', 'frames'].includes(inputMode) ? [firstFrame?.url] : []),
+        ...(inputMode === 'frames' ? [lastFrame?.url] : []),
+        ...(inputMode === 'reference' ? referenceImages.map((item) => item.url) : []),
+      ]
         .filter((value): value is string => Boolean(value));
       for (const value of localImages) {
         const byteLength = cangyuanVideoImageDataUrlBytes(value);
@@ -1263,8 +1283,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         const sizeError = cangyuanVideoImageSizeError(cangyuanProfile.publicModel, byteLength);
         if (sizeError) return onNotify(sizeError);
       }
-      if (!Number.isInteger(seconds) || seconds < cangyuanProfile.minSeconds || seconds > cangyuanProfile.maxSeconds) return onNotify(`时长必须是 ${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒的整数。`);
-      if (!ratio.trim() || !resolution.trim()) return onNotify('比例和分辨率不能为空。');
+      if (cangyuanProfile.supportsDuration && !durationOptions.some((option) => option.value === seconds)) return onNotify(`请选择当前清晰度支持的时长（${cangyuanProfile.minSeconds}–${cangyuanProfile.maxSeconds} 秒）。`);
+      if (cangyuanProfile.supportsAspectRatio && !ratio.trim()) return onNotify('画面比例不能为空。');
+      if (cangyuanProfile.supportsResolution && !resolution.trim()) return onNotify('画面清晰度不能为空。');
       if (cangyuanProfile.supportsSeed && cangyuanSeed.trim()) {
         const seed = Number(cangyuanSeed);
         if (!Number.isSafeInteger(seed)) return onNotify('随机种子必须是安全整数。');
@@ -1279,7 +1300,6 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       if (inputMode === 'frames') {
         if (!supportsFrames) return onNotify('当前沧元型号不支持首尾帧输入。');
         if (!firstFrame || !lastFrame) return onNotify('沧元算力首帧和尾帧必须成对提供。');
-        if ([...referenceImages, ...referenceVideos, ...audios].length) return onNotify('首尾帧不能与参考图、参考视频或参考音频同时使用。');
         if (![firstFrame.url, lastFrame.url].every(isPublicHttpsUrl)) return onNotify('首帧和尾帧必须使用公网 HTTPS URL。');
       }
       if (inputMode === 'reference') {
@@ -1291,7 +1311,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
         if (cangyuanProfile.requiresImageWithVideoOrAudio && (referenceVideos.length || audios.length) && !referenceImages.length) return onNotify('当前型号使用参考视频或音频时，必须至少再提供一张参考图。');
         if (![...referenceImages, ...referenceVideos, ...audios].every((item) => isPublicHttpsUrl(item.url))) return onNotify('参考图片、视频和音频必须使用公网 HTTPS URL。');
       }
-      if (inputMode === 'text' && cangyuanProfile.allowsNoReferences === false) return onNotify('当前型号必须提供至少一项参考素材。');
+      if (inputMode === 'text' && (cangyuanProfile.allowsNoReferences === false || cangyuanProfile.requiresReferenceImage)) return onNotify('当前型号必须提供参考素材，请先选择合适的输入方式并上传素材。');
     }
     const naturalReferenceReplacement = replaceNaturalReferenceLabels(prompt, referenceCandidates);
     const referenceSelection = selectCreativeReferences(naturalReferenceReplacement.value, referenceCandidates);
@@ -1305,6 +1325,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       && (!referenceSelection.hasMentions || selectedReferences.some((item) => item.id === reference.id))
       && (!usesCangyuan || referenceVideos.some((item) => item.id === reference.id)));
     const submittedPrompt = naturalReferenceReplacement.value;
+    submissionInProgress.current = true;
     setBusy(true);
     try {
       const inheritsVideoSettings = operation !== 'generate' && (modelLimits.inheritVideoSettingsFor?.includes(operation) || false);
@@ -1315,9 +1336,9 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       const input: VideoGenerationInput = {
         prompt: submittedPrompt,
         operation,
-        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !inheritsVideoSettings ? { seconds } : {}),
-        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsAspectRatio ? { aspectRatio: ratio } : {}),
-        ...(!usesAgnesV20 && (!usesCangyuan || Boolean(cangyuanProfile)) && !omitsResolution ? { resolution } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || cangyuanProfile?.supportsDuration) && !inheritsVideoSettings ? { seconds } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || cangyuanProfile?.supportsAspectRatio) && !omitsAspectRatio ? { aspectRatio: ratio } : {}),
+        ...(!usesAgnesV20 && (!usesCangyuan || cangyuanProfile?.supportsResolution) && !omitsResolution ? { resolution } : {}),
         firstFrame: (inputMode === 'first-frame' || inputMode === 'frames') ? selectedFirstFrame?.url : undefined,
         lastFrame: inputMode === 'frames' ? selectedLastFrame?.url : undefined,
         referenceImages: inputMode === 'reference' ? selectedReferenceImages.map((item) => item.url).filter((value): value is string => Boolean(value)) : [],
@@ -1371,7 +1392,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
       }
       onNotify('视频任务已提交，完成后会自动保存到本地');
     } catch (error) { onNotify(error instanceof Error ? error.message : '视频生成失败'); }
-    finally { setBusy(false); }
+    finally { submissionInProgress.current = false; setBusy(false); }
   }
 
   const selectedTask = useMemo(() => tasks.find((task) => task.id === selectedTaskId) || null, [selectedTaskId, tasks]);
@@ -1464,30 +1485,22 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
             }
           }} options={inputModeOptions.map((option) => ({ ...option, label: option.value === 'text' ? '文生视频' : option.value === 'first-frame' ? (usesCangyuan ? '首帧' : '图生视频 · 首帧') : option.value === 'frames' ? (uses65535Policy ? '图生视频 · 双参考图' : '图生视频 · 首尾帧') : usesCangyuan ? '参考素材' : '参考图生视频' }))} ariaLabel="生成方式" /></label>}
           </div>
-          {usesCangyuan && <div className={`video-model-notice${cangyuanProfile && cangyuanSpec ? '' : ' warning'}`}><strong>{cangyuanProfile && cangyuanSpec ? '当前型号说明' : '型号暂不可用'}</strong><span>{cangyuanProfile && cangyuanSpec ? `${cangyuanProfile.publicModel}：${modelLimits.notes.join('；')}。上传文件大小和未公开数量的安全上限属于本站中转设置。` : '该型号缺少完整的官方参数说明，已从可选模型中隐藏并禁止提交。请选择已核实的沧元视频型号。'}</span></div>}
           {inputModeFallbackNotice && <div className="video-model-notice warning" role="status">
             <strong>输入方式已调整</strong>
             <span>{inputModeFallbackNotice}</span>
             {hasSelectedVideoMedia && <div className="video-media-relay-actions"><button type="button" onClick={clearSelectedMedia}>清除已保留素材</button></div>}
           </div>}
-          <details className="video-advanced-details">
-            <summary><span>模型提示与高级参数</span><small>限制说明、媒体处理和特殊模型参数</small></summary>
-            <div className="video-advanced-body">
-         {modelLimits.notes.length > 0 && !usesCangyuan && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
-         {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
-           <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : mediaStatus?.relayConfigured ? '自动图片中转暂不可达' : '正在检查图片处理服务'}</strong>
-           <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : mediaStatus?.relayConfigured ? '后台正在重建临时通道，恢复后无需重启；也可以点击重新检查。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
-          <div className="video-media-relay-actions"><button type="button" onClick={() => void refreshMediaStatus()} disabled={mediaStatusBusy}>{mediaStatusBusy ? '检查中…' : '重新检查'}</button>{mediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
-         </div>}
-        {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
-        {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
-        {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
+          <section className="video-parameter-settings" aria-label="视频生成设置">
           {!usesAgnesV20 && !usesCangyuan && <div className="video-option-segment"><span>{usesJimengMultiframe ? '转场参数' : '基础参数'}</span><div><label>{modelLimits.durationScope === 'per-transition' ? '每段转场时长' : modelLimits.durationScope === 'total' ? '总时长' : '时长'}<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel={modelLimits.durationScope === 'per-transition' ? '每段转场时长' : '视频时长'} /></label><label>比例<SelectMenu value={modelLimits.aspectRatioSource === 'first-reference' ? 'auto' : ratio} onChange={setRatio} disabled={modelLimits.aspectRatioSource === 'first-reference'} options={ratioOptions} ariaLabel="视频比例" /></label><label>分辨率<SelectMenu value={resolution} onChange={setResolution} options={resolutionOptions} ariaLabel="视频分辨率" /></label></div></div>}
-          {usesCangyuan && cangyuanProfile && <div className="video-option-segment cangyuan-video-parameters"><span>{selectedModel?.displayName || cangyuanProfile.publicModel} 参数</span><div>
-            <label>时长<SelectMenu value={seconds} onChange={setSeconds} options={durationOptions} ariaLabel="沧元视频时长" /></label>
-            <label>比例建议，可自定义<EditableSuggestionField value={ratio} options={cangyuanProfile.suggestedAspectRatios} ariaLabel="沧元视频比例" placeholder="例如 16:9" onChange={setRatio} /></label>
-            <label>分辨率建议，可自定义<EditableSuggestionField value={resolution} options={cangyuanProfile.suggestedResolutions} ariaLabel="沧元视频分辨率" placeholder="例如 720p" onChange={setResolution} /></label>
-            {cangyuanProfile.supportsSeed && <label>随机种子（可选）<input aria-label="沧元视频随机种子" type="number" min={cangyuanProfile.seedMin} max={cangyuanProfile.seedMax} step={1} value={cangyuanSeed} onChange={(event) => setCangyuanSeed(event.target.value)} placeholder="留空使用随机种子" /></label>}
+          {usesCangyuan && cangyuanProfile && <div className="video-option-segment cangyuan-video-parameters"><span>基础设置</span><div>
+            {cangyuanProfile.supportsDuration && <label>时长<VideoDurationField value={seconds} onChange={setSeconds} values={durationOptions.map((option) => option.value)} ariaLabel="视频时长" /></label>}
+            {cangyuanProfile.supportsAspectRatio && <label>画面比例{cangyuanAspectOptions.length
+              ? <SelectMenu value={ratio} options={cangyuanAspectOptions.map((value) => ({ value, label: cangyuanVideoParameterValueLabel('aspect_ratio', value) }))} ariaLabel="视频比例" onChange={setRatio} />
+              : <EditableSuggestionField value={ratio} options={cangyuanProfile.suggestedAspectRatios} optionLabel={(value) => cangyuanVideoParameterValueLabel('aspect_ratio', value)} ariaLabel="视频比例" placeholder="例如 16:9" onChange={setRatio} />}</label>}
+            {cangyuanProfile.supportsResolution && <label>画面清晰度{cangyuanProfile.allowedResolutions?.length
+              ? <SelectMenu value={cangyuanResolutionValue} options={cangyuanResolutions.map((value) => ({ value, label: cangyuanVideoParameterValueLabel('resolution', value) }))} ariaLabel="视频分辨率" onChange={setResolution} />
+              : <EditableSuggestionField value={cangyuanResolutionValue} options={cangyuanResolutions} optionLabel={(value) => cangyuanVideoParameterValueLabel('resolution', value)} ariaLabel="视频分辨率" placeholder="例如 720p" onChange={setResolution} />}</label>}
+            {cangyuanProfile.supportsSeed && <label>随机种子（可选）<input aria-label="视频随机种子" type="number" min={cangyuanProfile.seedMin} max={cangyuanProfile.seedMax} step={1} value={cangyuanSeed} onChange={(event) => setCangyuanSeed(event.target.value)} placeholder="留空使用随机种子" /></label>}
             {cangyuanProfile.supportsGenerateAudio && <label className="video-cangyuan-audio-field"><span>生成原生音频</span><input aria-label="生成原生音频" type="checkbox" checked={cangyuanGenerateAudio} onChange={(event) => setCangyuanGenerateAudio(event.target.checked)} /></label>}
           </div></div>}
           {cangyuanSpec && <CangyuanVideoModelParameters spec={cangyuanSpec} values={modelParameters} onChange={setModelParameters} />}
@@ -1514,8 +1527,17 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
           </div>
           <small className="video-model-parameter-help">预计时长约 {((Math.max(1, agnesNumFrames)) / Math.max(1, agnesFrameRate)).toFixed(1)} 秒（按官方 num_frames ÷ frame_rate 估算）</small>
          </div>}
-            </div>
-          </details>
+          {usesCangyuan && <div className={`video-model-notice${cangyuanProfile && cangyuanSpec ? '' : ' warning'}`}><strong>{cangyuanProfile && cangyuanSpec ? '使用说明' : '型号暂不可用'}</strong><span>{cangyuanProfile && cangyuanSpec ? `${modelLimits.notes.join('；')}。上传文件大小和未公开数量的安全上限属于本站中转设置。` : '该型号缺少完整的官方参数说明，已从可选模型中隐藏并禁止提交。请选择已核实的沧元视频型号。'}</span></div>}
+         {modelLimits.notes.length > 0 && !usesCangyuan && <div className="video-model-notice"><strong>当前模型限制</strong><span>{modelLimits.notes.join(' · ')}{usesAgnes25 && inputMode === 'reference' ? ' · 提示词中的素材请使用 <Picture N>、<Audio N>、<Video N>' : ''}</span></div>}
+         {usesMediaRelay && inputMode !== 'text' && <div className={`video-model-notice video-media-relay-notice ${mediaStatus?.mode === 'unavailable' ? 'warning' : ''}`}>
+           <div><strong>{mediaStatus?.mode === 'relay' ? '本地图片会自动安全处理' : mediaStatus?.mode === 'self-hosted' ? '本地图片已配置安全访问' : mediaStatus?.relayConfigured ? '自动图片中转暂不可达' : '正在检查图片处理服务'}</strong>
+           <span>{mediaStatus?.mode === 'relay' ? '上传图片只会短暂保存，约 30 分钟后自动失效；公网图片不会重复上传。' : mediaStatus?.mode === 'self-hosted' ? '当前使用已配置的自托管媒体地址，提交前会自动生成临时访问链接。' : mediaStatus?.relayConfigured ? '后台正在重建临时通道，恢复后无需重启；也可以点击重新检查。' : '普通用户无需配置地址；如果检查失败，请稍后点击重试，或联系管理员。'}</span></div>
+          <div className="video-media-relay-actions"><button type="button" onClick={() => void refreshMediaStatus()} disabled={mediaStatusBusy}>{mediaStatusBusy ? '检查中…' : '重新检查'}</button>{mediaStatus?.mode === 'unavailable' && onOpenProviders && <button type="button" onClick={onOpenProviders}>高级设置</button>}</div>
+         </div>}
+        {nativeTask && <div className="video-model-notice"><strong>{uses65535Policy ? '本地素材已自动处理' : '原生任务素材处理'}</strong><span>{uses65535Policy ? '65535 仅接受 first_frame 或 reference；首尾帧会按两张参考图提交。本地视频在 64 MiB 内会自动直传，超过限制时会在提交前拦截，不会扣费。' : '本地素材会按当前原生异步接口的要求处理；超出接口安全上限时会在提交前拦截，不会扣费。'}</span></div>}
+        {operation !== 'generate' && modelLimits.inheritVideoSettingsFor?.includes(operation) && <div className="video-model-notice warning"><strong>参数沿用原视频</strong><span>当前操作不会使用自定义时长、比例和分辨率，输出将继承输入视频设置。</span></div>}
+        {operation !== 'generate' && !modelLimits.inheritVideoSettingsFor?.includes(operation) && modelLimits.omitAspectRatioResolutionFor?.includes(operation) && <div className="video-model-notice warning"><strong>比例与分辨率沿用原视频</strong><span>当前续写操作不提交自定义比例和分辨率，仅使用续写时长。</span></div>}
+          </section>
         <div className="video-input-heading"><span>画面与素材</span><small>模型不支持的输入会自动收起</small></div>
           <div className="video-upload-grid">
           {usesCangyuan && cangyuanProfile && inputMode === 'first-frame' && <div className="video-cangyuan-frames">
@@ -1606,7 +1628,7 @@ export default function VideoStudio({ models, providers, defaultModelId, promptP
 function selectedVideoPromptMaxLength(modelId: string, defaultModelId: string | null | undefined, models: RegistryModel[], providers: ProviderConnection[]) {
   const model = models.find((item) => item.id === modelId) || models.find((item) => item.id === defaultModelId);
   const provider = providers.find((item) => item.id === model?.providerId);
-  if (provider?.videoTransport !== 'cangyuan-videos' || !model || !isCangyuanVideoModelSelectable(model.rawId)) return 6000;
+  if (!usesCangyuanVideoProtocol(provider) || !model || !isCangyuanVideoModelSelectable(model.rawId)) return 6000;
   return getCangyuanVideoPromptMaxLength(model.rawId) ?? CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH;
 }
 

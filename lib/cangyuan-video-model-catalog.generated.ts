@@ -660,6 +660,133 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     }
   },
   {
+    "id": "model-gemini-omni-1.2-flash",
+    "publicModel": "gemini-omni-1.2-flash",
+    "title": "gemini-omni-1.2-flash",
+    "summary": "gemini-omni-1.2-flash 的接口、请求参数与调用示例。",
+    "source": "models/gemini-omni-1.2-flash.json",
+    "lastReviewed": "2026-11-21",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "gemini-omni-1.2-flash",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "3–15 秒，可首帧，也可多主体参考。",
+      "facePolicy": "open",
+      "nativePolicy": "原生/4K超高清",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 gemini-omni-1.2-flash。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "aspect_ratio。支持值：16:9 / 9:16。不在列表中的值会被拒绝。",
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16"
+          ],
+          "suggestedDefault": "16:9"
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "duration。",
+          "type": "number",
+          "minimum": 3,
+          "maximum": 15,
+          "suggestedDefault": 5
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "resolution。支持值：360P / 720P / 1080P / 4K。不在列表中的值会被拒绝。",
+          "type": "string",
+          "enum": [
+            "360P",
+            "720P",
+            "1080P",
+            "4K"
+          ],
+          "suggestedDefault": "720P"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 3 个。",
+          "type": "array",
+          "maxItems": 3
+        },
+        {
+          "name": "first_image_url",
+          "role": "firstFrame",
+          "description": "可以只传首帧。不要传尾帧。首帧不能和参考图、参考视频一起传。",
+          "type": "string"
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "model": "gemini-omni-1.2-flash",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "sections": [
+        {
+          "title": "参数组合与素材要求",
+          "variant": "list",
+          "items": [
+            "只支持首帧，不要传尾帧。",
+            "首尾帧不能与参考图、参考视频或参考音频同时使用。"
+          ]
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-21"
+    }
+  },
+  {
     "id": "model-gemini-omni-flash",
     "publicModel": "gemini-omni-flash",
     "title": "gemini-omni-flash",
@@ -15759,7 +15886,6 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
           "name": "reference_image_urls",
           "role": "referenceImage",
           "description": "参考图 HTTPS URL 数组，最多 10 个。",
-          "required": true,
           "type": "array",
           "maxItems": 10
         },

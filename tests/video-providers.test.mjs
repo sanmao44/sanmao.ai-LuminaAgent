@@ -200,6 +200,100 @@ test('Cangyuan Seedance Fast maps only its documented video fields', async () =>
   assert.equal(result.providerTaskId, 'cangyuan-seedance-task');
 });
 
+test('legacy OpenAI transport on a Cangyuan connection submits the documented first-frame fields once', async () => {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), init });
+    return new Response(JSON.stringify(init.method === 'POST'
+      ? { id: 'task-gf1-first-frame', status: 'queued' }
+      : { id: 'task-gf1-first-frame', status: 'completed', video_url: 'https://cdn.example/gf1.mp4' }), {
+      status: init.method === 'POST' ? 202 : 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const legacyProvider = provider({
+    platform: 'custom',
+    baseUrl: 'https://direct-api.cangyuansuanli.cn/v1',
+    videoBaseUrl: '',
+    videoTransport: 'openai-videos',
+  });
+  const submitted = await video.submitRemoteVideo(legacyProvider, 'gf1-gemini-omni-1.2-flash', {
+    prompt: 'preserve the first frame', seconds: 15, aspectRatio: '9:16', resolution: '1080P',
+    firstFrame: 'https://assets.example/first.png',
+  }, 'idem-gf1-first-frame');
+  assert.equal(submitted.status, 'pending');
+  assert.equal(submitted.providerTaskId, 'task-gf1-first-frame');
+  assert.deepEqual(JSON.parse(requests[0].init.body), {
+    model: 'gf1-gemini-omni-1.2-flash', prompt: 'preserve the first frame',
+    duration: 15, aspect_ratio: '9:16', resolution: '1080P',
+    first_image_url: 'https://assets.example/first.png',
+  });
+  const completed = await video.pollRemoteVideo(legacyProvider, submitted.providerTaskId);
+  assert.equal(completed.status, 'done');
+  assert.deepEqual(completed.videos, [{ url: 'https://cdn.example/gf1.mp4' }]);
+  assert.deepEqual(requests.map(({ url, init }) => [init.method, url]), [
+    ['POST', 'https://direct-api.cangyuansuanli.cn/v1/videos'],
+    ['GET', 'https://direct-api.cangyuansuanli.cn/v1/videos/task-gf1-first-frame'],
+  ]);
+  assert.equal(requests[0].init.headers['Idempotency-Key'], 'idem-gf1-first-frame');
+});
+
+test('Cangyuan connections with legacy OpenAI transport preserve reference-image input', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({ id: 'task-gf1-reference', status: 'queued' }), { status: 202 });
+  };
+  await video.submitRemoteVideo(provider({
+    platform: 'cangyuan', baseUrl: 'https://gateway.example/v1', videoBaseUrl: '', videoTransport: 'openai-videos',
+  }), 'gf1-gemini-omni-1.2-flash', {
+    prompt: 'preserve the referenced subject', referenceImages: ['https://assets.example/reference.png'],
+  }, 'idem-gf1-reference');
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'gf1-gemini-omni-1.2-flash', prompt: 'preserve the referenced subject',
+    duration: 5, aspect_ratio: '16:9', resolution: '720P',
+    reference_image_urls: ['https://assets.example/reference.png'],
+  });
+});
+
+test('explicit native task configuration remains authoritative for custom video adapters', () => {
+  assert.equal(video.resolveVideoTransport(provider({
+    platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', videoTransport: 'native-task',
+  })), 'native-task');
+  assert.equal(video.resolveVideoTransport(provider({
+    platform: 'custom', baseUrl: 'https://compat.example/v1', videoTransport: 'openai-videos',
+  })), 'openai-videos');
+});
+
+test('Cangyuan polling repairs all inherited native task path placeholders', async () => {
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    return new Response(JSON.stringify({ status: 'in_progress' }), { status: 200 });
+  };
+  for (const statusPath of ['/v1/tasks/{id}', '/v1/tasks/{taskId}', ' /v1/tasks/{task_id}/ ']) {
+    const result = await video.pollRemoteVideo(provider({
+      platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoBaseUrl: '',
+      videoTransport: 'cangyuan-videos', videoTaskStatusPath: statusPath,
+    }), 'task /?');
+    assert.equal(result.status, 'running');
+  }
+  assert.deepEqual(requestedUrls, Array(3).fill('https://ai.cangyuansuanli.cn/v1/videos/task%20%2F%3F'));
+});
+
+test('Cangyuan polling preserves custom status query paths', async () => {
+  let requestedUrl;
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return new Response(JSON.stringify({ status: 'in_progress' }), { status: 200 });
+  };
+  await video.pollRemoteVideo(provider({
+    platform: 'cangyuan', videoTransport: 'cangyuan-videos',
+    videoBaseUrl: 'https://gateway.example/v1', videoTaskStatusPath: '/custom/video-status/{task_id}',
+  }), 'task-1');
+  assert.equal(requestedUrl, 'https://gateway.example/v1/custom/video-status/task-1');
+});
+
 test('Cangyuan video polling uses the video task endpoint and parses data URL results', async () => {
   let request;
   globalThis.fetch = async (url, init) => {
@@ -359,19 +453,87 @@ test('surfaces 429 and retry-after for exponential backoff', async () => {
   });
 });
 
-test('does not mark an HTTP video provider error as possibly accepted', async () => {
-  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'video rejected' } }), {
-    status: 500,
-    headers: { 'content-type': 'application/json' },
-  });
+test('POST timeouts and gateway errors preserve uncertain acceptance without retrying the request', async () => {
+  for (const status of [408, 500, 502, 503, 504]) {
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      requestCount += 1;
+      return new Response(JSON.stringify({ error: { message: 'upstream response unavailable' } }), {
+        status, headers: { 'content-type': 'application/json' },
+      });
+    };
+    await assert.rejects(
+      () => video.submitRemoteVideo(provider(), 'video-model', { prompt: 'one video', seconds: 5 }, 'idem-uncertain'),
+      (error) => {
+        assert.equal(error.status, status);
+        assert.equal(error.possiblyAccepted, true);
+        return true;
+      },
+    );
+    assert.equal(requestCount, 1);
+  }
+});
+
+test('explicit HTTP rejection does not mark a video POST as possibly accepted', async () => {
+  for (const status of [400, 401, 403, 422, 429]) {
+    let requestCount = 0;
+    globalThis.fetch = async () => {
+      requestCount += 1;
+      return new Response(JSON.stringify({ error: { message: 'video rejected' } }), { status });
+    };
+    await assert.rejects(
+      () => video.submitRemoteVideo(provider(), 'video-model', { prompt: 'one video', seconds: 5 }, 'idem-rejected'),
+      (error) => {
+        assert.equal(error.status, status);
+        assert.equal(error.possiblyAccepted, undefined);
+        return true;
+      },
+    );
+    assert.equal(requestCount, 1);
+  }
+});
+
+test('unreadable or malformed successful POST responses preserve uncertain acceptance', async () => {
+  const responses = [
+    () => new Response(new ReadableStream({ start(controller) { controller.error(new Error('terminated')); } }), { status: 202 }),
+    () => new Response('not valid JSON', { status: 200 }),
+    () => new Response(JSON.stringify({ status: 'queued' }), { status: 202 }),
+  ];
+  for (const response of responses) {
+    let requestCount = 0;
+    globalThis.fetch = async () => { requestCount += 1; return response(); };
+    await assert.rejects(
+      () => video.submitRemoteVideo(provider(), 'video-model', { prompt: 'one video', seconds: 5 }, 'idem-malformed'),
+      (error) => {
+        assert.equal(error.possiblyAccepted, true);
+        return true;
+      },
+    );
+    assert.equal(requestCount, 1);
+  }
+});
+
+test('a Cangyuan submission without its task handle is possibly accepted', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ status: 'queued' }), { status: 202 });
   await assert.rejects(
-    () => video.submitRemoteVideo(provider(), 'video-model', { prompt: 'terminal error', seconds: 5 }, 'idem-terminal-error'),
+    () => video.submitRemoteVideo(provider({ videoTransport: 'cangyuan-videos' }), 'gf1-gemini-omni-1.2-flash', {
+      prompt: 'one video',
+    }, 'idem-cangyuan-missing-handle'),
     (error) => {
-      assert.match(error.message, /video rejected/);
-      assert.equal(error.possiblyAccepted, undefined);
+      assert.equal(error.code, 'CANGYUAN_VIDEO_TASK_ID_MISSING');
+      assert.equal(error.possiblyAccepted, true);
       return true;
     },
   );
+});
+
+test('query failures never become possibly accepted submissions', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'gateway unavailable' } }), { status: 502 });
+  await assert.rejects(() => video.pollRemoteVideo(provider(), 'existing-task'), (error) => {
+    assert.equal(error.status, 502);
+    assert.equal(error.possiblyAccepted, undefined);
+    return true;
+  });
 });
 
 test('maps Dreamina image and frame inputs to their official flags', () => {

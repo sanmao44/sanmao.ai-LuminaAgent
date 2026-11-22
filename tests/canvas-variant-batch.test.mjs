@@ -319,6 +319,7 @@ test("maps resolved video inputs into the existing generation request shape", ()
     duration: 5,
     aspect: "16:9",
     resolution: "1080p",
+    audio: true,
     agnesWidth: 1152,
     agnesHeight: 768,
     agnesNumFrames: 81,
