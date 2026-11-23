@@ -1,4 +1,6 @@
 import voices from './minimax-system-voices.json';
+import { CANGYUAN_MINIMAX_VOICES } from './cangyuan-minimax-voices';
+import { cangyuanMiniMaxVoiceLabel } from './cangyuan-minimax-voice-labels';
 
 export type MiniMaxSystemVoice = {
   number: number;
@@ -6,6 +8,7 @@ export type MiniMaxSystemVoice = {
   languageLabel: string;
   voiceId: string;
   name: string;
+  originalName?: string;
 };
 
 type OfficialVoice = Omit<MiniMaxSystemVoice, 'languageLabel'>;
@@ -49,16 +52,32 @@ export const MINIMAX_SYSTEM_VOICES: readonly MiniMaxSystemVoice[] = Object.freez
   })),
 );
 
-export function findMiniMaxSystemVoice(voiceId: string): MiniMaxSystemVoice | undefined {
-  return MINIMAX_SYSTEM_VOICES.find((voice) => voice.voiceId === voiceId);
+const CANGYUAN_DISPLAY_VOICES: readonly MiniMaxSystemVoice[] = Object.freeze(
+  CANGYUAN_MINIMAX_VOICES.map((voice) => Object.freeze({
+    ...voice,
+    originalName: voice.name,
+    name: cangyuanMiniMaxVoiceLabel(voice.name),
+  })),
+);
+
+export function getMiniMaxSystemVoices(providerKey?: string): readonly MiniMaxSystemVoice[] {
+  return providerKey === 'cangyuan' ? CANGYUAN_DISPLAY_VOICES : MINIMAX_SYSTEM_VOICES;
 }
 
-export function searchMiniMaxSystemVoices(query: string): readonly MiniMaxSystemVoice[] {
+export function findMiniMaxSystemVoice(voiceId: string, providerKey?: string): MiniMaxSystemVoice | undefined {
+  const voice = getMiniMaxSystemVoices(providerKey).find((voice) => voice.voiceId === voiceId);
+  // Existing documents retain their exact original IDs; names never migrate an ID.
+  return voice || (providerKey === 'cangyuan' ? MINIMAX_SYSTEM_VOICES.find((voice) => voice.voiceId === voiceId) : undefined);
+}
+
+export function searchMiniMaxSystemVoices(query: string, providerKey?: string): readonly MiniMaxSystemVoice[] {
   const normalized = String(query || '').trim().toLocaleLowerCase();
-  if (!normalized) return MINIMAX_SYSTEM_VOICES;
-  return MINIMAX_SYSTEM_VOICES.filter((voice) => [
+  const directory = getMiniMaxSystemVoices(providerKey);
+  if (!normalized) return directory;
+  return directory.filter((voice) => [
     voice.voiceId,
     voice.name,
+    voice.originalName || '',
     voice.language,
     voice.languageLabel,
   ].some((candidate) => candidate.toLocaleLowerCase().includes(normalized)));

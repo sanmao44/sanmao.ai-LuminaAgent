@@ -173,6 +173,20 @@ test('MiniMax system voice IDs preserve official casing and internal spaces in t
   } finally { stub.restore(); }
 });
 
+test('MiniMax official preview voice IDs are submitted unchanged for both speech models', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  const voiceId = 'voice_builtin_0926716995a44310f0f378dfee7db1c71a4e863239558b1b5326ace922d80294';
+  try {
+    for (const model of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+      await speech.synthesizeSpeech(cangyuanRuntime(model), { text: '核对官方试听音色编号', voiceId });
+      assert.equal(stub.calls.at(-1).body.voice_id, voiceId);
+      assert.equal(stub.calls.at(-1).body.model, model);
+      assert.equal(stub.calls.at(-1).body.voice, undefined);
+    }
+    assert.equal(stub.calls.length, 2);
+  } finally { stub.restore(); }
+});
+
 test('MiniMax TTS rejects missing voices, unsupported options, invalid bounds, and bitrate on non-MP3', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {

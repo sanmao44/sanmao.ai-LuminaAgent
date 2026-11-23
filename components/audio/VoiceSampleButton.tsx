@@ -37,8 +37,9 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
   }, [sampleUrl]);
 
   if (!sample) {
-    return <span className="voice-sample-unavailable" title="尚未生成与当前模型和音色严格对应的本地样音，不会使用其他音色替代">样音待生成</span>;
+    return <span className="voice-sample-unavailable" title="当前音色暂无可用样音；不会使用其他音色替代或触发付费生成">暂无样音</span>;
   }
+  const sampleTitle = `${sample.note}；试听不消耗额度`;
   function stopCurrent() {
     const previousAudio = activeAudio;
     const previousStop = activeStop;
@@ -114,7 +115,7 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       role="button"
       tabIndex={0}
       aria-label={label}
-      title={`${label}（不消耗额度）`}
+      title={`${label} · ${sampleTitle}`}
       onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onClick={(event) => void toggle(event)}
       onKeyDown={(event) => {
@@ -122,7 +123,7 @@ export default function VoiceSampleButton({ model, voice, providerKey, compact =
       }}
     >{playing ? '暂停' : status === 'error' ? '重试' : status === 'loading' ? '加载中' : '试听'}</span>;
   }
-  return <button type="button" className={`voice-sample-button${compact ? ' compact' : ''}${playing ? ' playing' : ''}${status === 'error' ? ' error' : ''}`} onClick={(event) => void toggle(event)} title={status === 'error' ? '样音加载失败，请检查当前服务是否包含样音资源后重试' : `${label}（不消耗额度）`} disabled={status === 'loading'}>{playing ? '暂停样音' : status === 'error' ? '重试样音' : status === 'loading' ? '加载中' : '播放样音'}</button>;
+  return <button type="button" className={`voice-sample-button${compact ? ' compact' : ''}${playing ? ' playing' : ''}${status === 'error' ? ' error' : ''}`} onClick={(event) => void toggle(event)} title={status === 'error' ? '样音加载失败，请检查网络或样音资源后重试；不会调用付费生成' : `${label} · ${sampleTitle}`} disabled={status === 'loading'}>{playing ? '暂停样音' : status === 'error' ? '重试样音' : status === 'loading' ? '加载中' : '播放样音'}</button>;
 }
 
 export { SAMPLE_TEXT as SPEECH_SAMPLE_TEXT } from './voice-samples';

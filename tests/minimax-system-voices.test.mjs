@@ -36,3 +36,17 @@ test('MiniMax HD and Turbo profiles both require a voice ID and expose their doc
     assert.ok(profile.advancedOptionKeys.includes('soundEffects'));
   }
 });
+
+test('provider catalogs preserve exact IDs, Chinese display labels and old document values', () => {
+  const official = voices.getMiniMaxSystemVoices('cangyuan');
+  assert.equal(official.length, 327);
+  assert.ok(official.every((voice) => /^voice_builtin_[a-f0-9]{64}$/.test(voice.voiceId)));
+  assert.ok(official.every((voice) => /[\u4e00-\u9fff]/u.test(voice.name)));
+  assert.equal(official[0].name, '青涩青年音色（测试版）');
+  assert.equal(voices.findMiniMaxSystemVoice('male-qn-qingse', 'cangyuan').voiceId, 'male-qn-qingse');
+  assert.equal(voices.getMiniMaxSystemVoices('other-provider'), voices.MINIMAX_SYSTEM_VOICES);
+  const result = voices.searchMiniMaxSystemVoices('Gentle-voiced man', 'cangyuan');
+  assert.ok(result.length > 0);
+  assert.ok(result.some((voice) => voice.name === '温柔男声'));
+  assert.ok(voices.searchMiniMaxSystemVoices('温柔男声', 'cangyuan').length > 0);
+});
