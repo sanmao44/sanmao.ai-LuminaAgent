@@ -72,6 +72,8 @@ export type GenerationLog = {
   totalTokens?: number;
   responseChars?: number;
   webSearchStatus?: string;
+  /** Successful native Search/Fetch HTTP requests; separate from model call count. */
+  webSearchRequestCount?: number;
   /** Agent routing timing, kept separate from provider duration for diagnosis. */
   routeLane?: 'answer' | 'search' | 'action';
   routerMs?: number;

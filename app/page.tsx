@@ -14,7 +14,7 @@ import RuntimeServiceControl from '@/components/RuntimeServiceControl';
 import SettingsWorkspace from '@/components/settings/SettingsWorkspace';
 import ImageStorageSettings from '@/components/settings/ImageStorageSettings';
 import { saveImagesToDirectory } from '@/lib/browser-image-directory';
-import { getProviderPreset, providerPresets } from '@/lib/provider-presets';
+import { defaultResponsesPath, getProviderPreset, normalizeResponsesPath, providerPresets } from '@/lib/provider-presets';
 import { agnesBillingLabel } from '@/lib/agnes';
 import AgnesConnectionGuide from '@/components/AgnesConnectionGuide';
 import { loadImageDirectoryHandle, saveImageDirectoryHandle, clearImageDirectoryHandle } from '@/lib/client-history';
@@ -5155,7 +5155,7 @@ export default function Page() {
             imageEditPath: provider.imageEditPath || '/images/edits',
             imageUpscalePath: provider.imageUpscalePath || provider.imageEditPath || '/images/edits',
             imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
-            responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? '/beta/responses' : '/responses'),
+            responsesPath: normalizeResponsesPath(provider.platform || 'custom', provider.responsesPath || defaultResponsesPath(provider.platform || 'custom')),
             creativeTaskProtocol: provider.creativeTaskProtocol || '',
             videoTransport: provider.videoTransport || '',
             videoBaseUrl: provider.videoBaseUrl || '',
@@ -5195,7 +5195,7 @@ export default function Page() {
                 type: preset.type,
                 platform,
                 baseUrl: preset.needsBaseUrl ? old.platform === platform ? old.baseUrl : '' : preset.baseUrl,
-                responsesPath: platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses',
+                responsesPath: defaultResponsesPath(platform),
                 creativeTaskProtocol: preset.creativeTaskProtocol || (platform === old.platform ? old.creativeTaskProtocol : ''),
                 videoTransport: preset.videoTransport || (platform === 'custom' ? old.videoTransport : ''),
                 videoBaseUrl: preset.videoBaseUrl || (platform === 'custom' ? old.videoBaseUrl : ''),

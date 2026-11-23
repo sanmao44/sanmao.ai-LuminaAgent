@@ -124,7 +124,7 @@ export type ToolApprovalRecord = {
   provider: string;
   model: string;
   messages: unknown[];
-  assistant: { content: string | null; tool_calls: unknown[]; reasoning_content?: string };
+  assistant: { content: string | null; tool_calls: unknown[]; reasoning_content?: string; server_tool_calls?: unknown[] };
   executed: unknown[];
   pending: PendingToolCall[];
   gating: ToolGatingContext;

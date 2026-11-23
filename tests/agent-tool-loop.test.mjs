@@ -129,6 +129,21 @@ test('思维链模型要求的 reasoning_content 跟着助手消息一起带回�
   assert.equal(messages[0].reasoning_content, '先查一下');
 });
 
+test('DeepSeek Responses server tool history follows assistant tool calls into the next round', async () => {
+  const messages = [];
+  const { runCalls } = recorder();
+  const serverToolCalls = [{ index: 0, calls: [{ id: 'ws-1', type: 'web_search', status: 'completed', signature: 'sig-1' }] }];
+  await loop.runToolLoop({
+    messages,
+    callModel: modelReturning(
+      { content: null, tool_calls: [toolCall('lookup', 'call-1')], server_tool_calls: serverToolCalls },
+      { content: '好了' },
+    ),
+    runCalls,
+  });
+  assert.deepEqual(messages[0].server_tool_calls, serverToolCalls);
+});
+
 test('模型一直要工具时，最多跑到 maxSteps 就停', async () => {
   const messages = [];
   const { executed, runCalls } = recorder();

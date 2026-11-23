@@ -19,7 +19,7 @@ export type VideoTransport = 'auto' | 'native-task' | 'openai-videos' | 'jimeng-
 export type ProviderTextProtocol = 'chat-completions' | 'responses' | 'messages';
 export type ModelBilling = 'free' | 'paid' | 'temporary-free';
 export type WebSearchApiProvider = 'anysearch' | 'baidu-qianfan';
-export type NativeSearchProtocol = 'openai-responses' | 'gemini-grounding' | 'native-chat';
+export type NativeSearchProtocol = 'openai-responses' | 'deepseek-tools' | 'gemini-grounding' | 'native-chat';
 export type NativeSearchOverride = 'auto' | 'enabled' | 'disabled';
 export type NativeSearchDetection = 'metadata' | 'model-id' | 'provider' | 'manual';
 export type WebSearchSource = 'native' | 'external';
@@ -41,6 +41,10 @@ export type WebSearchMeta = {
   query: string;
   rawResultCount?: number;
   resultCount: number;
+  /** Successful DeepSeek Search requests; zero for a direct URL Fetch. */
+  searchRequestCount?: number;
+  /** DeepSeek Search/Fetch operation-level page fetch count for cost visibility. */
+  fetchedCount?: number;
   status?: string;
   coverageNote?: string;
   rounds?: number;

@@ -527,6 +527,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   let llmFailure = '';
   let preserveLlmLogPending = false;
   let settleLlmLog: ((result: AgentStreamSettlement) => Promise<void>) | null = null;
+  let recordProviderUsage: ((usage: unknown) => void) | null = null;
   const abortFromClient = () => requestController.abort(signal.reason || new Error('AGENT_CANCELLED'));
   if (signal.aborted) requestController.abort(signal.reason || new Error('AGENT_CANCELLED'));
   else signal.addEventListener('abort', abortFromClient, { once: true });
@@ -848,6 +849,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let llmLogId: string | null = null;
     let llmLogPromise: Promise<string | null> | null = null;
     let llmCallCount = 0;
+    let webSearchRequestCount = 0;
     let intentClassifierModelId = '';
     let intentClassifierMs = 0;
     let intentClassifierStatus: 'used' | 'fallback' | 'unavailable' | undefined;
@@ -866,6 +868,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       if (Number.isFinite(total) && total >= 0) llmTotalTokens += total;
       else if (Number.isFinite(prompt) && Number.isFinite(completion)) llmTotalTokens += prompt + completion;
     };
+    recordProviderUsage = (usage) => recordLlmUsage({ usage });
     let llmWebSearchStatus = 'not-needed';
     let webSearchMs = 0;
     let llmLogSettled = false;
@@ -895,6 +898,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ...(llmTotalTokens ? { totalTokens: llmTotalTokens } : {}),
         responseChars: result.responseChars,
         webSearchStatus: llmWebSearchStatus,
+        ...(webSearchRequestCount ? { webSearchRequestCount } : {}),
         routeLane: requestRoute.policy.lane,
         routerMs,
         ...(intentClassifierModelId ? { intentClassifierModelId } : {}),
@@ -975,11 +979,28 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           : applicationJson({ ok: true, message, images: [], files: [], generations: [], model: agentRuntime.model.displayName, deliverable: requestedDeliverable, toolSupport: true, mcpTools: [{ ...mcpTools[0], ok: false }] });
       }
     }
-    const trackedNativeWebSearch = (...args: Parameters<typeof runNativeWebSearch>) => {
-      llmCallCount += 1;
+    const trackedNativeWebSearch = async (...args: Parameters<typeof runNativeWebSearch>) => {
+      // DeepSeek Search/Fetch are billable HTTP tools, not model calls. Keep
+      // their request accounting separate from the LLM attempt counter.
+      if (args[0]?.platform !== 'deepseek') llmCallCount += 1;
       // Keep the requestController.signal on the native search call:
       // runNativeWebSearch(agentRuntime.provider, agentRuntime.model, llmMessages, plannedNativeQuery, requestController.signal)
-      return runNativeWebSearch(...args);
+      let result: Awaited<ReturnType<typeof runNativeWebSearch>>;
+      try {
+        result = await runNativeWebSearch(...args);
+      } catch (error) {
+        const failedSearchCount = Number((error as { providerSearchRequestCount?: number } | null)?.providerSearchRequestCount || 0);
+        if (Number.isFinite(failedSearchCount) && failedSearchCount > 0) webSearchRequestCount += failedSearchCount;
+        throw error;
+      }
+      if (result.protocol === 'deepseek-tools') {
+        // DeepSeek bills successful Search and Fetch HTTP requests separately;
+        // keep that count out of llmCallCount, which is reserved for model calls.
+        webSearchRequestCount += (result.searchRequestCount || 0) + (result.fetchedCount || 0);
+      } else {
+        webSearchRequestCount += 1;
+      }
+      return result;
     };
     const canvasDockIntentReview = isCanvasSource
       && body.executionMode === 'agent-dock'
@@ -2021,7 +2042,7 @@ const auditMcpCall = (
       return call as ToolRuntimeCall | null;
     };
     const searchMetadata = (): WebSearchMeta | null => {
-      if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, searchedAt: nativeSearchData.searchedAt };
+      if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, ...(nativeSearchData.searchRequestCount !== undefined ? { searchRequestCount: nativeSearchData.searchRequestCount } : {}), ...(nativeSearchData.fetchedCount !== undefined ? { fetchedCount: nativeSearchData.fetchedCount } : {}), warnings: nativeSearchData.warnings, searchedAt: nativeSearchData.searchedAt };
       if (webSearchData) return { source: 'external', provider: webSearchData.provider, query: webSearchData.query, rawResultCount: webSearchData.rawResultCount, resultCount: webSearchData.resultCount, status: webSearchData.status, coverageNote: webSearchData.coverageNote, rounds: webSearchData.rounds, warnings: webSearchData.warnings, retryable: webSearchData.retryable, suggestedAction: webSearchData.suggestedAction, fallbackFrom: nativeSearchError ? 'native' : undefined, searchedAt: webSearchData.searchedAt };
       return null;
     };
@@ -2146,7 +2167,9 @@ const auditMcpCall = (
           ? { messages: llmMessages, tools: initialCallableTools, tool_choice: 'auto' }
          : { messages: llmMessages }, requestController.signal);
      } catch (error) {
-       if (/413|request entity too large|请求内容过大/i.test(error instanceof Error ? error.message : '')) throw error;
+       if (requestController.signal.aborted) throw requestController.signal.reason || error;
+       const failureStatus = Number((error as { providerStatus?: number; status?: number } | null)?.providerStatus || (error as { status?: number } | null)?.status || 0);
+       if (failureStatus === 413 || /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
         if (imageGenerationRequest) {
          first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'edit' ? 'edit' : 'generate', batchContent: batchPlanContent })] } }] };
         } else if (artifactFallbackKind) {
@@ -2157,7 +2180,9 @@ const auditMcpCall = (
             throw new Error('当前请求的 Office 文件无法生成。');
           }
        } else {
-         if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw new Error('当前对话模型未能发起工具调用，操作尚未完成。请检查模型接口或切换支持工具调用的模型。');
+         // A failed provider request is not evidence that the model cannot use
+         // tools. Preserve its status, request ID and cause for the error UI.
+         if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw error;
          const fallback = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: llmMessages }, requestController.signal);
          const actualModel = extractUpstreamModel(fallback);
          const fallbackMessage = identityQuestion
@@ -2284,6 +2309,7 @@ const auditMcpCall = (
         }
       } catch (error) {
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
+        throw error;
       }
     }
     if (!toolCalls.length) {
@@ -2333,6 +2359,7 @@ const auditMcpCall = (
           }
         } catch (error) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
+          throw error;
         }
       }
       if (!toolCalls.length) {
@@ -2624,6 +2651,7 @@ const auditMcpCall = (
       content: (message?.content ?? null) as string | null,
       tool_calls: Array.isArray(message?.tool_calls) ? message.tool_calls : [],
       ...(typeof message?.reasoning_content === 'string' && message.reasoning_content ? { reasoning_content: message.reasoning_content } : {}),
+      ...(Array.isArray(message?.server_tool_calls) ? { server_tool_calls: message.server_tool_calls } : {}),
     });
 
     /** 这一步没有执行的回执：历史里每个 tool_call 都必须有结果，否则服务商下一次请求直接 400。 */
@@ -2757,7 +2785,8 @@ const auditMcpCall = (
       }
     }
     const carriedAssistantFields = typeof toolCallMessage?.reasoning_content === 'string' && toolCallMessage.reasoning_content ? { reasoning_content: toolCallMessage.reasoning_content } : {};
-    const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: toolCallMessage?.content || null, tool_calls: toolCalls, ...carriedAssistantFields }, ...toolResults];
+    const carriedServerToolFields = Array.isArray(toolCallMessage?.server_tool_calls) ? { server_tool_calls: toolCallMessage.server_tool_calls } : {};
+    const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: toolCallMessage?.content || null, tool_calls: toolCalls, ...carriedAssistantFields, ...carriedServerToolFields }, ...toolResults];
     secondMessages.splice(0, secondMessages.length, ...boundAgentContext(secondMessages, contextMaxChars));
     // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全
     // 不给工具，模型会把调用写成文本标记（如 DSML），既不执行也会显示成乱码。
@@ -2791,10 +2820,7 @@ const auditMcpCall = (
             messages: messages as ChatMessage[],
             tools,
             tool_choice: 'auto',
-          }, requestController.signal).catch((error) => {
-            if (requestController.signal.aborted) throw requestController.signal.reason || error;
-            return null;
-          });
+          }, requestController.signal);
           return followup?.choices?.[0]?.message || null;
         },
         skillTools: skillToolsOnly,
@@ -3069,6 +3095,8 @@ const auditMcpCall = (
     llmResponseChars = String(finalText || '').length;
     return applicationJson({ ok: true, message: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, ...(canvasPatch ? { canvasPatch } : {}), toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace });
   } catch (error) {
+    const providerUsage = (error as { providerUsage?: unknown } | null)?.providerUsage;
+    if (providerUsage && typeof providerUsage === 'object') recordProviderUsage?.(providerUsage);
     llmFailure = describeProviderFailure(error);
     const providerPossiblyAccepted = Boolean((error as { providerPossiblyAccepted?: boolean; providerAcceptedTask?: boolean } | null)?.providerPossiblyAccepted || (error as { providerAcceptedTask?: boolean } | null)?.providerAcceptedTask);
     if (providerPossiblyAccepted) {
