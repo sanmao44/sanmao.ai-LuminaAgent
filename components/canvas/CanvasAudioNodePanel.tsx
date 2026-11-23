@@ -9,6 +9,7 @@ import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import ModelPicker from "@/components/ModelPicker";
 import SelectMenu from "@/components/SelectMenu";
 import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, SPEECH_PLATFORM_TEXT_LIMIT, speechVoiceLabel, type SpeechOutputFormat } from "@/packages/contracts/audio-synthesis";
+import { findMiniMaxSystemVoice } from "@/packages/contracts/minimax-system-voices";
 import SpeechAdvancedOptions, { speechDialogueDraftError, type SpeechAdvancedDraft } from "@/components/audio/SpeechAdvancedOptions";
 import type { AudioTranscriptionResponseFormat } from "@/packages/contracts/audio-transcription";
 import { getCangyuanMusicModelProfile, type CangyuanMediaOutput, type CangyuanMediaTask, type CangyuanMusicOptions } from "@/packages/contracts/cangyuan-media";
@@ -155,6 +156,9 @@ export default function CanvasAudioNodePanel({
   const speechProviderKey = speechSampleProviderKey || undefined;
   const speechProfile = getSpeechModelProfile(selectedModel?.rawId || "", speechProviderKey);
   const usesRegisteredVoice = Boolean(speechProfile?.supportsVoiceId && speechAdvanced.voiceId?.trim());
+  const selectedSystemVoice = speechProfile?.publicModel.startsWith("minimax-speech-2.8-")
+    ? findMiniMaxSystemVoice(speechAdvanced.voiceId || "", speechProviderKey)
+    : undefined;
   const speechFormats = speechProfile
     ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine, speechProviderKey)
     : ['mp3', 'wav'] as const;
@@ -684,17 +688,19 @@ export default function CanvasAudioNodePanel({
               />
             </label>
           </>}
-          {usesRegisteredVoice && <small className="canvas-audio-input-note">当前使用已登记的自备音色编号，预设音色与样音不会参与本次生成。清空编号即可恢复预设音色。</small>}
+          {usesRegisteredVoice && !selectedSystemVoice && <small className="canvas-audio-input-note">当前使用自备或已登记音色，生成时会使用该音色，不会以系统音色替代。</small>}
           {speechProfile && <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={(next) => { setSpeechAdvanced(next); saveSpeechDraft(next); }} disabled={generatingSpeech} compact alwaysVisible modelId={selectedModel?.id} format={supportedFormat || speechFormats[0]} />}
           <div className="canvas-audio-voice-sample-row">
-            {usesRegisteredVoice
+            {selectedSystemVoice && speechProfile
+              ? <VoiceSampleButton model={speechProfile.publicModel} voice={selectedSystemVoice.voiceId} providerKey={speechSampleProviderKey} />
+              : usesRegisteredVoice
               ? <span className="voice-sample-unavailable">已登记音色编号暂无预设样音</span>
               : speechProfile && voice.trim() && voiceChoice !== "custom"
               ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} providerKey={speechSampleProviderKey} />
               : speechProfile && voiceChoice === "custom"
               ? <span className="voice-sample-unavailable" title="自定义音色没有经过验证的本地样音">自定义音色暂无对应样音</span>
               : <span className="voice-sample-unavailable">{speechProfile?.requiresVoiceId ? '已登记音色暂无本地样音' : speechProfile?.supportsDialogue ? '请为每句对白选择音色' : '选择已收录音色后可播放样音'}</span>}
-            <small>本地样音只播放精确匹配的预设音色，不消耗额度；自定义音色不会使用其他音色代替。</small>
+            <small>{selectedSystemVoice ? `当前音色：${selectedSystemVoice.name}。官方参考样音与生成使用同一音色，试听不消耗额度。` : "本地样音只播放精确匹配的预设音色，不消耗额度；自定义音色不会使用其他音色代替。"}</small>
           </div>
         </section>
         </section>}

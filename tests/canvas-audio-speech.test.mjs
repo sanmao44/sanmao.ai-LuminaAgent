@@ -26,7 +26,7 @@ const load = createTsRequire(process.cwd(), {
   '@/components/SelectMenu': selectMenu,
   '@/components/canvas/CanvasAudioPlayer': ({ name }) => createElement('span', { 'data-audio-preview': true }, name),
   '@/components/cangyuan/CangyuanMusicOptionsFields': () => null,
-  '@/components/audio/VoiceSampleButton': ({ optionAction = false }) => createElement('span', { 'data-voice-sample': true }, optionAction ? '试听' : '播放样音'),
+  '@/components/audio/VoiceSampleButton': ({ model, voice, providerKey, optionAction = false }) => createElement('span', { 'data-voice-sample': true, 'data-sample-model': model, 'data-sample-voice': voice, 'data-sample-provider': providerKey }, optionAction ? '试听' : '播放样音'),
   '@/components/audio/SpeechAdvancedOptions': speechOptions,
   '@/lib/model-selection': { selectAutomaticModel: (models) => models[0] },
   '@/lib/canvas/media': { formatCanvasAudioDuration: () => '0:00' },
@@ -112,6 +112,44 @@ test('canvas restores MiniMax speech options from the saved node draft', () => {
   assert.match(markup, /value="3"/);
   assert.match(markup, /value="12"/);
   assert.match(markup, /value="1\.5"/);
+});
+
+test('canvas restores official MiniMax voices with the same sample identity instead of the registered-voice placeholder', () => {
+  const catalog = createTsRequire(process.cwd())('./packages/contracts/cangyuan-minimax-voices');
+  const provider = { id: 'provider-1', type: 'openai-compatible', platform: 'cangyuan' };
+  for (const rawId of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+    const model = {
+      id: `provider-1:${rawId}`, providerId: 'provider-1', providerName: '兼容服务商', rawId,
+      displayName: rawId, kind: 'audio', enabled: true, published: true, capabilities: ['speech'],
+    };
+    for (const voice of catalog.CANGYUAN_MINIMAX_VOICES) {
+      const markup = render(model, { kind: 'audio', speechDraft: { modelId: model.id, text: '精确音色测试', voiceId: voice.voiceId } }, provider);
+      assert.ok(markup.includes(`data-sample-model="${rawId}" data-sample-voice="${voice.voiceId}" data-sample-provider="cangyuan"`));
+      assert.match(markup, /官方参考样音与生成使用同一音色/);
+      assert.doesNotMatch(markup, /已登记音色编号暂无预设样音|当前使用自备或已登记音色/);
+    }
+    const customMarkup = render(model, { kind: 'audio', speechDraft: { modelId: model.id, text: '克隆音色测试', voiceId: 'private-cloned-voice' } }, provider);
+    assert.match(customMarkup, /当前使用自备或已登记音色/);
+    assert.match(customMarkup, /已登记音色编号暂无预设样音/);
+    assert.doesNotMatch(customMarkup, /data-sample-voice="voice_builtin_/);
+  }
+});
+
+test('canvas restores every legacy MiniMax voice using its same-name same-language official sample', () => {
+  const voices = createTsRequire(process.cwd())('./packages/contracts/minimax-system-voices');
+  const official = voices.getMiniMaxSystemVoices('cangyuan');
+  const provider = { id: 'provider-1', type: 'openai-compatible', platform: 'cangyuan' };
+  for (const rawId of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+    const model = { id: `provider-1:${rawId}`, providerId: 'provider-1', providerName: '兼容服务商', rawId, displayName: rawId, kind: 'audio', enabled: true, published: true, capabilities: ['speech'] };
+    for (const legacy of voices.MINIMAX_SYSTEM_VOICES) {
+      const exact = official.filter((voice) => voice.originalName === legacy.name && voice.languageLabel === legacy.languageLabel);
+      assert.equal(exact.length, 1, legacy.voiceId);
+      const markup = render(model, { kind: 'audio', speechDraft: { modelId: model.id, text: '恢复旧音色', voiceId: legacy.voiceId } }, provider);
+      assert.ok(markup.includes(`data-sample-model="${rawId}" data-sample-voice="${exact[0].voiceId}" data-sample-provider="cangyuan"`));
+      assert.match(markup, /官方参考样音与生成使用同一音色/);
+      assert.doesNotMatch(markup, /已登记音色编号暂无预设样音|当前使用自备或已登记音色/);
+    }
+  }
 });
 
 test('canvas speech layout renders every catalog model and voice-clone engine variant', () => {

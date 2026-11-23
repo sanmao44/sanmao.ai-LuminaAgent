@@ -50,8 +50,6 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
 
   const voices = useMemo(() => getMiniMaxSystemVoices(providerKey), [providerKey]);
   const selected = useMemo(() => findMiniMaxSystemVoice(value, providerKey), [value, providerKey]);
-  const normalizedQuery = query.trim();
-  const canUseCustomId = Boolean(normalizedQuery) && !findMiniMaxSystemVoice(normalizedQuery, providerKey);
   const categories = useMemo(() => {
     const counts = new Map<string, number>();
     for (const voice of voices) counts.set(voice.languageLabel, (counts.get(voice.languageLabel) || 0) + 1);
@@ -64,13 +62,18 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
   }, [voices]);
   const filteredVoices = useMemo(() => searchMiniMaxSystemVoices(query, providerKey).filter((voice) => language === 'all' || voice.languageLabel === language), [language, query, providerKey]);
   const quickVoices = useMemo(() => {
-    const recent = recentVoiceIds.map((id) => voices.find((voice) => voice.voiceId === id)).filter((voice) => voice !== undefined);
+    const resolvedRecent = recentVoiceIds.map((id) => findMiniMaxSystemVoice(id, providerKey)).filter((voice) => voice !== undefined);
+    const recent = [...new Map(resolvedRecent.map((voice) => [voice.voiceId, voice])).values()];
     const defaults = voices.filter((voice) => voice.languageLabel === '中文（普通话）').slice(0, QUICK_LIMIT);
     const base = recent.length ? recent : defaults;
     return [...(selected && !base.some((voice) => voice.voiceId === selected.voiceId) ? [selected] : []), ...base].slice(0, QUICK_LIMIT);
-  }, [recentVoiceIds, selected, voices]);
+  }, [recentVoiceIds, selected, voices, providerKey]);
 
   useEffect(() => setRecentVoiceIds(readRecentVoiceIds(providerKey)), [providerKey]);
+
+  useEffect(() => {
+    if (!disabled && selected && selected.voiceId !== value) onChange(selected.voiceId);
+  }, [disabled, selected, value, onChange]);
 
   function restoreTriggerFocus() {
     window.requestAnimationFrame(() => triggerRef.current?.focus());
@@ -195,18 +198,17 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
   }
 
   function renderVoice(voice: (typeof voices)[number]) {
-    const isSelected = voice.voiceId === value;
+    const isSelected = voice.voiceId === selected?.voiceId;
     return <div className={`minimax-voice-option${isSelected ? ' is-selected' : ''}`} key={voice.voiceId}>
       <button type="button" className="minimax-voice-option-main" data-minimax-voice-choice onClick={() => chooseVoice(voice.voiceId)} aria-pressed={isSelected}>
         <span className="minimax-voice-option-copy"><strong>{voice.name}</strong><small>{voice.languageLabel}</small></span>
-        <code title={voice.voiceId}>{voice.voiceId.startsWith('voice_builtin_') ? `音色 ${String(voice.number).padStart(3, '0')}` : voice.voiceId}</code>
         {isSelected && <b className="minimax-voice-check" aria-label="当前选中">✓</b>}
       </button>
       <span className="minimax-voice-sample"><VoiceSampleButton model={model} voice={voice.voiceId} providerKey={providerKey} compact /></span>
     </div>;
   }
 
-  const currentLabel = selected ? `${selected.name} · ${selected.languageLabel}` : value ? `自备音色 · ${value}` : '选择音色';
+  const currentLabel = selected ? `${selected.name} · ${selected.languageLabel}` : value ? '自备音色' : '选择音色';
   const quickLabel = recentVoiceIds.length ? '最近使用' : '普通话快捷选择';
   const quickPanel = quickOpen && typeof document !== 'undefined' ? createPortal(
     <div
@@ -246,7 +248,7 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
     >
       <section id={dialogId} className="minimax-voice-dialog" role="dialog" aria-modal="true" aria-labelledby={`${dialogId}-title`} tabIndex={-1} onKeyDown={trapDialogTab}>
         <div className="minimax-voice-dialog-head"><div><strong id={`${dialogId}-title`}>选择音色</strong><small>MiniMax 系统音色 · {voices.length} 个{providerKey === 'cangyuan' ? ' · 官方参考样音，试听不消耗额度' : ''}</small></div><button type="button" className="minimax-voice-dialog-close" onClick={closeDialog} aria-label="关闭音色选择">×</button></div>
-        <label className="minimax-voice-dialog-search"><span aria-hidden="true">⌕</span><input ref={dialogSearchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索音色名称、音色 ID 或语言" aria-label="搜索音色名称、音色 ID 或语言" />{query && <button type="button" aria-label="清空搜索" onClick={() => setQuery('')}>×</button>}</label>
+        <label className="minimax-voice-dialog-search"><span aria-hidden="true">⌕</span><input ref={dialogSearchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索音色名称或语言" aria-label="搜索音色名称或语言" />{query && <button type="button" aria-label="清空搜索" onClick={() => setQuery('')}>×</button>}</label>
         <div className="minimax-voice-dialog-body">
           <aside className="minimax-voice-category-list" aria-label="按语言分类">
             {categories.map((category) => <button key={category.id} type="button" className={language === category.id ? 'is-active' : ''} aria-pressed={language === category.id} onClick={() => setLanguage(category.id)}><span>{category.label}</span><b>{category.count}</b></button>)}
@@ -255,8 +257,7 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
             <div className="minimax-voice-dialog-summary"><strong>{filteredVoices.length} 个音色</strong><span>{language === 'all' ? '所有语言' : language}{query.trim() ? ` · 搜索“${query.trim()}”` : ''}</span></div>
             <div ref={dialogListRef} className="minimax-voice-dialog-list" aria-label="音色列表" onKeyDown={focusVoiceChoice}>
               {filteredVoices.map(renderVoice)}
-              {!filteredVoices.length && !canUseCustomId && <p className="minimax-voice-empty">没有找到匹配的系统音色。试试音色名称、完整 ID 或切换语言分类。</p>}
-              {canUseCustomId && <div className="minimax-voice-custom-row"><span><strong>使用自备音色编号</strong><small>适用于已登记的克隆音色；该编号没有对应系统样音</small></span><code>{normalizedQuery}</code><button type="button" onClick={() => chooseVoice(normalizedQuery)}>使用</button></div>}
+              {!filteredVoices.length && <p className="minimax-voice-empty">没有找到匹配的音色。试试其他音色名称或切换语言分类；克隆音色可在音色管理中选择。</p>}
             </div>
           </main>
         </div>
@@ -270,9 +271,9 @@ export default function MiniMaxVoicePicker({ model, providerKey, value, onChange
       if (dialogOpen) closeDialog();
       else setQuickOpen((current) => !current);
     }} aria-haspopup="dialog" aria-expanded={quickOpen || dialogOpen} aria-controls={dialogOpen ? dialogId : quickOpen ? quickPanelId : undefined} disabled={disabled}>
-      <span className="minimax-voice-picker-trigger-copy"><strong>{currentLabel}</strong>{selected && <small>{selected.voiceId.startsWith('voice_builtin_') ? '官方音色 · 高保真与快速共用' : selected.voiceId}</small>}</span><i aria-hidden="true" />
+      <span className="minimax-voice-picker-trigger-copy"><strong>{currentLabel}</strong></span><i aria-hidden="true" />
     </button>
-    {value && !selected && <small className="minimax-voice-picker-custom-note">当前使用自备或已登记音色编号</small>}
+    {value && !selected && <small className="minimax-voice-picker-custom-note">当前使用自备或已登记音色</small>}
     {quickPanel}
     {fullDialog}
   </div>;

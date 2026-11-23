@@ -161,15 +161,25 @@ test('MiniMax 2.8 HD/Turbo speech maps documented controls to provider field nam
   } finally { stub.restore(); }
 });
 
-test('MiniMax system voice IDs preserve official casing and internal spaces in the provider request', async () => {
+test('legacy MiniMax system voice IDs resolve to the same official voice while other providers keep their native values', async () => {
   const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
   try {
     const voiceId = 'Chinese (Mandarin)_Reliable_Executive';
+    const voices = load('./packages/contracts/minimax-system-voices');
+    const legacy = voices.MINIMAX_SYSTEM_VOICES.find((voice) => voice.voiceId === voiceId);
+    const official = voices.getMiniMaxSystemVoices('cangyuan').find((voice) => voice.originalName === legacy.name && voice.languageLabel === legacy.languageLabel);
     await speech.synthesizeSpeech(cangyuanRuntime('minimax-speech-2.8-hd-tts'), {
       text: '核对系统音色编号', voiceId,
     });
-    assert.equal(stub.calls[0].body.voice_id, voiceId);
+    assert.equal(stub.calls[0].body.voice_id, official.voiceId);
     assert.equal(stub.calls[0].url, 'https://direct-api.cangyuansuanli.cn/v1/audio/speech');
+    await speech.synthesizeSpeech({
+      model: { rawId: 'minimax-speech-2.8-hd-tts' },
+      provider: { type: 'openai-compatible', platform: 'custom', baseUrl: 'https://api.example.test/v1' },
+    }, { text: '原厂音色编号', voice: voiceId });
+    assert.equal(stub.calls[1].body.voice, voiceId);
+    assert.equal(stub.calls[1].body.voice_id, undefined);
+    assert.equal(stub.calls[1].url, 'https://api.example.test/v1/audio/speech');
   } finally { stub.restore(); }
 });
 
@@ -184,6 +194,34 @@ test('MiniMax official preview voice IDs are submitted unchanged for both speech
       assert.equal(stub.calls.at(-1).body.voice, undefined);
     }
     assert.equal(stub.calls.length, 2);
+  } finally { stub.restore(); }
+});
+
+test('all 327 legacy voices submit the exact official sample identity for both MiniMax models without network access', async () => {
+  const voices = load('./packages/contracts/minimax-system-voices');
+  const samples = load('./components/audio/voice-samples');
+  const official = voices.getMiniMaxSystemVoices('cangyuan');
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    for (const model of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+      for (const legacy of voices.MINIMAX_SYSTEM_VOICES) {
+        const exact = official.filter((voice) => voice.originalName === legacy.name && voice.languageLabel === legacy.languageLabel);
+        assert.equal(exact.length, 1, legacy.voiceId);
+        await speech.synthesizeSpeech(cangyuanRuntime(model), { text: '核对试听与实际生成音色一致', voiceId: legacy.voiceId });
+        const call = stub.calls.at(-1);
+        const sample = samples.getSpeechVoiceSample(model, legacy.voiceId, 'cangyuan');
+        assert.equal(call.body.voice_id, exact[0].voiceId, `${model}/${legacy.voiceId}`);
+        assert.equal(call.body.voice_id, sample.provenance.voiceId);
+        assert.equal(call.body.model, model);
+        assert.equal(call.body.voice, undefined);
+      }
+    }
+    for (const voiceId of ['private-clone-voice', 'unknown', `voice_builtin_${'0'.repeat(64)}`]) {
+      await speech.synthesizeSpeech(cangyuanRuntime('minimax-speech-2.8-hd-tts'), { text: '自备音色编号不变', voiceId });
+      assert.equal(stub.calls.at(-1).body.voice_id, voiceId);
+      assert.equal(samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', voiceId, 'cangyuan'), null);
+    }
+    assert.equal(stub.calls.length, 657);
   } finally { stub.restore(); }
 });
 

@@ -12,6 +12,7 @@ import { authHeaders, runtimeBaseUrl, type RuntimeProvider } from '../providers'
 import { isCangyuanProvider } from '../cangyuan-provider';
 import { getRuntimeModelCandidates } from '../store';
 import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, type AudioSynthesisRequest, type SpeechAdvancedOptionKey, type SpeechAdvancedOptions, type SpeechOutputFormat } from '../../packages/contracts/audio-synthesis';
+import { resolveMiniMaxSystemVoiceId } from '../../packages/contracts/minimax-system-voices';
 
 export type SpeechRuntime = NonNullable<Awaited<ReturnType<typeof getRuntimeModelCandidates>>[number]>;
 
@@ -232,7 +233,9 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     if (advancedOptions.seed !== undefined) body.seed = advancedOptions.seed;
     if (advancedOptions.similarityBoost !== undefined) body.similarity_boost = advancedOptions.similarityBoost;
     if (advancedOptions.stability !== undefined) body.stability = advancedOptions.stability;
-    if (advancedOptions.voiceId) body.voice_id = advancedOptions.voiceId;
+    if (advancedOptions.voiceId) body.voice_id = /^minimax-speech-2\.8-(?:hd|turbo)-tts$/u.test(profile.publicModel)
+      ? resolveMiniMaxSystemVoiceId(advancedOptions.voiceId, providerKey) || advancedOptions.voiceId
+      : advancedOptions.voiceId;
     if (advancedOptions.emotion) body.emotion = advancedOptions.emotion;
     if (advancedOptions.instruct) body.instruct = advancedOptions.instruct;
     if (advancedOptions.dialogue?.length) body.dialogue = advancedOptions.dialogue;

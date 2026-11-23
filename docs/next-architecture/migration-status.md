@@ -34,6 +34,24 @@ in the compatibility column.
 | Architecture enforcement | locked | `tests/architecture-enforcement.test.mjs` | Machine-checks contract purity, core dependency direction, transport boundary, worker task boundary and the single SQLite opener |
 | Physical boundary | settled | Modular Next Monolith with in-process worker dispatch | Separate Web/API/Worker deployables are intentionally deferred until deployment needs justify them |
 
+### MiniMax saved voice compatibility
+
+Before the Cangyuan official directory import, saved speech drafts used MiniMax
+native voice IDs. `findMiniMaxSystemVoice` / `resolveMiniMaxSystemVoiceId` in
+`packages/contracts/minimax-system-voices.ts` resolve those IDs against the
+Cangyuan directory by exact original name and normalized language, only when
+there is one match. The 327 entries match individually; beta and non-beta names
+are separate. This is a directory alias mapping, not a provider-published ID
+crosswalk. Display translations and list order never participate.
+
+Consumers are the shared voice picker, main audio panel, Canvas audio editor,
+sample lookup and speech provider adapter. They use the same canonical provider
+ID for selection, official preview and synthesis. The picker writes resolved
+IDs through existing draft callbacks. Unknown/custom IDs and other providers
+remain untouched; no additional storage authority is introduced. Remove the
+alias reader only after supported saved drafts, imported backups and recent
+voice preferences no longer contain native IDs, with regression coverage.
+
 ### Cangyuan video configuration compatibility
 
 Earlier discovery could persist `openai-videos` and the generic

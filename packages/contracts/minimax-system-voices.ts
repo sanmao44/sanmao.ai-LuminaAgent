@@ -60,14 +60,32 @@ const CANGYUAN_DISPLAY_VOICES: readonly MiniMaxSystemVoice[] = Object.freeze(
   })),
 );
 
+// Saved pre-import drafts use MiniMax native IDs. Match exact official names and
+// language labels only; translated labels, list positions and beta stripping are unsafe.
+const CANGYUAN_VOICES_BY_NAME_AND_LANGUAGE = new Map<string, MiniMaxSystemVoice[]>();
+for (const voice of CANGYUAN_DISPLAY_VOICES) {
+  const key = `${voice.originalName || voice.name}\u0000${voice.languageLabel}`;
+  const matches = CANGYUAN_VOICES_BY_NAME_AND_LANGUAGE.get(key) || [];
+  matches.push(voice);
+  CANGYUAN_VOICES_BY_NAME_AND_LANGUAGE.set(key, matches);
+}
+
 export function getMiniMaxSystemVoices(providerKey?: string): readonly MiniMaxSystemVoice[] {
   return providerKey === 'cangyuan' ? CANGYUAN_DISPLAY_VOICES : MINIMAX_SYSTEM_VOICES;
 }
 
 export function findMiniMaxSystemVoice(voiceId: string, providerKey?: string): MiniMaxSystemVoice | undefined {
   const voice = getMiniMaxSystemVoices(providerKey).find((voice) => voice.voiceId === voiceId);
-  // Existing documents retain their exact original IDs; names never migrate an ID.
-  return voice || (providerKey === 'cangyuan' ? MINIMAX_SYSTEM_VOICES.find((voice) => voice.voiceId === voiceId) : undefined);
+  if (voice || providerKey !== 'cangyuan') return voice;
+
+  const legacyVoice = MINIMAX_SYSTEM_VOICES.find((candidate) => candidate.voiceId === voiceId);
+  if (!legacyVoice) return undefined;
+  const matches = CANGYUAN_VOICES_BY_NAME_AND_LANGUAGE.get(`${legacyVoice.name}\u0000${legacyVoice.languageLabel}`) || [];
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function resolveMiniMaxSystemVoiceId(voiceId: string, providerKey?: string): string | undefined {
+  return findMiniMaxSystemVoice(voiceId, providerKey)?.voiceId;
 }
 
 export function searchMiniMaxSystemVoices(query: string, providerKey?: string): readonly MiniMaxSystemVoice[] {

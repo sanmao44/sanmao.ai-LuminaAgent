@@ -74,8 +74,22 @@ test('MiniMax HD and Turbo share exact official voice references without pretend
   }
 });
 
-test('removed MiniMax generated samples are not substituted by name or another voice', () => {
-  assert.equal(samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', 'male-qn-qingse', 'cangyuan'), null);
-  assert.equal(samples.getSpeechVoiceSample('minimax-speech-2.8-turbo-tts', 'female-shaonv', 'cangyuan'), null);
-  assert.equal(samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', `voice_builtin_${'0'.repeat(64)}`, 'cangyuan'), null);
+test('all legacy MiniMax IDs share only their exact same-name same-language official reference', () => {
+  const voices = createTsRequire(process.cwd())('./packages/contracts/minimax-system-voices');
+  const official = voices.getMiniMaxSystemVoices('cangyuan');
+  for (const legacy of voices.MINIMAX_SYSTEM_VOICES) {
+    const exact = official.filter((voice) => voice.originalName === legacy.name && voice.languageLabel === legacy.languageLabel);
+    assert.equal(exact.length, 1);
+    for (const model of ['minimax-speech-2.8-hd-tts', 'minimax-speech-2.8-turbo-tts']) {
+      const sample = samples.getSpeechVoiceSample(model, legacy.voiceId, 'cangyuan');
+      assert.equal(sample, samples.getSpeechVoiceSample(model, exact[0].voiceId, 'cangyuan'));
+      assert.equal(sample.provenance.voiceId, exact[0].voiceId);
+      assert.ok(sample.url.endsWith(`${exact[0].voiceId}.mp3`));
+      assert.equal(samples.getSpeechVoiceSample(model, legacy.voiceId, 'other-provider'), null);
+    }
+  }
+  assert.notEqual(samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', 'male-qn-qingse', 'cangyuan'), samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', 'male-qn-qingse-jingpin', 'cangyuan'));
+  for (const id of ['Santa Claus', 'unknown', 'private-clone-voice', `voice_builtin_${'0'.repeat(64)}`]) {
+    assert.equal(samples.getSpeechVoiceSample('minimax-speech-2.8-hd-tts', id, 'cangyuan'), null);
+  }
 });

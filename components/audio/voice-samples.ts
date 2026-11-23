@@ -1,5 +1,6 @@
 import sampleManifest from './voice-samples.manifest.json';
 import { CANGYUAN_MINIMAX_VOICES, CANGYUAN_MINIMAX_VOICE_SOURCE } from '@/packages/contracts/cangyuan-minimax-voices';
+import { resolveMiniMaxSystemVoiceId } from '@/packages/contracts/minimax-system-voices';
 
 type VoiceSampleAudio = {
   url: string;
@@ -58,7 +59,7 @@ const OFFICIAL_MINIMAX_SAMPLES = new Map<string, OfficialVoiceSample>(CANGYUAN_M
 export function getSpeechVoiceSample(publicModel: string, voice: string, providerKey: string): SpeechVoiceSample | null {
   if (String(providerKey || '') !== VERIFIED_PROVIDER_KEY) return null;
   if (MINIMAX_REFERENCE_MODELS.includes(publicModel)) {
-    const official = OFFICIAL_MINIMAX_SAMPLES.get(voice);
+    const official = OFFICIAL_MINIMAX_SAMPLES.get(resolveMiniMaxSystemVoiceId(voice, providerKey) || voice);
     if (official) return official;
   }
   return SPEECH_VOICE_SAMPLES[String(publicModel || '')]?.[String(voice || '')] || null;

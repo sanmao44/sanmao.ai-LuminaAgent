@@ -33,6 +33,7 @@ import type {
 import { CANGYUAN_TRIPO3D_V31_PUBLIC_MODEL, getCangyuan3DModelProfile, getCangyuanMusicModelProfile, reconcileCangyuan3DMode } from '@/packages/contracts/cangyuan-media';
 import type { SpeechOutputFormat } from '@/packages/contracts/audio-synthesis';
 import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, SPEECH_PLATFORM_TEXT_LIMIT } from '@/packages/contracts/audio-synthesis';
+import { findMiniMaxSystemVoice } from '@/packages/contracts/minimax-system-voices';
 import type { PublicState, RegistryModel } from '@/lib/types';
 import { listGenerationLogs } from '@/lib/generation-log-client';
 import type { GenerationLog } from '@/lib/generation-log';
@@ -206,6 +207,9 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const speechSampleProviderKey = isCangyuanProvider(publicState?.providers.find((provider) => provider.id === speechModel?.providerId)) ? 'cangyuan' : '';
   const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || '', speechSampleProviderKey || undefined), [speechModel, speechSampleProviderKey]);
   const usesRegisteredVoice = Boolean(speechProfile?.supportsVoiceId && speechAdvanced.voiceId?.trim());
+  const selectedSystemVoice = speechProfile?.publicModel.startsWith('minimax-speech-2.8-')
+    ? findMiniMaxSystemVoice(speechAdvanced.voiceId || '', speechSampleProviderKey)
+    : undefined;
   const speechFormats = speechProfile
     ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine, speechSampleProviderKey)
     : ['mp3', 'wav'] as const;
@@ -745,7 +749,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                       />
                       {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} providerKey={speechSampleProviderKey} />}
                     </div>}
-                    {usesRegisteredVoice && <small className="cangyuan-speech-note">当前使用已登记的自备音色编号，预设音色与样音不会参与本次生成。清空编号即可恢复预设音色。</small>}
+                    {usesRegisteredVoice && !selectedSystemVoice && <small className="cangyuan-speech-note">当前使用自备或已登记音色，生成时会使用该音色，不会以系统音色替代。</small>}
                     {!usesRegisteredVoice && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom' && (
                       <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-custom-voice">
                         <span>自定义音色</span>
@@ -801,6 +805,10 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                       </div>
                     )}
                     <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={setSpeechAdvanced} disabled={busy} modelId={speechModel?.id} format={selectedSpeechFormat} />
+                    {selectedSystemVoice && <div className="cangyuan-speech-field">
+                      <span>当前音色 · {selectedSystemVoice.name}</span>
+                      <VoiceSampleButton model={speechProfile.publicModel} voice={selectedSystemVoice.voiceId} providerKey={speechSampleProviderKey} />
+                    </div>}
                   </div>
                 )}
                 <label className="cangyuan-field-label" htmlFor="cangyuan-speech-text">配音文本</label>

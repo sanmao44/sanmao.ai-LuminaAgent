@@ -93,7 +93,7 @@ export default function SpeechAdvancedOptions({ profile, value, onChange, disabl
       </label>}
       {profile.supportsVoiceId && <>
         <label className="cangyuan-speech-field">
-        <span>{isMiniMaxSpeech ? '音色编号（必填）' : profile.requiresVoiceId ? '已登记音色编号（必填）' : '自备音色编号（可选）'}</span>
+        <span>{isMiniMaxSpeech ? '音色' : profile.requiresVoiceId ? '已登记音色编号（必填）' : '自备音色编号（可选）'}</span>
         {isMiniMaxSpeech
           ? <MiniMaxVoicePicker model={profile.publicModel} providerKey={profile.providerKey} value={value.voiceId ?? ''} onChange={(voiceId) => update({ voiceId: voiceId || undefined })} disabled={disabled} />
           : <input value={value.voiceId ?? ''} disabled={disabled} placeholder="粘贴登记音色返回的编号" onChange={(event) => update({ voiceId: event.target.value || undefined })} />}

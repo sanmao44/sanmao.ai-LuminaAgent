@@ -21,12 +21,11 @@
 .minimax-voice-section-title small{color:var(--muted);font-size:8px}
 .minimax-voice-option{min-width:0;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:4px;border:1px solid transparent;border-radius:8px;transition:background .14s,border-color .14s}
 .minimax-voice-option:hover,.minimax-voice-option.is-selected{border-color:color-mix(in srgb,var(--accent) 28%,var(--line));background:var(--accent-soft)}
-.minimax-voice-option-main{min-width:0;min-height:42px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto) 16px;align-items:center;gap:9px;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
+.minimax-voice-option-main{min-width:0;min-height:42px;display:grid;grid-template-columns:minmax(0,1fr) 16px;align-items:center;gap:9px;padding:4px 6px;border:0;border-radius:6px;background:transparent;color:var(--text);text-align:left;cursor:pointer}
 .minimax-voice-option-main:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .minimax-voice-option-copy{min-width:0;display:grid;gap:3px}
 .minimax-voice-option-copy strong{overflow:hidden;color:var(--text);font-size:10px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
 .minimax-voice-option-copy small{color:var(--muted);font-size:8px}
-.minimax-voice-option-main code{max-width:220px;overflow:hidden;color:var(--muted);font:inherit;font-size:8px;text-overflow:ellipsis;white-space:nowrap}
 .minimax-voice-check{width:16px;color:var(--accent-text);font-size:11px;text-align:center}
 .minimax-voice-sample{display:flex;align-items:center;justify-content:center;min-width:48px}
 .minimax-voice-sample .voice-sample-button.compact{min-height:25px;padding-inline:7px;font-size:8px}
@@ -62,15 +61,7 @@
 .minimax-voice-dialog-list{min-height:0;display:grid;align-content:start;gap:3px;overflow:auto;padding:0 11px 15px}
 .minimax-voice-dialog-list .minimax-voice-option-main{min-height:48px;padding:5px 9px}
 .minimax-voice-dialog-list .minimax-voice-option-copy strong{font-size:10px}
-.minimax-voice-dialog-list .minimax-voice-option-main code{max-width:340px}
 .minimax-voice-empty{margin:0;padding:18px 10px;color:var(--muted);font-size:10px;line-height:1.5}
-.minimax-voice-custom-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto) auto;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
-.minimax-voice-custom-row>span{min-width:0;display:grid;gap:3px}
-.minimax-voice-custom-row strong{font-size:10px;color:var(--text)}
-.minimax-voice-custom-row small{font-size:8px;color:var(--muted)}
-.minimax-voice-custom-row code{max-width:250px;overflow:hidden;color:var(--muted);font-size:8px;text-overflow:ellipsis;white-space:nowrap}
-.minimax-voice-custom-row button{min-height:30px;padding:0 11px;border:1px solid var(--accent);border-radius:7px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;cursor:pointer}
-.minimax-voice-custom-row button:hover{filter:brightness(1.06)}
 @media(max-width:780px){
   .minimax-voice-quick-panel{left:0!important;right:0!important;top:auto!important;bottom:0!important;width:100%!important;max-width:none!important;max-height:min(72vh,560px)!important;border-right:0;border-bottom:0;border-left:0;border-radius:16px 16px 0 0;padding-bottom:max(7px,env(safe-area-inset-bottom));box-shadow:0 -24px 70px rgba(0,0,0,.38)}
   .minimax-voice-dialog-backdrop{place-items:end center;padding:0}
@@ -85,9 +76,5 @@
   .minimax-voice-category-list button{min-width:max-content;height:32px;min-height:32px;padding-inline:9px}
   .minimax-voice-dialog-summary{padding:10px 12px 6px}
   .minimax-voice-dialog-list{padding-inline:7px}
-  .minimax-voice-dialog-list .minimax-voice-option-main{grid-template-columns:minmax(0,1fr) minmax(0,auto) 14px;gap:6px;padding-inline:5px}
-  .minimax-voice-dialog-list .minimax-voice-option-main code{max-width:34vw}
-  .minimax-voice-custom-row{grid-template-columns:minmax(0,1fr) auto}
-  .minimax-voice-custom-row code{grid-column:1;grid-row:2}
-  .minimax-voice-custom-row button{grid-column:2;grid-row:1 / span 2}
+  .minimax-voice-dialog-list .minimax-voice-option-main{grid-template-columns:minmax(0,1fr) 14px;gap:6px;padding-inline:5px}
 }
