@@ -54,6 +54,12 @@ export function createTsRequire(baseDir, overrides = {}) {
     const aliased = aliasFile(normalized);
     if (!aliased && !normalized.startsWith('.') && !path.isAbsolute(normalized)) return nodeRequire(id);
     const resolved = aliased || (path.isAbsolute(normalized) ? normalized : path.resolve(base, normalized));
+    if (path.extname(resolved) === '.json') {
+      if (cache.has(resolved)) return cache.get(resolved).exports;
+      const module = { exports: JSON.parse(readFileSync(resolved, 'utf8')) };
+      cache.set(resolved, module);
+      return module.exports;
+    }
     const file = /\.(?:tsx?|mts|cts)$/u.test(resolved)
       ? resolved
       : existsSync(`${resolved}.ts`)

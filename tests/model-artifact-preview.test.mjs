@@ -116,5 +116,8 @@ test('preview application only opens completed GLB outputs owned by the requeste
   task.status = 'succeeded';
   await application.openThreeDOutput(task.id, 0);
 
-  assert.deepEqual(opened, ['https://assets.example/model.glb']);
+  task.status = 'cancelled';
+  await application.openThreeDOutput(task.id, 0);
+
+  assert.deepEqual(opened, ['https://assets.example/model.glb', 'https://assets.example/model.glb']);
 });

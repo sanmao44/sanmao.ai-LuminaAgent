@@ -6,8 +6,8 @@ const contracts = createTsRequire(process.cwd())('./packages/contracts/audio-syn
 const voiceOptions = createTsRequire(process.cwd())('./components/audio/voice-options');
 
 test('Gemini TTS displays Chinese voice names while preserving documented request IDs', () => {
-  const profile = contracts.getSpeechModelProfile('gemini-tts');
-  const options = voiceOptions.speechVoiceOptions(profile);
+  const profile = contracts.getSpeechModelProfile('gemini-tts', 'cangyuan');
+  const options = voiceOptions.speechVoiceOptions(profile, 'cangyuan');
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [
@@ -17,8 +17,8 @@ test('Gemini TTS displays Chinese voice names while preserving documented reques
 });
 
 test('Muse TTS labels explain documented voice groups without changing request IDs', () => {
-  const profile = contracts.getSpeechModelProfile('mu1-muse-tts');
-  const options = voiceOptions.speechVoiceOptions(profile);
+  const profile = contracts.getSpeechModelProfile('mu1-muse-tts', 'cangyuan');
+  const options = voiceOptions.speechVoiceOptions(profile, 'cangyuan');
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [
@@ -32,8 +32,8 @@ test('Muse TTS labels explain documented voice groups without changing request I
 });
 
 test('ElevenLabs v4 translates each documented preset voice while preserving provider IDs', () => {
-  const profile = contracts.getSpeechModelProfile('elevenlabs-v4-tts');
-  const options = voiceOptions.speechVoiceOptions(profile);
+  const profile = contracts.getSpeechModelProfile('elevenlabs-v4-tts', 'cangyuan');
+  const options = voiceOptions.speechVoiceOptions(profile, 'cangyuan');
 
   assert.deepEqual(options.map(({ value }) => value), profile.suggestedVoices);
   assert.deepEqual(options.map(({ label }) => label), [
@@ -43,4 +43,11 @@ test('ElevenLabs v4 translates each documented preset voice while preserving pro
   assert.ok(options.every(({ label }) => !/[A-Za-z]/.test(label)));
   assert.ok(options.every(({ description }) => description === '可播放本地样音，不消耗额度'));
   assert.equal(contracts.speechVoiceLabel('external-voice-id', 'elevenlabs-v4-tts'), '自定义音色');
+});
+
+test('voice options do not advertise Cangyuan samples for another provider', () => {
+  const profile = contracts.getSpeechModelProfile('gemini-tts', 'cangyuan');
+  const options = voiceOptions.speechVoiceOptions(profile, 'other-provider');
+
+  assert.ok(options.every(({ description }) => description === '该音色暂无样音'));
 });

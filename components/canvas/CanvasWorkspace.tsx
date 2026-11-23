@@ -353,9 +353,11 @@ import type {
   CanvasVideoEditorClip,
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
+import { canvasThreeDTaskNodeProjection } from "@/lib/canvas/three-d-generation";
 import {
   updateCanvasAudioDraftDocument,
   updateCanvasAudioMusicDraftDocument,
+  updateCanvasAudioSoundEffectDraftDocument,
   updateCanvasAudioMusicTaskDocument,
   updateCanvasAudioTranscriptionDraftDocument,
 } from "@/lib/canvas/audio-tools";
@@ -1732,6 +1734,11 @@ export default function SuperCanvas() {
     const next = updateCanvasAudioMusicDraftDocument(current, nodeId, draft);
     if (next !== current) setDoc(next, { preserveHistory: true });
   }, [setDoc]);
+  const updateCanvasAudioSoundEffectDraft = useCallback((nodeId: string, draft: CanvasAudioMusicDraft) => {
+    const current = canvasCoreRef.current.document();
+    const next = updateCanvasAudioSoundEffectDraftDocument(current, nodeId, draft);
+    if (next !== current) setDoc(next, { preserveHistory: true });
+  }, [setDoc]);
   const updateCanvasAudioMusicTask = useCallback((nodeId: string, task: CanvasAudioMusicTask) => {
     const current = canvasCoreRef.current.document();
     const next = updateCanvasAudioMusicTaskDocument(current, nodeId, task);
@@ -1751,6 +1758,7 @@ export default function SuperCanvas() {
     }));
   }, [updateDoc]);
   const updateCanvasThreeDTask = useCallback((nodeId: string, task: CanvasThreeDTaskSnapshot) => {
+    const projection = canvasThreeDTaskNodeProjection(task);
     updateDoc((value) => ({
       ...value,
       nodes: value.nodes.map((node) => node.id === nodeId && node.type === "media" && node.data.kind === "3d"
@@ -1759,9 +1767,9 @@ export default function SuperCanvas() {
             data: {
               ...node.data,
               threeDTask: task,
-              status: task.status === "succeeded" ? "completed" : task.status === "failed" || task.status === "cancelled" ? "failed" : "running",
-              statusLabel: task.status === "succeeded" ? "三维模型生成完成" : task.status === "failed" || task.status === "cancelled" ? (task.error || "三维模型生成失败") : "三维模型生成中",
-              progress: task.status === "succeeded" ? 100 : node.data.progress,
+              status: projection.status,
+              statusLabel: projection.statusLabel,
+              ...(projection.terminal ? { progress: projection.progress, processingStartedAt: undefined, taskTracking: undefined } : {}),
             },
           }
         : node),
@@ -14553,6 +14561,7 @@ export default function SuperCanvas() {
               onTranscriptionDraftChange={updateCanvasAudioTranscriptionDraft}
               onTranscriptionChange={updateCanvasAudioTranscription}
               onMusicDraftChange={updateCanvasAudioMusicDraft}
+              onSoundEffectDraftChange={updateCanvasAudioSoundEffectDraft}
               onMusicTaskChange={updateCanvasAudioMusicTask}
               onThreeDDraftChange={updateCanvasThreeDDraft}
               onThreeDTaskChange={updateCanvasThreeDTask}

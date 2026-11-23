@@ -9,8 +9,8 @@ export function cangyuanMediaTaskPollIntervalMs(kind: CangyuanMediaTask['kind'])
   return kind === '3d' ? CANGYUAN_3D_TASK_POLL_INTERVAL_MS : CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS;
 }
 
-export function nextCangyuanTaskPollBatch(
-  tasks: CangyuanMediaTask[],
+export function nextCangyuanTaskPollBatch<T extends Pick<CangyuanMediaTask, 'id' | 'status'>>(
+  tasks: T[],
   lastTaskId: string | null,
   limit = 4,
 ) {

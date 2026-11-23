@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { modelPreviewBytesLabel, modelPreviewDownloadProgress, type ModelPreviewDownloadProgress } from "@/components/cangyuan/three-d-preview-progress";
+import { loadModelPreviewBytes } from "@/components/cangyuan/model-preview-bytes-cache";
 import styles from "./ThreeDModelPreview.module.css";
 
 type Props = {
@@ -99,7 +100,18 @@ export default function ThreeDModelPreview({ url, label, className, variant }: P
     resize();
 
     const loader = new GLTFLoader();
-    loader.load(url, (gltf) => {
+    const modelUrl = new URL(url, window.location.href);
+    const resourcePath = new URL(".", modelUrl).toString();
+    void loadModelPreviewBytes(url, (progress) => {
+      if (disposed) return;
+      setDownloadProgress(progress);
+      if (progress.percentage === 100) setLoadingStage("parse");
+    }).then(async (bytes) => {
+      if (disposed) return null;
+      setLoadingStage("parse");
+      return loader.parseAsync(bytes, resourcePath);
+    }).then((gltf) => {
+      if (!gltf) return;
       if (disposed) {
         disposeModel(gltf.scene);
         return;
@@ -122,12 +134,7 @@ export default function ThreeDModelPreview({ url, label, className, variant }: P
       controls.update();
       setLoading(false);
       requestRender();
-    }, (event) => {
-      if (disposed) return;
-      const progress = modelPreviewDownloadProgress(event.loaded, event.total);
-      setDownloadProgress(progress);
-      if (progress.percentage === 100) setLoadingStage("parse");
-    }, () => {
+    }).catch(() => {
       if (!disposed) {
         setLoading(false);
         setError("模型无法在线预览，可直接下载模型文件。");

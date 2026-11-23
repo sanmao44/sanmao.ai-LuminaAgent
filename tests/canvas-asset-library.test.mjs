@@ -27,6 +27,26 @@ test("canvas asset collections keep smart views read-only", () => {
   assert.equal(assetLibrary.isAssignableCanvasAssetCollection("generated"), false);
 });
 
+test("asset selection summary exposes items hidden by the current filters", () => {
+  const filtered = [{ id: "visible" }, { id: "selected-visible" }];
+  assert.deepEqual(assetLibrary.canvasAssetSelectionSummary(filtered, new Set(["selected-visible", "hidden-a", "hidden-b"])), {
+    total: 3,
+    visible: 1,
+    hidden: 2,
+  });
+});
+
+test("custom asset collection names cannot collide on create or rename", () => {
+  const collections = [
+    { id: "ideas", name: "灵感参考" },
+    { id: "final", name: "成片" },
+  ];
+  assert.equal(assetLibrary.canvasAssetCollectionNameConflicts(collections, " 灵感参考 "), true);
+  assert.equal(assetLibrary.canvasAssetCollectionNameConflicts(collections, "成片", "final"), false);
+  assert.equal(assetLibrary.canvasAssetCollectionNameConflicts(collections, "成片", "ideas"), true);
+  assert.equal(assetLibrary.canvasAssetCollectionNameConflicts(collections, "   "), false);
+});
+
 test("canvas asset filtering keeps collection, text, tag, favorite and sort semantics", () => {
   const assets = [
     {

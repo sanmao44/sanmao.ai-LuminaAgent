@@ -78,6 +78,26 @@ export function filterCanvasAssets(
     );
 }
 
+export function canvasAssetSelectionSummary(filteredAssets: readonly AssetRecord[], selectedAssetIds: ReadonlySet<string>) {
+  const visibleIds = new Set(filteredAssets.map((asset) => asset.id));
+  let visible = 0;
+  for (const id of selectedAssetIds) {
+    if (visibleIds.has(id)) visible += 1;
+  }
+  return { total: selectedAssetIds.size, visible, hidden: selectedAssetIds.size - visible };
+}
+
+export function canvasAssetCollectionNameConflicts(
+  collections: readonly { id: string; name: string }[],
+  name: string,
+  excludingId?: string,
+) {
+  const normalized = name.trim().toLocaleLowerCase("zh-CN");
+  if (!normalized) return false;
+  return collections.some((item) => item.id !== excludingId
+    && item.name.trim().toLocaleLowerCase("zh-CN") === normalized);
+}
+
 export function isAssignableCanvasAssetCollection(collectionId: string) {
   return (
     collectionId === CANVAS_ASSET_UNCATEGORIZED_ID ||

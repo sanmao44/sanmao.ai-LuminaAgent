@@ -9,6 +9,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { canvasNodeColorKey, canvasSourceColorKey } from "@/lib/canvas/appearance";
+import { canvasThreeDTaskNodeProjection } from "@/lib/canvas/three-d-generation";
 import {
   canvasEdgeEndpoints,
   connectionPath,
@@ -449,7 +450,7 @@ export default function CanvasMinimap({
             key={node.id}
             aria-label={nodeLabel(node)}
             title={`${nodeLabel(node)} · 点击定位，拖动移动`}
-            className={`canvas-minimap-node node-color-${canvasNodeColorKey(node)} type-${node.type} kind-${node.data.kind || "text"} status-${node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
+            className={`canvas-minimap-node node-color-${canvasNodeColorKey(node)} type-${node.type} kind-${node.data.kind || "text"} status-${node.type === "media" && node.data.kind === "3d" && node.data.threeDTask ? canvasThreeDTaskNodeProjection(node.data.threeDTask).visualStatus : node.data.status || "idle"} ${node.groupId ? "grouped" : ""} ${selectedIds.has(node.id) ? "active" : ""}`}
             data-node-color={canvasNodeColorKey(node)}
             style={nodeStyle(node)}
             onPointerDown={(event) => startNodeDrag(event, node)}

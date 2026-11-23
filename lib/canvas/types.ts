@@ -517,6 +517,7 @@ export type CanvasNodeData = {
   transcription?: CanvasAudioTranscriptionMeta;
   transcriptions?: CanvasAudioTranscriptionMeta[];
   musicDraft?: CanvasAudioMusicDraft;
+  soundEffectDraft?: CanvasAudioMusicDraft;
   /** @deprecated Read-only compatibility for canvases saved before music task history was introduced. */
   musicTask?: CanvasAudioMusicTask;
   musicTasks?: CanvasAudioMusicTask[];

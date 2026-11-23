@@ -29,6 +29,7 @@ export type SpeechAdvancedOptionKey =
 export const SPEECH_VOICE_PREVIEW_TEXT = '你好，这是一段音色试听。';
 
 export type SpeechModelProfile = {
+  providerKey: 'cangyuan';
   publicModel: string;
   suggestedVoices: readonly string[];
   responseFormats: readonly SpeechOutputFormat[];
@@ -78,17 +79,20 @@ export function speechVoiceLabel(voice: string, publicModel: string): string {
 
 const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Object.freeze({
   'gemini-tts': Object.freeze({
+    providerKey: 'cangyuan',
     publicModel: 'gemini-tts',
     suggestedVoices: Object.freeze(['Capella', 'Ursa', 'Vega', 'Eclipse', 'Lyra', 'Orbit', 'Dipper', 'Nova', 'Pegasus'] as const),
     responseFormats: Object.freeze(['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm'] as const),
     speedRange: Object.freeze({ min: 0.25, max: 4 }),
   }),
   'mu1-muse-tts': Object.freeze({
+    providerKey: 'cangyuan',
     publicModel: 'mu1-muse-tts',
     suggestedVoices: Object.freeze(['alloy', 'aria', 'coral', 'nova', 'shimmer', 'sage', 'echo', 'helio', 'onyx', 'fable'] as const),
     responseFormats: Object.freeze(['mp3', 'wav', 'opus', 'pcm'] as const),
   }),
   'elevenlabs-v4-tts': Object.freeze({
+    providerKey: 'cangyuan',
     publicModel: 'elevenlabs-v4-tts',
     suggestedVoices: Object.freeze(['Rachel', 'Aria', 'Roger', 'Sarah', 'Laura', 'Charlie', 'George', 'Callum', 'River', 'Liam', 'Charlotte', 'Alice', 'Matilda', 'Will', 'Jessica', 'Eric', 'Chris', 'Brian', 'Daniel', 'Lily', 'Bill'] as const),
     responseFormats: Object.freeze(['mp3', 'mp3_hq', 'opus'] as const),
@@ -102,6 +106,7 @@ const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Obje
     advancedOptionKeys: Object.freeze(['applyTextNormalization', 'engine', 'languageCode', 'seed', 'similarityBoost', 'stability', 'voiceId'] as const),
   }),
   'elevenlabs-dialogue': Object.freeze({
+    providerKey: 'cangyuan',
     publicModel: 'elevenlabs-dialogue',
     suggestedVoices: Object.freeze([] as const),
     responseFormats: Object.freeze([] as const),
@@ -111,6 +116,7 @@ const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Obje
     advancedOptionKeys: Object.freeze(['dialogue', 'stability'] as const),
   }),
   'voice-clone-tts': Object.freeze({
+    providerKey: 'cangyuan',
     publicModel: 'voice-clone-tts',
     suggestedVoices: Object.freeze([] as const),
     responseFormats: Object.freeze(['mp3', 'wav'] as const),
@@ -127,16 +133,18 @@ const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Obje
   }),
 });
 
-export function getSpeechModelProfile(publicModel: string): SpeechModelProfile | null {
-  return SPEECH_MODEL_PROFILES[String(publicModel || '')] || null;
+export function getSpeechModelProfile(publicModel: string, providerKey?: string): SpeechModelProfile | null {
+  const normalizedModel = speechPublicModelId(publicModel);
+  const profile = SPEECH_MODEL_PROFILES[normalizedModel];
+  return profile?.providerKey === providerKey ? profile : null;
 }
 
 export function speechPublicModelId(modelId: string): string {
   return String(modelId || '').split(':').at(-1)?.split('/').at(-1) || '';
 }
 
-export function getSpeechModelResponseFormats(publicModel: string, engine?: string): readonly SpeechOutputFormat[] {
-  const profile = getSpeechModelProfile(publicModel);
+export function getSpeechModelResponseFormats(publicModel: string, engine?: string, providerKey?: string): readonly SpeechOutputFormat[] {
+  const profile = getSpeechModelProfile(publicModel, providerKey);
   if (!profile) return SPEECH_OUTPUT_FORMATS;
   if (profile.publicModel !== 'voice-clone-tts') return profile.responseFormats;
   const selected = (engine || profile.defaultEngine || '').toLowerCase();
@@ -145,15 +153,15 @@ export function getSpeechModelResponseFormats(publicModel: string, engine?: stri
   return ['mp3', 'wav'];
 }
 
-export function getSpeechModelSpeedRange(publicModel: string, engine?: string) {
-  const profile = getSpeechModelProfile(publicModel);
+export function getSpeechModelSpeedRange(publicModel: string, engine?: string, providerKey?: string) {
+  const profile = getSpeechModelProfile(publicModel, providerKey);
   if (!profile) return undefined;
   if (profile.publicModel === 'voice-clone-tts' && /^elevenlabs-v4(?:-turbo)?$/i.test(engine || '')) return { min: 0.7, max: 1.2 };
   return profile.speedRange;
 }
 
-export function getSpeechModelAdvancedOptions(publicModel: string, options: SpeechAdvancedOptions): SpeechAdvancedOptions {
-  const profile = getSpeechModelProfile(publicModel);
+export function getSpeechModelAdvancedOptions(publicModel: string, options: SpeechAdvancedOptions, providerKey?: string): SpeechAdvancedOptions {
+  const profile = getSpeechModelProfile(publicModel, providerKey);
   if (!profile) return {};
   const allowed = profile.advancedOptionKeys || [];
   return Object.fromEntries(Object.entries(options).filter(([key, value]) =>

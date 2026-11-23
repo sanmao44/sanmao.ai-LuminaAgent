@@ -16,6 +16,7 @@ import type { ImageCreationSettings } from "@/lib/creation/settings";
 import { formatCanvasVideoDuration } from "@/lib/canvas/media";
 import { normalizeCanvasVideoClipState, videoClipDurationSeconds } from "@/lib/canvas/video-clip";
 import { canvasNodeColorKey } from "@/lib/canvas/appearance";
+import { canvasThreeDTaskNodeProjection } from "@/lib/canvas/three-d-generation";
 import { canvasMentionOption } from "@/components/canvas/mention-options";
 import { nodeLabel } from "@/lib/canvas/menu-labels";
 import { areCanvasNodeCardPropsEqual, type CanvasNodeCardProps } from "@/components/canvas/CanvasNodeCardContract";
@@ -91,6 +92,9 @@ function CanvasNodeCard({
   const colorKey = canvasNodeColorKey(node);
   const status = data.status || "idle";
   const pending = data.status === "queued" || data.status === "running";
+  const threeDProjection = node.type === "media" && data.kind === "3d" && data.threeDTask
+    ? canvasThreeDTaskNodeProjection(data.threeDTask)
+    : undefined;
   const imageResolution =
     ((node.type === "media" && data.kind === "image") || node.type === "upscale") &&
     Boolean(data.url) &&
@@ -101,7 +105,7 @@ function CanvasNodeCard({
       ? `${Math.round(Number(data.nativeWidth))} × ${Math.round(Number(data.nativeHeight))}`
       : null;
   const hasUpscaleResult = node.type === "upscale" && Boolean(data.url);
-  const failed = data.status === "failed" && !data.url;
+  const failed = data.status === "failed" && !data.url && threeDProjection?.visualStatus !== "cancelled";
   const angleReference = node.type === "angle"
     ? incomingReferences(document, node.id).find((item) => isCanvasReadyImageSource(item))
     : undefined;
@@ -237,7 +241,7 @@ function CanvasNodeCard({
 
   return (
     <article
-      className={`canvas-node node-color-${colorKey} status-${status} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}${referencePickerActive && referencePickerTargetId === node.id ? " reference-picker-target" : ""}${referencePickerActive && referencePickerHoverNodeId === node.id ? " reference-picker-hover" : ""}${referencePickerFlashNodeId === node.id ? " reference-picker-flash" : ""}`}
+      className={`canvas-node node-color-${colorKey} status-${status}${threeDProjection?.visualStatus === "cancelled" ? " status-cancelled" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""}${referencePickerActive && referencePickerTargetId === node.id ? " reference-picker-target" : ""}${referencePickerHoverNodeId === node.id ? " reference-picker-hover" : ""}${referencePickerFlashNodeId === node.id ? " reference-picker-flash" : ""}`}
       data-canvas-node-id={node.id}
       data-canvas-connectable-id={node.id}
       data-node-color={colorKey}

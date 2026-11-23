@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanvasAudioDraft, CanvasAudioGenerationMeta, CanvasAudioMusicDraft, CanvasAudioMusicTask, CanvasAudioTranscriptionDraft, CanvasAudioTranscriptionMeta, CanvasNode } from "@/lib/canvas/types";
 import type { ProviderConnection, RegistryModel } from "@/lib/types";
 import { selectAutomaticModel } from "@/lib/model-selection";
 import { formatCanvasAudioDuration } from "@/lib/canvas/media";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
-import { canvasAudioMusicModels, canvasAudioSpeechModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
+import { canvasAudioMusicModels, canvasAudioMusicTaskStatusLabel, canvasAudioSoundEffectModels, canvasAudioSpeechModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import ModelPicker from "@/components/ModelPicker";
 import SelectMenu from "@/components/SelectMenu";
@@ -15,8 +15,10 @@ import { getCangyuanMusicModelProfile, type CangyuanMediaOutput, type CangyuanMe
 import { speechVoiceOptions } from "@/components/audio/voice-options";
 import { speechOutputFormatLabel } from "@/components/audio/speech-format-options";
 import VoiceSampleButton from "@/components/audio/VoiceSampleButton";
+import { isCangyuanProvider } from "@/lib/cangyuan-provider";
 import { buildCanvasSpeechRequest } from "@/components/canvas/audio-speech-request";
 import CangyuanMusicOptionsFields, { cangyuanMusicTaskKindName } from "@/components/cangyuan/CangyuanMusicOptionsFields";
+import { CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS, nextCangyuanTaskPollBatch } from "@/lib/cangyuan-media-task-polling";
 
 const SPEECH_TEXT_LIMIT = SPEECH_PLATFORM_TEXT_LIMIT;
 const TRANSCRIPTION_MAX_BYTES = 50 * 1024 * 1024;
@@ -30,13 +32,6 @@ const TRANSCRIPTION_FORMATS = [
   { value: "verbose_json", label: "文字与分段时间" }, { value: "json", label: "标准文字" }, { value: "text", label: "纯文本" },
 ];
 
-function musicTaskStatusLabel(status: CanvasAudioMusicTask["status"]) {
-  if (status === "succeeded") return "已完成";
-  if (status === "failed" || status === "cancelled") return "失败";
-  if (status === "queued" || status === "pending") return "排队中";
-  return "生成中";
-}
-
 export type CanvasAudioNodePanelProps = {
   node: CanvasNode;
   onReplaceAudio: (nodeId: string, file: File, generation?: CanvasAudioGenerationMeta) => Promise<boolean>;
@@ -44,6 +39,7 @@ export type CanvasAudioNodePanelProps = {
   onTranscriptionDraftChange: (nodeId: string, draft: CanvasAudioTranscriptionDraft) => void;
   onTranscriptionChange: (nodeId: string, result: CanvasAudioTranscriptionMeta) => void;
   onMusicDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
+  onSoundEffectDraftChange: (nodeId: string, draft: CanvasAudioMusicDraft) => void;
   onMusicTaskChange: (nodeId: string, task: CanvasAudioMusicTask) => void;
   onDurationChange: (nodeId: string, durationSeconds: number) => void;
   onNotify: (message: string, kind?: "ok" | "error") => void;
@@ -63,6 +59,7 @@ export default function CanvasAudioNodePanel({
   onTranscriptionDraftChange,
   onTranscriptionChange,
   onMusicDraftChange,
+  onSoundEffectDraftChange,
   onMusicTaskChange,
   onDurationChange,
   onNotify,
@@ -76,7 +73,14 @@ export default function CanvasAudioNodePanel({
 }: CanvasAudioNodePanelProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const transcriptionInputRef = useRef<HTMLInputElement | null>(null);
-  const [activeMode, setActiveMode] = useState<"speech" | "transcription" | "music">("speech");
+  const soundEffectModels = canvasAudioSoundEffectModels(models, providers);
+  const soundEffectModelIdKey = soundEffectModels.map((model) => model.id).join("|");
+  const initialSoundEffectDraft = node.data.soundEffectDraft || (
+    node.data.musicDraft?.modelId && soundEffectModels.some((model) => model.id === node.data.musicDraft?.modelId)
+      ? node.data.musicDraft
+      : { prompt: "", options: {} }
+  );
+  const [activeMode, setActiveMode] = useState<"speech" | "transcription" | "music" | "sound-effect">("speech");
   const [speechText, setSpeechText] = useState(() => node.data.speechDraft?.text ?? node.data.speechGeneration?.text ?? "");
   const [voice, setVoice] = useState(() => node.data.speechDraft?.voice ?? node.data.speechGeneration?.voice ?? "");
   const [customVoiceSelected, setCustomVoiceSelected] = useState(false);
@@ -104,14 +108,17 @@ export default function CanvasAudioNodePanel({
   const [transcriptionBusy, setTranscriptionBusy] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState("");
   const [musicDraft, setMusicDraft] = useState<CanvasAudioMusicDraft>(() => node.data.musicDraft || { prompt: "", options: {} });
+  const [soundEffectDraft, setSoundEffectDraft] = useState<CanvasAudioMusicDraft>(() => initialSoundEffectDraft);
   const [musicBusy, setMusicBusy] = useState(false);
   const [musicError, setMusicError] = useState("");
+  const musicPollCursorRef = useRef<string | null>(null);
   const [materializingMusicOutput, setMaterializingMusicOutput] = useState("");
   const [uploadingMusicFields, setUploadingMusicFields] = useState<Set<string>>(() => new Set());
   const data = node.data;
-  const currentMusicTask = (data.musicTasks?.[0] || data.musicTask) as CanvasAudioMusicTask | undefined;
+  const musicHistory = useMemo(() => data.musicTasks?.length ? data.musicTasks : data.musicTask ? [data.musicTask] : [], [data.musicTasks, data.musicTask]);
+  const currentMusicKindName = activeMode === "sound-effect" ? "音效" : "音乐";
+  const currentMusicTask = musicHistory.find((task) => cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(task.providerModel || "")) === currentMusicKindName);
   const currentTranscription = (data.transcriptions?.[0] || data.transcription) as CanvasAudioTranscriptionMeta | undefined;
-  const musicHistory = data.musicTasks?.length ? data.musicTasks : data.musicTask ? [data.musicTask] : [];
   const transcriptionHistory = data.transcriptions?.length ? data.transcriptions : data.transcription ? [data.transcription] : [];
   const speechHistory = data.speechGenerations?.length ? data.speechGenerations : data.speechGeneration ? [data.speechGeneration] : [];
   const hasAudio = Boolean(data.url);
@@ -121,9 +128,14 @@ export default function CanvasAudioNodePanel({
   const selectedModel = speechModelId !== "auto"
     ? speechModels.find((model) => model.id === speechModelId)
     : selectAutomaticModel(speechModels, defaultProviderId, defaultModelId);
-  const speechProfile = getSpeechModelProfile(selectedModel?.rawId || "");
-  const speechFormats = speechProfile ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine) : [];
-  const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine) : undefined;
+  const speechSampleProviderKey = isCangyuanProvider(providers.find((provider) => provider.id === selectedModel?.providerId)) ? "cangyuan" : "";
+  const speechProviderKey = speechSampleProviderKey || undefined;
+  const speechProfile = getSpeechModelProfile(selectedModel?.rawId || "", speechProviderKey);
+  const usesRegisteredVoice = Boolean(speechProfile?.supportsVoiceId && speechAdvanced.voiceId?.trim());
+  const speechFormats = speechProfile
+    ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine, speechProviderKey)
+    : ['mp3', 'wav'] as const;
+  const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine, speechProviderKey) : undefined;
   const speechTextLimit = speechProfile?.textMaxLength ?? SPEECH_TEXT_LIMIT;
   const dialogueDraftText = speechAdvanced.dialogueText ?? speechAdvanced.dialogue?.map((line) => `${line.voice} | ${line.text}`).join("\n") ?? "";
   const dialogueDraftError = speechDialogueDraftError(dialogueDraftText);
@@ -139,9 +151,17 @@ export default function CanvasAudioNodePanel({
     ? "本机离线语音"
     : data.speechGeneration?.modelName || "尚未生成";
   const selectedMusicModel = musicModels.find((model) => model.id === musicDraft.modelId) || musicModels[0];
+  const selectedSoundEffectModel = soundEffectModels.find((model) => model.id === soundEffectDraft.modelId) || soundEffectModels[0];
   const selectedTranscriptionModel = transcriptionModels.find((model) => model.id === transcriptionDraft.modelId) || transcriptionModels[0];
   const musicProfile = selectedMusicModel ? getCangyuanMusicModelProfile(selectedMusicModel.rawId) : null;
-  const musicTaskKindName = cangyuanMusicTaskKindName(musicProfile);
+  const activeMusicModel = activeMode === "sound-effect" ? selectedSoundEffectModel : selectedMusicModel;
+  const activeMusicDraft = activeMode === "sound-effect" ? soundEffectDraft : musicDraft;
+  const activeMusicProfile = activeMusicModel ? getCangyuanMusicModelProfile(activeMusicModel.rawId) : null;
+  const musicTaskKindName = activeMode === "sound-effect" ? "音效" : cangyuanMusicTaskKindName(musicProfile);
+  const activeMusicTaskKey = musicHistory
+    .filter((task) => ["pending", "queued", "running", "waiting"].includes(task.status))
+    .map((task) => `${task.id}:${task.status}`)
+    .join("|");
 
   useEffect(() => {
     setSpeechText(node.data.speechDraft?.text ?? node.data.speechGeneration?.text ?? "");
@@ -164,52 +184,62 @@ export default function CanvasAudioNodePanel({
       dialogueText: node.data.speechDraft?.dialogueText,
     });
     setSpeechError("");
-  }, [node.id, node.data.speechDraft?.text, node.data.speechDraft?.voice, node.data.speechDraft?.modelId, node.data.speechDraft?.format, node.data.speechDraft?.speed, node.data.speechDraft?.voiceId, node.data.speechDraft?.dialogueText, node.data.speechGeneration?.text, node.data.speechGeneration?.voice, node.data.speechGeneration?.requestedModelId, node.data.speechGeneration?.format, node.data.speechGeneration?.speed]);
+  }, [node.id, node.data.speechDraft, node.data.speechGeneration]);
 
   useEffect(() => {
     setTranscriptionDraft(node.data.transcriptionDraft || {});
     setTranscriptionFile(null);
     setTranscriptionError("");
     setMusicDraft(node.data.musicDraft || { prompt: "", options: {} });
+    setSoundEffectDraft(initialSoundEffectDraft);
     setMusicError("");
-  }, [node.id, node.data.transcriptionDraft, node.data.musicDraft]);
+  }, [node.id, node.data.transcriptionDraft, node.data.musicDraft, node.data.soundEffectDraft, soundEffectModelIdKey]);
 
   useEffect(() => setCustomVoiceSelected(false), [node.id]);
 
   useEffect(() => {
-    const task = (node.data.musicTasks?.[0] || node.data.musicTask) as CanvasAudioMusicTask | undefined;
-    if (!task || !["pending", "queued", "running", "waiting"].includes(task.status)) return;
+    if (!activeMusicTaskKey) {
+      musicPollCursorRef.current = null;
+      return;
+    }
     let disposed = false;
     let timer = 0;
     let controller: AbortController | null = null;
     const poll = async () => {
-      controller = new AbortController();
+      const requestController = new AbortController();
+      controller = requestController;
+      const batch = nextCangyuanTaskPollBatch(musicHistory, musicPollCursorRef.current, 4);
+      if (!batch.tasks.length) return;
+      musicPollCursorRef.current = batch.lastTaskId;
       try {
-        const response = await fetch(`/api/cangyuan/music/tasks/${encodeURIComponent(task.id)}`, {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
-        if (!response.ok || !payload?.task) throw new Error(payload?.error || "音乐任务状态暂时无法读取。");
-        const snapshot = canvasMusicTaskSnapshot(payload.task);
+        const results = await Promise.allSettled(batch.tasks.map(async (task) => {
+          const response = await fetch(`/api/cangyuan/music/tasks/${encodeURIComponent(task.id)}`, {
+            cache: "no-store",
+            signal: requestController.signal,
+          });
+          const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
+          if (!response.ok || !payload?.task) throw new Error(payload?.error || "音乐任务状态暂时无法读取。");
+          return canvasMusicTaskSnapshot(payload.task);
+        }));
         if (disposed) return;
-        onMusicTaskChange(node.id, snapshot);
-        if (["pending", "queued", "running", "waiting"].includes(snapshot.status)) {
-          timer = window.setTimeout(() => void poll(), 5000);
+        for (const result of results) {
+          if (result.status === "fulfilled") onMusicTaskChange(node.id, result.value);
+          else if (!requestController.signal.aborted) setMusicError(result.reason instanceof Error ? result.reason.message : "音乐任务状态读取失败。");
         }
+        if (!disposed) timer = window.setTimeout(() => void poll(), CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS);
       } catch (error) {
-        if (disposed || controller?.signal.aborted) return;
+        if (disposed || requestController.signal.aborted) return;
         setMusicError(error instanceof Error ? error.message : "音乐任务状态读取失败。");
-        timer = window.setTimeout(() => void poll(), 5000);
+        timer = window.setTimeout(() => void poll(), CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS);
       }
     };
-    timer = window.setTimeout(() => void poll(), 5000);
+    timer = window.setTimeout(() => void poll(), CANGYUAN_MEDIA_TASK_POLL_INTERVAL_MS);
     return () => {
       disposed = true;
       window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [node.id, currentMusicTask?.id, currentMusicTask?.status, onMusicTaskChange]);
+  }, [node.id, activeMusicTaskKey, musicHistory, onMusicTaskChange]);
 
   function saveSpeechDraft(next: Partial<CanvasAudioDraft> = {}) {
     onSpeechDraftChange(node.id, {
@@ -244,6 +274,18 @@ export default function CanvasAudioNodePanel({
     };
     setMusicDraft(draft);
     onMusicDraftChange(node.id, draft);
+  }
+
+  function saveSoundEffectDraft(next: Partial<CanvasAudioMusicDraft> = {}) {
+    const draft: CanvasAudioMusicDraft = {
+      ...soundEffectDraft,
+      ...next,
+      prompt: next.prompt ?? soundEffectDraft.prompt,
+      options: next.options ?? soundEffectDraft.options,
+      updatedAt: Date.now(),
+    };
+    setSoundEffectDraft(draft);
+    onSoundEffectDraftChange(node.id, draft);
   }
 
   function chooseTranscriptionFile(file: File | undefined) {
@@ -304,11 +346,11 @@ export default function CanvasAudioNodePanel({
   }
 
   async function generateMusic() {
-    if (!selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0) return;
+    if (!activeMusicModel || !activeMusicProfile || musicBusy || uploadingMusicFields.size > 0) return;
     setMusicError("");
     setMusicBusy(true);
     try {
-      const input = buildCanvasMusicRequest(selectedMusicModel.id, selectedMusicModel.rawId, musicDraft.prompt, musicDraft.options);
+      const input = buildCanvasMusicRequest(activeMusicModel.id, activeMusicModel.rawId, activeMusicDraft.prompt, activeMusicDraft.options);
       const response = await fetch("/api/cangyuan/music", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
@@ -316,13 +358,13 @@ export default function CanvasAudioNodePanel({
         cache: "no-store",
       });
       const payload = await response.json().catch(() => null) as { task?: CangyuanMediaTask; error?: string } | null;
-      if (!response.ok || !payload?.task) throw new Error(payload?.error || `音乐任务提交失败（${response.status}）`);
+      if (!response.ok || !payload?.task) throw new Error(payload?.error || `${musicTaskKindName}任务提交失败（${response.status}）`);
       const task = canvasMusicTaskSnapshot(payload.task);
       onMusicTaskChange(node.id, task);
       if (payload.task.status === "failed") throw new Error(payload.task.error || "音乐任务提交失败。");
-      onNotify("音乐任务已提交");
+      onNotify(`${musicTaskKindName}任务已提交`);
     } catch (error) {
-      setMusicError(error instanceof Error ? error.message : "音乐任务提交失败，请重试。");
+      setMusicError(error instanceof Error ? error.message : `${musicTaskKindName}任务提交失败，请重试。`);
     } finally {
       setMusicBusy(false);
     }
@@ -367,9 +409,11 @@ export default function CanvasAudioNodePanel({
           text,
           voice,
           modelId: speechModelId,
+          ...(selectedModel?.rawId ? { profileModelId: selectedModel.rawId } : {}),
+          ...(speechProviderKey ? { providerKey: speechProviderKey } : {}),
           ...(supportedFormat ? { format: supportedFormat } : {}),
           ...(speechSpeedRange ? { speed: speechSpeedValue } : {}),
-          ...getSpeechModelAdvancedOptions(speechProfile?.publicModel || "", speechAdvanced),
+          ...getSpeechModelAdvancedOptions(speechProfile?.publicModel || "", speechAdvanced, speechProviderKey),
           projectId,
           canvasId,
           nodeId: node.id,
@@ -398,7 +442,7 @@ export default function CanvasAudioNodePanel({
         ...(voice.trim() ? { voice: voice.trim() } : {}),
         ...(supportedFormat ? { format: supportedFormat } : {}),
         ...(speechSpeedRange ? { speed: speechSpeedValue } : {}),
-        advancedOptions: getSpeechModelAdvancedOptions(speechProfile?.publicModel || "", speechAdvanced),
+        advancedOptions: getSpeechModelAdvancedOptions(speechProfile?.publicModel || "", speechAdvanced, speechProviderKey),
         createdAt: Date.now(),
       };
       const replaced = await onReplaceAudio(node.id, file, generation);
@@ -456,6 +500,7 @@ export default function CanvasAudioNodePanel({
           <nav className="canvas-audio-mode-tabs" aria-label="音频工具">
             <button type="button" className={activeMode === "speech" ? "active" : ""} aria-pressed={activeMode === "speech"} onClick={() => setActiveMode("speech")}>配音</button>
             <button type="button" className={activeMode === "music" ? "active" : ""} aria-pressed={activeMode === "music"} onClick={() => setActiveMode("music")}>音乐</button>
+            <button type="button" className={activeMode === "sound-effect" ? "active" : ""} aria-pressed={activeMode === "sound-effect"} onClick={() => setActiveMode("sound-effect")}>音效</button>
             <button type="button" className={activeMode === "transcription" ? "active" : ""} aria-pressed={activeMode === "transcription"} onClick={() => setActiveMode("transcription")}>转写</button>
           </nav>
         {activeMode === "speech" && <section className="canvas-audio-speech" aria-label="文本转配音">
@@ -494,7 +539,7 @@ export default function CanvasAudioNodePanel({
         <details className="canvas-audio-advanced">
           <summary>音色设置（可选）</summary>
         {speechProfile ? <>
-          {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && <>
+          {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && !usesRegisteredVoice && <>
             <span className="canvas-audio-option-label">音色</span>
             <SelectMenu
               value={voiceChoice}
@@ -504,9 +549,9 @@ export default function CanvasAudioNodePanel({
               portalZIndex={CANVAS_Z_INDEX.modalPopover}
               options={[
                 { value: "", label: "使用模型默认音色" },
-                ...speechVoiceOptions(speechProfile).map((option) => ({
+                ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
                   ...option,
-                  action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} optionAction />,
+                  action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
                 })),
                 { value: "custom", label: "自定义音色名称" },
               ]}
@@ -598,10 +643,13 @@ export default function CanvasAudioNodePanel({
               disabled={generatingSpeech}
             />
           </>}
+          {usesRegisteredVoice && <small className="canvas-audio-input-note">当前使用已登记的自备音色编号，预设音色与样音不会参与本次生成。清空编号即可恢复预设音色。</small>}
           {speechProfile && <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={(next) => { setSpeechAdvanced(next); saveSpeechDraft(next); }} disabled={generatingSpeech} compact />}
           <div className="canvas-audio-voice-sample-row">
-            {speechProfile && voice.trim()
-              ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} />
+            {usesRegisteredVoice
+              ? <span className="voice-sample-unavailable">已登记音色编号暂无预设样音</span>
+              : speechProfile && voice.trim()
+              ? <VoiceSampleButton model={speechProfile.publicModel} voice={voice.trim()} providerKey={speechSampleProviderKey} />
               : <span className="voice-sample-unavailable">{speechProfile?.requiresVoiceId ? '已登记音色暂无本地样音' : speechProfile?.supportsDialogue ? '请为每句对白选择音色' : '选择已收录音色后可播放样音'}</span>}
             <small>本地样音不调用配音接口、不消耗额度；样音仅用于感受音色风格。</small>
           </div>
@@ -654,28 +702,28 @@ export default function CanvasAudioNodePanel({
           {transcriptionError && <p className="canvas-audio-error" role="alert">{transcriptionError}</p>}
           <small className="canvas-audio-input-note">支持 MP3、WAV、OGG、M4A、FLAC、WebM、PCM，最大 50 MiB</small>
         </section>}
-        {activeMode === "music" && <section className="canvas-audio-speech canvas-audio-music" aria-label={`${musicTaskKindName}生成`}>
+        {(activeMode === "music" || activeMode === "sound-effect") && <section className="canvas-audio-speech canvas-audio-music" aria-label={`${musicTaskKindName}生成`}>
           <div className="canvas-audio-speech-heading">
-            <div><label htmlFor={`canvas-audio-music-${node.id}`}>{musicTaskKindName === "音效" ? "音效描述" : "音乐创作描述"}</label><small>{musicProfile?.promptRequired ? musicTaskKindName === "音效" ? "描述声音本身，不是完整歌曲" : "描述曲风、情绪、乐器与场景" : "按所选模型填写创作描述或工作流素材"}</small></div>
-            {musicProfile && <span className="canvas-audio-speech-count">{musicDraft.prompt.length}{musicProfile.promptMaxLength ? ` / ${musicProfile.promptMaxLength}` : " 字"}</span>}
+            <div><label htmlFor={`canvas-audio-music-${node.id}`}>{musicTaskKindName === "音效" ? "音效描述" : "音乐创作描述"}</label><small>{activeMusicProfile?.promptRequired ? musicTaskKindName === "音效" ? "描述声音本身，不是完整歌曲" : "描述曲风、情绪、乐器与场景" : "按所选模型填写创作描述或工作流素材"}</small></div>
+            {activeMusicProfile && <span className="canvas-audio-speech-count">{activeMusicDraft.prompt.length}{activeMusicProfile.promptMaxLength ? ` / ${activeMusicProfile.promptMaxLength}` : " 字"}</span>}
           </div>
           <textarea
             id={`canvas-audio-music-${node.id}`}
-            value={musicDraft.prompt}
-            maxLength={musicProfile?.promptMaxLength}
+            value={activeMusicDraft.prompt}
+            maxLength={activeMusicProfile?.promptMaxLength}
             rows={6}
-            placeholder={musicTaskKindName === "音效" ? "描述声音本身，例如关门声、雨打窗户…" : "描述希望生成的音乐、声音或处理目标…"}
+            placeholder={musicTaskKindName === "音效" ? "描述声音本身，例如关门声、雨打窗户…" : "描述曲风、情绪、乐器与场景…"}
             onChange={(event) => {
               const prompt = event.target.value;
               setMusicError("");
-              saveMusicDraft({ prompt });
+              (activeMode === "sound-effect" ? saveSoundEffectDraft : saveMusicDraft)({ prompt });
             }}
             disabled={musicBusy}
           />
-          {musicProfile && <CangyuanMusicOptionsFields
-            profile={musicProfile}
-            options={musicDraft.options}
-            onChange={(options: CangyuanMusicOptions) => saveMusicDraft({ options })}
+          {activeMusicProfile && <CangyuanMusicOptionsFields
+            profile={activeMusicProfile}
+            options={activeMusicDraft.options}
+            onChange={(options: CangyuanMusicOptions) => (activeMode === "sound-effect" ? saveSoundEffectDraft : saveMusicDraft)({ options })}
             onUploadStateChange={(fieldId, uploading) => setUploadingMusicFields((current) => {
               const next = new Set(current);
               if (uploading) next.add(fieldId);
@@ -683,7 +731,7 @@ export default function CanvasAudioNodePanel({
               return next;
             })}
           />}
-          {!musicModels.length && <p className="canvas-audio-input-note">当前没有可用的音乐或音效生成模型，请先在模型库启用支持音乐生成的模型。</p>}
+          {!(activeMode === "sound-effect" ? soundEffectModels : musicModels).length && <p className="canvas-audio-input-note">当前没有已接入可运行接口的{musicTaskKindName}模型。启用模型前，请确认对应服务商已完成该任务类型的接口适配。</p>}
           {musicError && <p className="canvas-audio-error" role="alert">{musicError}</p>}
         </section>}
         </div>
@@ -757,11 +805,11 @@ export default function CanvasAudioNodePanel({
             </div>
           </details>}
           {musicHistory.length > 0 && <details className="canvas-audio-generation" open>
-            <summary>音乐任务记录 · {musicHistory.length} 条</summary>
+            <summary>音乐与音效任务记录 · {musicHistory.length} 条</summary>
             <div className="canvas-audio-generation-list">
               {musicHistory.map((musicTask) => <article key={musicTask.id}>
-                <p>{musicTask.prompt || "音乐处理任务"}</p>
-                <small>{musicTask.modelName} · {musicTaskStatusLabel(musicTask.status)} · {new Date(musicTask.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
+                <p>{musicTask.prompt || (cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || "")) === "音效" ? "音效处理任务" : "音乐处理任务")}</p>
+                <small>{cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || ""))} · {musicTask.modelName} · {canvasAudioMusicTaskStatusLabel(musicTask.status)} · {new Date(musicTask.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
                 {musicTask.error && <small className="canvas-audio-error">{musicTask.error}</small>}
                 {musicTask.outputs.map((output, index) => output.url ? <div className="canvas-audio-music-output" key={`${musicTask.id}-${index}`}>
                   <b>{output.name || output.title || output.artifactType?.toUpperCase() || `结果 ${index + 1}`}</b>
@@ -779,25 +827,29 @@ export default function CanvasAudioNodePanel({
         </aside>
       </div>
       <div className="canvas-audio-panel-actions">
-        {(activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" ? musicError : transcriptionError}</p>}
-        <div className="canvas-audio-panel-service" title={activeMode === "speech" ? speechServiceLabel : activeMode === "music" ? selectedMusicModel?.displayName || "暂无音乐模型" : selectedTranscriptionModel?.displayName || "暂无转写模型"}>
+        {(activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError}</p>}
+        <div className="canvas-audio-panel-service" title={activeMode === "speech" ? speechServiceLabel : activeMode === "music" || activeMode === "sound-effect" ? activeMusicModel?.displayName || `暂无${musicTaskKindName}模型` : selectedTranscriptionModel?.displayName || "暂无转写模型"}>
           <span className="canvas-audio-panel-service-dot" aria-hidden="true" />
           <div>
-            <b>{activeMode === "speech" ? "配音模型" : activeMode === "music" ? "音乐模型" : "转写模型"}</b>
+            <b>{activeMode === "speech" ? "配音模型" : activeMode === "music" ? "音乐模型" : activeMode === "sound-effect" ? "音效模型" : "转写模型"}</b>
             <ModelPicker
-              models={activeMode === "speech" ? speechModels : activeMode === "music" ? musicModels : transcriptionModels}
-              capability={activeMode === "speech" ? "speech" : activeMode === "music" ? "music-generate" : "transcription"}
-              value={activeMode === "speech" ? speechModelId : activeMode === "music" ? selectedMusicModel?.id || "" : selectedTranscriptionModel?.id || ""}
+              models={activeMode === "speech" ? speechModels : activeMode === "music" ? musicModels : activeMode === "sound-effect" ? soundEffectModels : transcriptionModels}
+              capability={activeMode === "speech" ? "speech" : activeMode === "music" ? "music-generate" : activeMode === "sound-effect" ? "sound-effect" : "transcription"}
+              value={activeMode === "speech" ? speechModelId : activeMode === "music" ? selectedMusicModel?.id || "" : activeMode === "sound-effect" ? selectedSoundEffectModel?.id || "" : selectedTranscriptionModel?.id || ""}
               onChange={(modelId) => activeMode === "speech"
                 ? (setSpeechModelId(modelId), setCustomVoiceSelected(false), setSpeechError(""), saveSpeechDraft({ modelId }))
                 : activeMode === "music"
                   ? (setMusicError(""), saveMusicDraft({ modelId }))
-                  : (setTranscriptionError(""), saveTranscriptionDraft({ modelId }))}
+                  : activeMode === "sound-effect"
+                    ? (setMusicError(""), saveSoundEffectDraft({ modelId }))
+                    : (setTranscriptionError(""), saveTranscriptionDraft({ modelId }))}
               defaultProviderId={defaultProviderId}
               defaultProviderName={defaultProviderName}
               placeholder={activeMode === "speech"
                 ? speechModels.length ? undefined : "尚未启用配音模型"
-                : activeMode === "music" ? musicModels.length ? undefined : "尚未启用音乐模型" : transcriptionModels.length ? undefined : "尚未启用转写模型"}
+                : activeMode === "music" ? musicModels.length ? undefined : "暂无已接入的音乐模型"
+                  : activeMode === "sound-effect" ? soundEffectModels.length ? undefined : "暂无已接入的音效模型"
+                    : transcriptionModels.length ? undefined : "尚未启用转写模型"}
               automaticHint={activeMode === "speech" ? "按默认服务商选择可用配音模型，无在线模型时使用本机语音" : undefined}
               triggerLabelMode="model"
               portalZIndex={CANVAS_Z_INDEX.modalPopover}
@@ -805,24 +857,24 @@ export default function CanvasAudioNodePanel({
               disabled={generatingSpeech || transcriptionBusy || musicBusy}
               className="canvas-audio-model-picker"
             />
-            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" ? currentMusicTask ? `任务状态：${musicTaskStatusLabel(currentMusicTask.status)}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
+            <small>{activeMode === "speech" ? `上次生成：${speechServiceLabel}` : activeMode === "music" || activeMode === "sound-effect" ? currentMusicTask ? `最近${musicTaskKindName}任务：${canvasAudioMusicTaskStatusLabel(currentMusicTask.status)}` : "异步任务完成后结果会保留在此节点" : "识别结果会保存在当前节点"}</small>
           </div>
         </div>
         {activeMode === "speech" && <button type="button" className="canvas-audio-panel-upload" onClick={() => inputRef.current?.click()} disabled={generatingSpeech}>{hasAudio ? "替换音频" : "导入音频"}</button>}
         <button
           type="button"
           className="canvas-node-editor-generate canvas-audio-generate"
-          onClick={() => activeMode === "speech" ? void generateSpeech() : activeMode === "music" ? void generateMusic() : void transcribeAudio()}
+          onClick={() => activeMode === "speech" ? void generateSpeech() : activeMode === "music" || activeMode === "sound-effect" ? void generateMusic() : void transcribeAudio()}
           disabled={activeMode === "speech"
           ? !speechText.trim() || generatingSpeech || speechProfile?.requiresVoiceId && !speechAdvanced.voiceId?.trim() || speechProfile?.supportsDialogue && (!speechAdvanced.dialogue?.length || Boolean(dialogueDraftError))
-            : activeMode === "music"
-              ? !selectedMusicModel || !musicProfile || musicBusy || uploadingMusicFields.size > 0
+            : activeMode === "music" || activeMode === "sound-effect"
+              ? !activeMusicModel || !activeMusicProfile || musicBusy || uploadingMusicFields.size > 0
               : !selectedTranscriptionModel || transcriptionBusy || transcriptionDraft.language === "__custom" && !transcriptionDraft.customLanguage?.trim() || !transcriptionFile && !hasAudio}
-          aria-busy={activeMode === "speech" ? generatingSpeech : activeMode === "music" ? musicBusy : transcriptionBusy}
+          aria-busy={activeMode === "speech" ? generatingSpeech : activeMode === "music" || activeMode === "sound-effect" ? musicBusy : transcriptionBusy}
         >
           {activeMode === "speech"
             ? generatingSpeech ? "正在生成…" : speechError ? speechProfile?.supportsDialogue ? "重新生成对白" : "重新生成配音" : hasAudio ? "生成并替换" : speechProfile?.supportsDialogue ? "生成对白" : "生成配音"
-            : activeMode === "music"
+            : activeMode === "music" || activeMode === "sound-effect"
               ? musicBusy ? "正在提交…" : currentMusicTask && ["pending", "queued", "running", "waiting"].includes(currentMusicTask.status) ? "提交新任务" : `生成${musicTaskKindName}`
               : transcriptionBusy ? "正在识别…" : currentTranscription ? "重新转写" : "开始转写"}
         </button>

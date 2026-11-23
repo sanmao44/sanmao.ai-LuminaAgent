@@ -71,7 +71,10 @@ function isSoundEffectTask(task: CangyuanMediaTask) {
 
 function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | 'sound-effect' | '3d-generate') {
   if (!state) return [];
-  const providers = state.providers.filter(isCangyuanProvider);
+  // The route implements the documented creative-task protocol. The UI must
+  // select every compatible provider, not only the vendor that introduced it.
+  const providers = state.providers.filter((provider) =>
+    provider.type === 'openai-compatible' && provider.creativeTaskProtocol === 'cangyuan-creative-v1');
   return filterModelsByActiveProviders(state.models, providers, { capability });
 }
 
@@ -200,9 +203,13 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
   const soundEffectModels = useMemo(() => supportedSoundEffectModels(publicState), [publicState]);
   const models3d = useMemo(() => threeDModels(publicState), [publicState]);
   const speechModel = useMemo(() => speechModels.find((model) => model.id === speechModelId) || speechModels[0], [speechModelId, speechModels]);
-  const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || ''), [speechModel]);
-  const speechFormats = speechProfile ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine) : [];
-  const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine) : undefined;
+  const speechSampleProviderKey = isCangyuanProvider(publicState?.providers.find((provider) => provider.id === speechModel?.providerId)) ? 'cangyuan' : '';
+  const speechProfile = useMemo(() => getSpeechModelProfile(speechModel?.rawId || '', speechSampleProviderKey || undefined), [speechModel, speechSampleProviderKey]);
+  const usesRegisteredVoice = Boolean(speechProfile?.supportsVoiceId && speechAdvanced.voiceId?.trim());
+  const speechFormats = speechProfile
+    ? getSpeechModelResponseFormats(speechProfile.publicModel, speechAdvanced.engine, speechSampleProviderKey)
+    : ['mp3', 'wav'] as const;
+  const speechSpeedRange = speechProfile ? getSpeechModelSpeedRange(speechProfile.publicModel, speechAdvanced.engine, speechSampleProviderKey) : undefined;
   const selectedSpeechFormat = speechFormats.includes(speechFormat) ? speechFormat : speechFormats[0];
   const speechTextLimit = speechProfile?.textMaxLength ?? SPEECH_PLATFORM_TEXT_LIMIT;
   const dialogueDraftText = speechAdvanced.dialogueText ?? speechAdvanced.dialogue?.map((line) => `${line.voice} | ${line.text}`).join('\n') ?? '';
@@ -369,12 +376,14 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
           text,
           modelId: speechModel.id,
           source: 'workspace',
-          ...(speechProfile && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom'
+          ...(!speechProfile
             ? (speechCustomVoice.trim() ? { voice: speechCustomVoice.trim() } : {})
-            : (speechProfile && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
+            : speechProfile && !usesRegisteredVoice && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom'
+              ? (speechCustomVoice.trim() ? { voice: speechCustomVoice.trim() } : {})
+              : (speechProfile && !usesRegisteredVoice && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice ? { voice: speechVoiceChoice } : {})),
           ...(speechFormats.includes(speechFormat) ? { format: speechFormat } : {}),
           ...(speechSpeedRange ? { speed: clampSpeechSpeed(speechSpeed, speechSpeedRange.min, speechSpeedRange.max) } : {}),
-          ...getSpeechModelAdvancedOptions(speechProfile?.publicModel || '', speechAdvanced),
+          ...getSpeechModelAdvancedOptions(speechProfile?.publicModel || '', speechAdvanced, speechSampleProviderKey || undefined),
         }),
         cache: 'no-store',
       });
@@ -680,9 +689,33 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
               </div>
             ) : mode === 'speech' ? (
               <>
+                {!speechProfile && <div className="cangyuan-speech-options" aria-label="通用配音设置">
+                  <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-generic-voice">
+                    <span>音色名称（可选）</span>
+                    <input
+                      id="cangyuan-speech-generic-voice"
+                      type="text"
+                      maxLength={100}
+                      value={speechCustomVoice}
+                      onChange={(event) => setSpeechCustomVoice(event.target.value)}
+                      placeholder="留空使用模型默认音色"
+                    />
+                  </label>
+                  <div className="cangyuan-speech-field">
+                    <span>输出格式</span>
+                    <SelectMenu
+                      value={selectedSpeechFormat}
+                      ariaLabel="配音输出格式"
+                      className="cangyuan-field-select"
+                      menuClassName="cangyuan-field-select-menu"
+                      options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
+                      onChange={(format) => setSpeechFormat(format as SpeechOutputFormat)}
+                    />
+                  </div>
+                </div>}
                 {speechProfile && (
                   <div className="cangyuan-speech-options" aria-label="配音参数">
-                    {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && <div className="cangyuan-speech-field">
+                    {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && !usesRegisteredVoice && <div className="cangyuan-speech-field">
                       <span>音色</span>
                       <SelectMenu
                         value={speechVoiceChoice}
@@ -691,17 +724,18 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         menuClassName="cangyuan-field-select-menu"
                         options={[
                           { value: '', label: '使用模型默认音色' },
-                          ...speechVoiceOptions(speechProfile).map((option) => ({
+                          ...speechVoiceOptions(speechProfile, speechSampleProviderKey).map((option) => ({
                             ...option,
-                            action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} optionAction />,
+                            action: <VoiceSampleButton model={speechProfile.publicModel} voice={option.value} providerKey={speechSampleProviderKey} optionAction />,
                           })),
                           { value: 'custom', label: '自定义音色名称' },
                         ]}
                         onChange={setSpeechVoiceChoice}
                       />
-                      {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} />}
+                      {speechVoiceChoice && speechVoiceChoice !== 'custom' && <VoiceSampleButton model={speechProfile.publicModel} voice={speechVoiceChoice} providerKey={speechSampleProviderKey} />}
                     </div>}
-                    {!speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom' && (
+                    {usesRegisteredVoice && <small className="cangyuan-speech-note">当前使用已登记的自备音色编号，预设音色与样音不会参与本次生成。清空编号即可恢复预设音色。</small>}
+                    {!usesRegisteredVoice && !speechProfile.supportsDialogue && !speechProfile.requiresVoiceId && speechVoiceChoice === 'custom' && (
                       <label className="cangyuan-speech-field" htmlFor="cangyuan-speech-custom-voice">
                         <span>自定义音色</span>
                         <input
@@ -757,7 +791,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                 <div className="cangyuan-field-foot"><span>{speechProfile?.supportsDialogue ? '多人对白字段按逐句角色对象提交；官方目录的字段类型定义存在冲突' : speechProfile?.textMaxLength ? `当前型号正文上限 ${speechProfile.textMaxLength} 字符` : `平台输入上限 ${SPEECH_PLATFORM_TEXT_LIMIT} 字符；官方未列该型号专属上限`}</span><span>{speechText.length}/{speechTextLimit}</span></div>
                 <div className="cangyuan-submit-row">
                   <span>{speechModel?.displayName || '请选择模型'}</span>
-                  <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || speechVoiceChoice === 'custom' && !speechCustomVoice.trim() || speechProfile?.requiresVoiceId && !speechAdvanced.voiceId?.trim() || speechProfile?.supportsDialogue && (!speechAdvanced.dialogue?.length || Boolean(dialogueDraftError))} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : speechProfile?.supportsDialogue ? '生成对白' : '生成配音'}</button>
+                  <button type="button" className="cangyuan-primary-button" disabled={busy || !speechText.trim() || !speechModel || !usesRegisteredVoice && speechProfile && speechVoiceChoice === 'custom' && !speechCustomVoice.trim() || speechProfile?.requiresVoiceId && !speechAdvanced.voiceId?.trim() || speechProfile?.supportsDialogue && (!speechAdvanced.dialogue?.length || Boolean(dialogueDraftError))} onClick={() => void submitSpeech()}>{busy ? '正在生成…' : speechProfile?.supportsDialogue ? '生成对白' : '生成配音'}</button>
                 </div>
               </>
             ) : isCreativeAudioMode ? (

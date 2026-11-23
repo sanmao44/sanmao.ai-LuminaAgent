@@ -22,7 +22,11 @@ export function createModelArtifactPreviewApplication(dependencies: ModelArtifac
       if (!task || task.kind !== '3d') {
         throw new ModelArtifactPreviewError('not-found', '模型任务不存在。');
       }
-      if (task.status !== 'succeeded') {
+      // A user may cancel a long-running 3D task after the provider has already
+      // returned a usable GLB. Keep that artifact previewable; the output
+      // validation below still prevents cancelled tasks without a valid GLB
+      // from being treated as ready.
+      if (task.status !== 'succeeded' && task.status !== 'cancelled') {
         throw new ModelArtifactPreviewError('not-ready', '模型尚未生成完成。');
       }
       if (!Number.isSafeInteger(outputIndex) || outputIndex < 0) {

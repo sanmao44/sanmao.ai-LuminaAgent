@@ -10,6 +10,8 @@
 .canvas-media-state>small{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8px}
 .canvas-media-state.pending>span{animation:canvas-pulse 1.4s ease-in-out infinite}
 .canvas-media-state.failed>span{color:var(--danger)}
+.canvas-media-state.cancelled>span{color:var(--node-text)}
+.canvas-media-state.cancelled>small{white-space:normal;line-height:1.45}
 .canvas-media-state.draft>span{color:var(--accent-text)}
 .canvas-media-stage img,.canvas-media-stage video{user-select:none;-webkit-user-drag:none}
 .canvas-node .canvas-media-state.draft>span{color:var(--node-text)}

@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type FormEvent as ReactFormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { type AssetRecord, type AssetSource } from "@/lib/assets";
 import { DEFAULT_ASSET_COLLECTIONS, type AssetCollection } from "@/lib/client-history";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
-import { ASSET_SOURCE_LABELS, filterCanvasAssets, isAssignableCanvasAssetCollection } from "@/lib/canvas/asset-library";
+import { ASSET_SOURCE_LABELS, canvasAssetCollectionNameConflicts, canvasAssetSelectionSummary, filterCanvasAssets, isAssignableCanvasAssetCollection } from "@/lib/canvas/asset-library";
 import {
   collectionIdsAfterAddition,
   collectionIdsAfterRemoval,
@@ -22,6 +22,10 @@ import SelectMenu from "@/components/SelectMenu";
 import { projectVisualReferenceAssetId } from "@/lib/canvas/project-visual-references";
 
 type Notice = { message: string; kind: "ok" | "error" };
+type AssetActionDialog =
+  | { kind: "delete-collection"; collectionId: string }
+  | { kind: "rename-collection"; collectionId: string; value: string }
+  | { kind: "add-tag"; assetId: string; value: string };
 
 export default function CanvasAssetDrawer({
   extraAssets,
@@ -79,6 +83,12 @@ export default function CanvasAssetDrawer({
   const [nodeDropActive, setNodeDropActive] = useState(false);
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
   const [savingCollection, setSavingCollection] = useState(false);
+  const [assetActionDialog, setAssetActionDialog] = useState<AssetActionDialog | null>(null);
+  const [savingAssetAction, setSavingAssetAction] = useState(false);
+  const assetDialogFormRef = useRef<HTMLFormElement | null>(null);
+  const assetDialogInputRef = useRef<HTMLInputElement | null>(null);
+  const assetDialogTriggerRef = useRef<HTMLElement | null>(null);
+  const assetDialogWasOpenRef = useRef(false);
 
   useEffect(() => {
     if (!preview) return;
@@ -91,6 +101,36 @@ export default function CanvasAssetDrawer({
     window.addEventListener("keydown", handleEscape, true);
     return () => window.removeEventListener("keydown", handleEscape, true);
   }, [preview]);
+
+  useEffect(() => {
+    if (!assetActionDialog) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!savingAssetAction) setAssetActionDialog(null);
+    };
+    window.addEventListener("keydown", handleEscape, true);
+    return () => window.removeEventListener("keydown", handleEscape, true);
+  }, [assetActionDialog, savingAssetAction]);
+
+  useEffect(() => {
+    if (assetActionDialog) {
+      if (!assetDialogWasOpenRef.current) {
+        assetDialogWasOpenRef.current = true;
+        if (assetDialogInputRef.current) assetDialogInputRef.current.focus();
+        else assetDialogFormRef.current?.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+      } else if (!savingAssetAction && document.activeElement === document.body) {
+        if (assetDialogInputRef.current) assetDialogInputRef.current.focus();
+        else assetDialogFormRef.current?.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+      }
+      return;
+    }
+    if (!assetDialogWasOpenRef.current) return;
+    assetDialogWasOpenRef.current = false;
+    assetDialogTriggerRef.current?.focus();
+    assetDialogTriggerRef.current = null;
+  }, [assetActionDialog, savingAssetAction]);
 
   useEffect(() => {
     let active = true;
@@ -123,6 +163,11 @@ export default function CanvasAssetDrawer({
       .then((nextAssets) => {
         if (loadVersion !== assetLoadVersionRef.current) return;
         setAssets(nextAssets);
+        setSelectedAssetIds((current) => {
+          const available = new Set(nextAssets.map((asset) => asset.id));
+          const next = new Set([...current].filter((id) => available.has(id)));
+          return next.size === current.size ? current : next;
+        });
         hasLoadedAssetsRef.current = true;
       })
       .catch(() => {
@@ -150,6 +195,13 @@ export default function CanvasAssetDrawer({
 
   const setDrawerCollapsed = (value: boolean) => {
     setCollapsed(value);
+  };
+
+  const openAssetActionDialog = (dialog: AssetActionDialog) => {
+    assetDialogTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setAssetActionDialog(dialog);
   };
 
   const handleCanvasNodeDragOver = (event: ReactDragEvent<HTMLElement>) => {
@@ -195,12 +247,15 @@ export default function CanvasAssetDrawer({
     sort,
     ...(projectOnly && creativeProjectId ? { projectId: creativeProjectId } : {}),
   });
+  const selectedSummary = canvasAssetSelectionSummary(filtered, selectedAssetIds);
+  const canBatchAssign = collection !== "uncategorized" && isAssignableCanvasAssetCollection(collection);
+  const batchTargetName = collections.find((item) => item.id === collection)?.name;
 
   const createCollection = async () => {
     const name = newCollectionName.trim();
     if (!name) return;
     if (savingCollection) return;
-    if (collections.some((item) => item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    if (canvasAssetCollectionNameConflicts(collections, name)) {
       onNotify("已经存在同名资产集合。", "error");
       return;
     }
@@ -227,7 +282,13 @@ export default function CanvasAssetDrawer({
       onNotify("内置资产集合不能删除。", "error");
       return;
     }
-    if (typeof window !== "undefined" && !window.confirm(`确定删除资产集合“${target.name}”吗？集合内资产不会被删除。`)) return;
+    openAssetActionDialog({ kind: "delete-collection", collectionId });
+  };
+
+  const confirmDeleteCollection = async (collectionId: string) => {
+    const target = collections.find((item) => item.id === collectionId);
+    if (!target || target.builtin || savingAssetAction) return;
+    setSavingAssetAction(true);
     try {
       const affectedAssets = assets.filter((asset) => asset.collectionIds?.includes(collectionId));
       await Promise.all(
@@ -248,9 +309,12 @@ export default function CanvasAssetDrawer({
         ),
       );
       if (collection === collectionId) changeCollection("all");
+      setAssetActionDialog(null);
       onNotify(`已删除资产集合“${target.name}”，其中的资产已保留。`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "资产集合删除失败。", "error");
+    } finally {
+      setSavingAssetAction(false);
     }
   };
 
@@ -260,15 +324,77 @@ export default function CanvasAssetDrawer({
       onNotify("内置资产集合不能重命名。", "error");
       return;
     }
-    const nextName = window.prompt("重命名资产集合", target.name)?.trim();
-    if (!nextName || nextName === target.name) return;
+    openAssetActionDialog({ kind: "rename-collection", collectionId, value: target.name });
+  };
+
+  const confirmRenameCollection = async (collectionId: string, rawName: string) => {
+    const target = collections.find((item) => item.id === collectionId);
+    if (!target || target.builtin || savingAssetAction) return;
+    const nextName = rawName.trim();
+    if (!nextName || nextName === target.name) {
+      setAssetActionDialog(null);
+      return;
+    }
+    if (canvasAssetCollectionNameConflicts(collections, nextName, collectionId)) {
+      onNotify("已经存在同名资产集合，请换一个名称。", "error");
+      return;
+    }
     const next = collections.map((item) => item.id === collectionId ? { ...item, name: nextName, updatedAt: Date.now() } : item);
+    setSavingAssetAction(true);
     try {
       await persistCanvasAssetCollections(next);
       setCollections(next);
+      setAssetActionDialog(null);
       onNotify(`已将资产集合重命名为“${nextName}”。`);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "资产集合重命名失败。", "error");
+    } finally {
+      setSavingAssetAction(false);
+    }
+  };
+
+  const confirmAddAssetTag = async (assetId: string, rawTag: string) => {
+    const asset = assets.find((item) => item.id === assetId);
+    const tag = rawTag.trim();
+    if (!asset || !tag || savingAssetAction) return;
+    setSavingAssetAction(true);
+    try {
+      await updateCanvasAssetMetadata(asset, { tags: tagsAfterAddition(asset, tag) });
+      setAssetActionDialog(null);
+      reload();
+    } catch {
+      onNotify("标签保存失败", "error");
+    } finally {
+      setSavingAssetAction(false);
+    }
+  };
+
+  const submitAssetActionDialog = (event: ReactFormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!assetActionDialog || savingAssetAction) return;
+    if (assetActionDialog.kind === "delete-collection") {
+      void confirmDeleteCollection(assetActionDialog.collectionId);
+    } else if (assetActionDialog.kind === "rename-collection") {
+      void confirmRenameCollection(assetActionDialog.collectionId, assetActionDialog.value);
+    } else {
+      void confirmAddAssetTag(assetActionDialog.assetId, assetActionDialog.value);
+    }
+  };
+
+  const trapAssetDialogFocus = (event: ReactKeyboardEvent<HTMLFormElement>) => {
+    if (event.key !== "Tab") return;
+    const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled)',
+    ));
+    if (!controls.length) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
     }
   };
 
@@ -480,7 +606,15 @@ export default function CanvasAssetDrawer({
             <button type="button" onClick={() => void createCollection()} disabled={!newCollectionName.trim()} aria-busy={savingCollection}><span aria-hidden="true">＋</span>{savingCollection ? "保存中" : "创建"}</button>
           </div>
         </div>
-        {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar"><b>已选 {selectedAssetIds.size} 个</b><button type="button" onClick={() => void addSelectedAssetsToCollection()}>加入当前集合</button><button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button></div>}
+        {selectedAssetIds.size > 0 && <div className="canvas-asset-bulk-bar">
+          <b>已选 {selectedSummary.total} 个</b>
+          <span className="canvas-asset-bulk-context" role="status">
+            {selectedSummary.hidden > 0 ? `当前筛选隐藏 ${selectedSummary.hidden} 个 · ` : ""}
+            目标：{canBatchAssign ? batchTargetName || "当前集合" : "请先选择自定义集合"}
+          </span>
+          <button type="button" disabled={!canBatchAssign} title={canBatchAssign ? `将已选 ${selectedSummary.total} 个资产加入“${batchTargetName || "当前集合"}”` : "请先选择自定义集合后再批量归类。"} onClick={() => void addSelectedAssetsToCollection()}>加入目标集合</button>
+          <button type="button" onClick={() => setSelectedAssetIds(new Set())}>清除选择</button>
+        </div>}
         <div className="canvas-asset-results">
           <div className="canvas-asset-summary">
             <b>{filtered.length} 个资产</b>
@@ -579,12 +713,7 @@ export default function CanvasAssetDrawer({
                       type="button"
                       title="添加标签"
                       aria-label={`给${asset.name}添加标签`}
-                      onClick={async () => {
-                        const tag = window.prompt("输入标签");
-                        if (!tag?.trim()) return;
-                        try { await updateCanvasAssetMetadata(asset, { tags: tagsAfterAddition(asset, tag.trim()) }); reload(); }
-                        catch { onNotify("标签保存失败", "error"); }
-                      }}
+                      onClick={() => openAssetActionDialog({ kind: "add-tag", assetId: asset.id, value: "" })}
                     >#</button>
                     <button
                       type="button"
@@ -620,6 +749,67 @@ export default function CanvasAssetDrawer({
           )}
         </div>
       </aside>
+      {assetActionDialog && typeof document !== "undefined" && createPortal(
+        <div
+          className="canvas-asset-action-backdrop"
+          style={{ zIndex: CANVAS_Z_INDEX.modalPopover }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !savingAssetAction) setAssetActionDialog(null);
+          }}
+        >
+          <form
+            ref={assetDialogFormRef}
+            className="canvas-asset-action-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="canvas-asset-action-title"
+            aria-describedby="canvas-asset-action-description"
+            onSubmit={submitAssetActionDialog}
+            onKeyDown={trapAssetDialogFocus}
+          >
+            <header>
+              <div>
+                <span aria-hidden="true">{assetActionDialog.kind === "delete-collection" ? "⌫" : assetActionDialog.kind === "rename-collection" ? "✎" : "#"}</span>
+                <h2 id="canvas-asset-action-title">
+                  {assetActionDialog.kind === "delete-collection" ? "删除资产集合" : assetActionDialog.kind === "rename-collection" ? "重命名资产集合" : "添加资产标签"}
+                </h2>
+              </div>
+              <button type="button" aria-label="关闭对话框" disabled={savingAssetAction} onClick={() => setAssetActionDialog(null)}>×</button>
+            </header>
+            <p id="canvas-asset-action-description">
+              {assetActionDialog.kind === "delete-collection"
+                ? `确定删除“${collections.find((item) => item.id === assetActionDialog.collectionId)?.name || "此集合"}”吗？集合中的资产不会被删除。`
+                : assetActionDialog.kind === "rename-collection"
+                  ? "更新集合名称后，已归类的资产仍会保留在此集合中。"
+                  : `为“${assets.find((item) => item.id === assetActionDialog.assetId)?.name || "此资产"}”添加一个标签。`}
+            </p>
+            {assetActionDialog.kind !== "delete-collection" && (
+              <label className="canvas-asset-action-field">
+                <span>{assetActionDialog.kind === "rename-collection" ? "集合名称" : "标签名称"}</span>
+                <input
+                  ref={assetDialogInputRef}
+                  autoFocus
+                  value={assetActionDialog.value}
+                  onChange={(event) => setAssetActionDialog((current) => current && "value" in current ? { ...current, value: event.target.value } : current)}
+                  placeholder={assetActionDialog.kind === "rename-collection" ? "输入集合名称" : "输入标签"}
+                  aria-label={assetActionDialog.kind === "rename-collection" ? "集合名称" : "标签名称"}
+                />
+              </label>
+            )}
+            <footer>
+              <button type="button" className="canvas-asset-action-secondary" disabled={savingAssetAction} onClick={() => setAssetActionDialog(null)}>取消</button>
+              <button
+                type="submit"
+                className={assetActionDialog.kind === "delete-collection" ? "canvas-asset-action-danger" : "canvas-asset-action-primary"}
+                disabled={savingAssetAction || ("value" in assetActionDialog && !assetActionDialog.value.trim())}
+              >
+                {savingAssetAction ? "保存中" : assetActionDialog.kind === "delete-collection" ? "删除集合" : assetActionDialog.kind === "rename-collection" ? "保存名称" : "添加标签"}
+              </button>
+            </footer>
+          </form>
+        </div>,
+        document.body,
+      )}
       {preview && typeof document !== "undefined" && createPortal(
         <div
           className="canvas-asset-preview-backdrop"
