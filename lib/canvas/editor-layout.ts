@@ -165,47 +165,11 @@ export function placeCanvasGroupToolbar(
 export function placeCanvasNodeEditor(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
+  overlay: Pick<CanvasOverlaySize, "width">,
   gap = 14,
-  margin = 12,
-  obstacles: CanvasOverlayAnchor[] = [],
 ): CanvasOverlayPosition {
-  const centered = centeredLeft(anchor, stage, overlay);
-  const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
-  const top = anchor.top + anchor.height + gap;
-  const candidates = [centered, anchor.left, anchor.left + anchor.width - overlay.width];
-
-  for (const obstacle of obstacles) {
-    candidates.push(
-      obstacle.left - overlay.width - margin,
-      obstacle.left,
-      obstacle.left + obstacle.width - overlay.width,
-      obstacle.left + obstacle.width + margin,
-    );
-  }
-
-  const positions = [...new Set(candidates.map((left) => Math.min(Math.max(left, margin), maxLeft)))];
-  const overlapArea = (left: number) => obstacles.reduce((area, obstacle) => {
-      const horizontalOverlap = Math.max(
-        0,
-        Math.min(left + overlay.width, obstacle.left + obstacle.width) - Math.max(left, obstacle.left),
-      );
-      const obstacleVerticalOverlap = Math.max(
-        0,
-        Math.min(top + overlay.height, obstacle.top + obstacle.height) - Math.max(top, obstacle.top),
-      );
-      return area + horizontalOverlap * obstacleVerticalOverlap;
-    }, 0);
-  const left = positions.reduce((best, candidate) => {
-    const candidateOverlap = overlapArea(candidate);
-    const bestOverlap = overlapArea(best);
-    if (candidateOverlap < bestOverlap) return candidate;
-    if (candidateOverlap === bestOverlap && Math.abs(candidate - centered) < Math.abs(best - centered)) return candidate;
-    return best;
-  }, positions[0] ?? Math.min(Math.max(centered, margin), maxLeft));
-
   return {
-    left,
-    top,
+    left: centeredLeft(anchor, stage, overlay),
+    top: anchor.top + anchor.height + gap,
   };
 }

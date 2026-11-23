@@ -749,10 +749,8 @@ function CanvasNodeEditorPopover({
           width: size.w * zoom,
           height: size.h * zoom,
         };
-    // Use the node's real screen-space anchor for every editor mode. The
-    // panel may clamp to the stage margins when it is wider than the node,
-    // but it must not be recentered independently from the node.
-    /* 参数面板同理：贴到面板左边，别让 Agent 面板压住正在调的那几个参数。 */
+    // Every editor mode stays centered below its node, including at the
+    // viewport edges. Only the node and camera determine its anchor.
     const workspaceRect = portalRoot.getBoundingClientRect();
     const viewport = {
       width: Math.max(1, portalRoot.clientWidth),
@@ -775,30 +773,13 @@ function CanvasNodeEditorPopover({
           widthProfile.max,
         );
     setEditorWidth((current) => current === popoverWidth ? current : popoverWidth);
-    const editorElement = popoverRef.current;
-    const editorHeight = editorElement?.getBoundingClientRect().height || 0;
-    const otherNodeAnchors = Array.from(
-      stage.querySelectorAll<HTMLElement>("[data-canvas-node-id]"),
-    ).flatMap((element) => {
-      if (element.dataset.canvasNodeId === node.id) return [];
-      const rect = element.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return [];
-      return [{
-        left: rect.left - stageRect.left,
-        top: rect.top - stageRect.top,
-        width: rect.width,
-        height: rect.height,
-      }];
-    });
-    // Keep the editor below its node. Shift it sideways when that avoids
-    // covering another visible node; it stays vertically attached either way.
+    // Keep the editor below its node. Neighboring cards are independent canvas
+    // content and must never push the selected node's editor sideways.
     const editorPosition = placeCanvasNodeEditor(
       anchor,
       visibleStage,
-      { width: popoverWidth, height: editorHeight },
+      { width: popoverWidth },
       14,
-      12,
-      otherNodeAnchors,
     );
     const nextPosition = {
       left: editorPosition.left + stageRect.left - workspaceRect.left,
