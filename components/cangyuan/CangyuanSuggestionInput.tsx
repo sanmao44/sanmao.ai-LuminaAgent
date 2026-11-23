@@ -3,6 +3,7 @@
 import { createPortal } from 'react-dom';
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { CANVAS_Z_INDEX } from '@/lib/canvas/layers';
+import { CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT } from '@/components/canvas/overlay-events';
 import styles from './CangyuanSuggestionInput.module.css';
 
 export type CangyuanSuggestionOption = string | { value: string; label: string };
@@ -78,6 +79,7 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
     document.addEventListener('pointerdown', handlePointerDown);
     window.addEventListener('resize', positionMenu);
     window.addEventListener('scroll', positionMenu, true);
+    window.addEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, positionMenu);
     const resizeObserver = typeof ResizeObserver !== 'undefined' && rootRef.current
       ? new ResizeObserver(positionMenu)
       : null;
@@ -87,6 +89,7 @@ export default function CangyuanSuggestionInput({ value, options, onChange, aria
       document.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('resize', positionMenu);
       window.removeEventListener('scroll', positionMenu, true);
+      window.removeEventListener(CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT, positionMenu);
       resizeObserver?.disconnect();
     };
   }, [open]);

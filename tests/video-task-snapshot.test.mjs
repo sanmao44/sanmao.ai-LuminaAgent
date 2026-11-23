@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
+const { canRecoverVideoTaskResult } = createTsRequire(process.cwd(), {
+  './repositories/task-repository': { createTaskRepository: () => ({}) },
+})('./lib/video-task-store');
 
 const pendingTask = {
   id: 'local-video-1',
@@ -14,6 +17,7 @@ function createHarness(task = pendingTask, trusted = true, claimResult = { claim
   const calls = [];
   const worker = createTsRequire(process.cwd(), {
     '../../lib/video-task-store': {
+      canRecoverVideoTaskResult,
       claimFailedVideoTaskRetry: async (id) => {
         calls.push(['claim-retry', id]);
         return claimResult;
@@ -103,6 +107,31 @@ test('video snapshot returns null for a missing task', async () => {
 
   assert.equal(await worker.getVideoTaskSnapshot('missing-task'), null);
   assert.deepEqual(calls, [['find', 'missing-task']]);
+});
+
+test('video GET rechecks an existing provider task after a local query failure without resubmission', async () => {
+  const task = { ...pendingTask, status: 'failed', providerTaskId: 'existing-upstream-id', error: 'Invalid URL (GET /v1/tasks/existing-upstream-id)' };
+  const { calls, get } = createHarness(task);
+  const response = await get();
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).task.status, 'running');
+  assert.deepEqual(calls, [
+    ['find', task.id], ['refresh', task.id], ['provider-refresh', task.id],
+  ]);
+});
+
+test('video GET keeps cancellation and provider-confirmed failure terminal', async () => {
+  for (const patch of [
+    { status: 'cancelled' },
+    { status: 'failed', errorCode: 'VIDEO_PROVIDER_FAILED' },
+    { status: 'failed', providerResponse: { status: 'failed' } },
+  ]) {
+    const task = { ...pendingTask, providerTaskId: 'terminal-upstream-id', ...patch };
+    const { calls, get } = createHarness(task);
+    const response = await get();
+    assert.equal((await response.json()).task.status, patch.status);
+    assert.deepEqual(calls, [['find', task.id]]);
+  }
 });
 
 test('batch retry uses the Worker claim and stable attempt key', async () => {

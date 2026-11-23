@@ -190,6 +190,16 @@ test('detects native task transport from endpoint metadata', () => {
   assert.equal(provider.videoTransport, 'native-task');
 });
 
+test('Cangyuan model discovery does not persist the generic video protocol for official endpoints', () => {
+  for (const videoTransport of [undefined, 'auto', 'openai-videos']) {
+    const provider = { platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport };
+    assert.equal(providers.inferVideoTransportFromMetadata({ endpoints: ['/v1/videos'] }, provider), 'cangyuan-videos');
+    assert.equal(provider.videoTransport, 'cangyuan-videos');
+  }
+  const native = { platform: 'custom', baseUrl: 'https://ai.cangyuansuanli.cn/v1', videoTransport: 'native-task' };
+  assert.equal(providers.inferVideoTransportFromMetadata({}, native), 'native-task');
+});
+
 test('prepares local chat media for every provider while preserving remote URLs', async () => {
   const calls = [];
   const prepared = await providers.prepareProviderChatMessages([
@@ -1311,6 +1321,64 @@ test('Cangyuan image requests reject unconfirmed batch count without submitting 
     await assert.rejects(providers.generateImage({
       type: 'openai-compatible', platform: 'cangyuan', baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
     }, 'model-without-verified-n', { prompt: 'test', count: 2 }), /未确认该模型支持批量 n 参数/);
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('MiniMax H3 image requests forward documented quality, variant, count, and reference limits', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.test/h3.png' }] }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  };
+  const provider = {
+    type: 'openai-compatible', platform: 'cangyuan',
+    baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+  };
+  try {
+    const images = await providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: '湖边晨雾', count: 4, quality: '2k', variant: 'highspeed', aspectRatio: '16:9',
+    });
+    assert.deepEqual(images, [{ url: 'https://cdn.example.test/h3.png' }]);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      model: 'minimax-h3-image', prompt: '湖边晨雾', async: true,
+      n: 4, quality: '2k', variant: 'highspeed', size: '16:9',
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('MiniMax H3 image requests reject undocumented values before network submission', async () => {
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => { requests += 1; throw new Error('should not submit'); };
+  const provider = {
+    type: 'openai-compatible', platform: 'cangyuan',
+    baseUrl: 'https://direct-api.cangyuansuanli.cn/v1', apiKey: 'test-key',
+  };
+  try {
+    await assert.rejects(providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: 'scene', count: 5,
+    }), /n 最大值为 4/);
+    await assert.rejects(providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: 'scene', references: Array(17).fill('https://cdn.example.test/ref.png'),
+    }), /图片参考最多 16 张/);
+    await assert.rejects(providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: 'x'.repeat(8001),
+    }), /提示词最多 8000 个字符/);
+    await assert.rejects(providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: 'scene', sizeMode: 'custom', width: 1920, height: 1080,
+    }), /不支持图片尺寸/);
+    await assert.rejects(providers.generateImage(provider, 'minimax-h3-image', {
+      prompt: 'scene', variant: 'turbo',
+    }), /不支持生成模式/);
     assert.equal(requests, 0);
   } finally {
     globalThis.fetch = previousFetch;

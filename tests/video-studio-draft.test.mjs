@@ -67,6 +67,25 @@ test('video studio draft round-trips versioned settings and documented model par
   assert.ok(Number.isFinite(restored.savedAt));
 });
 
+test('video studio draft round-trips prompts up to the largest documented model limit', () => {
+  const storage = new MemoryStorage();
+  const prompt = 'x'.repeat(20_000);
+
+  assert.equal(saveVideoStudioDraft(draft({ prompt }), storage), true);
+  assert.equal(loadVideoStudioDraft(storage)?.prompt, prompt);
+  assert.equal(saveVideoStudioDraft(draft({ prompt: `${prompt}x` }), storage), false);
+});
+
+test('video studio drafts preserve long podcast durations before the runtime catalog is loaded', () => {
+  const storage = new MemoryStorage();
+  for (const seconds of [30, 120, 1800]) {
+    assert.equal(saveVideoStudioDraft(draft({ seconds }), storage), true);
+    assert.equal(loadVideoStudioDraft(storage)?.seconds, seconds);
+  }
+  assert.equal(saveVideoStudioDraft(draft({ seconds: 1801 }), storage), true);
+  assert.equal(loadVideoStudioDraft(storage)?.seconds, 5);
+});
+
 test('video studio recognizes Agnes-only parameter edits as a draft', () => {
   const defaults = draft({
     prompt: '', modelId: 'auto', operation: 'generate', inputMode: 'text', seconds: 5,
@@ -87,7 +106,7 @@ test('video studio draft drops media payload fields and normalizes invalid setti
     version: 1,
     savedAt: 1,
     generateAudio: true,
-    ...draft({ seconds: 120, ratio: 'invalid', agnesNumFrames: 82 }),
+    ...draft({ seconds: 1801, ratio: 'invalid', agnesNumFrames: 82 }),
     firstFrame: { name: 'frame.png', url: 'data:image/png;base64,AAAA' },
     referenceImages: [{ url: 'data:image/png;base64,BBBB' }],
   }));

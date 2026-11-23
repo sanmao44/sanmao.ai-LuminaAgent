@@ -5,8 +5,9 @@ import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
 import { getCangyuanImageModelProfile } from "../cangyuan-image-capabilities";
+import { getCangyuanVideoModelProfile } from "../cangyuan-video-capabilities";
 import type { CangyuanImageAdvancedParameter } from "../cangyuan-image-capabilities";
-import { isCangyuanProvider } from "../cangyuan-provider";
+import { isCangyuanProvider, usesCangyuanVideoProtocol } from "../cangyuan-provider";
 
 export type ImageSizeMode = "system" | "custom";
 export type ImageBackgroundMode =
@@ -61,6 +62,7 @@ export function imageModelParametersFromSettings(settings: ImageCreationSettings
     resolution: settings.resolution,
     tier: settings.tier,
     series: settings.series,
+    variant: settings.variant,
     seed: settings.seed,
     enablePromptExpansion: settings.enablePromptExpansion,
     style: settings.style,
@@ -361,6 +363,9 @@ export function normalizeImageCreationSettings(
   const series = cangyuanProfile?.seriesEnum?.find((candidate) => candidate.toLowerCase() === seriesCandidate.toLowerCase())
     || cangyuanProfile?.seriesDefault
     || cangyuanProfile?.seriesEnum?.[0];
+  const variantCandidate = typeof raw.variant === "string" ? raw.variant.trim() : "";
+  const variant = cangyuanProfile?.variantEnum?.find((candidate) => candidate.toLowerCase() === variantCandidate.toLowerCase())
+    || cangyuanProfile?.variantDefault;
   const seedCandidate = typeof raw.seed === "string" ? raw.seed.trim() : "";
   const seed = cangyuanProfile?.supportsSeed
     && seedCandidate
@@ -431,7 +436,7 @@ export function normalizeImageCreationSettings(
   const stylize = advancedNumber("stylize", raw.stylize, 0, 1000, 10);
   const styleWeight = advancedNumber("sw", raw.styleWeight, 0, 1000, 10);
   const weird = advancedNumber("weird", raw.weird, 0, 3000, 50);
-  const sizeMode = raw.sizeMode === "custom" ? "custom" : "system";
+  const sizeMode = raw.sizeMode === "custom" && cangyuanProfile?.supportsCustomDimensions !== false ? "custom" : "system";
   const outputFormat = !layerDecomposition && (raw.outputFormat === "jpeg" || raw.outputFormat === "webp" || raw.outputFormat === "gif" || raw.outputFormat === "svg")
     ? raw.outputFormat
     : "png";
@@ -443,8 +448,10 @@ export function normalizeImageCreationSettings(
       : "auto";
   const qualityValues = ["auto", "low", "medium", "high", "xhigh", "max", "1", "4", "1k", "2k", "4k"] as const;
   const quality = typeof raw.quality === "string" && qualityValues.includes(raw.quality as (typeof qualityValues)[number])
-    ? raw.quality as ImageCreationSettings["quality"]
-    : "自动";
+    ? cangyuanProfile?.qualityEnum.length && !cangyuanProfile.qualityEnum.includes(raw.quality)
+      ? (cangyuanProfile.qualityDefault || "自动") as ImageCreationSettings["quality"]
+      : raw.quality as ImageCreationSettings["quality"]
+    : (cangyuanProfile?.qualityDefault || "自动") as ImageCreationSettings["quality"];
   const cangyuanSizeValues = new Set([
     ...(cangyuanProfile?.sizeRecommendations || []),
     ...(cangyuanProfile?.aspectRatioRecommendations || []),
@@ -513,6 +520,7 @@ export function normalizeImageCreationSettings(
     resolution,
     ...(tier ? { tier } : {}),
     ...(series ? { series } : {}),
+    ...(variant ? { variant: variant as ImageCreationSettings["variant"] } : {}),
     ...(seed ? { seed } : {}),
     ...(enablePromptExpansion !== undefined ? { enablePromptExpansion } : {}),
     ...(style ? { style } : {}),
@@ -591,6 +599,20 @@ export function normalizeVideoCreationSettings(
 ): VideoCreationSettings {
   const raw = objectValue(value);
   const fallback = defaultVideoCreationSettings(runtime);
+  const modelId = availableModel(runtime, "video", raw.model || raw.modelId);
+  const candidates = videoModelOptions(runtime);
+  const model = modelId === "auto"
+    ? selectAutomaticModel(candidates, runtime?.settings.defaultProviderId, runtime?.settings.defaultVideoModelId)
+    : candidates.find((candidate) => candidate.id === modelId);
+  const provider = runtime?.providers?.find((candidate) => candidate.id === model?.providerId);
+  const videoProfile = model && usesCangyuanVideoProtocol(provider)
+    ? getCangyuanVideoModelProfile(model.rawId)
+    : null;
+  const minSeconds = videoProfile?.minSeconds ?? 1;
+  // Canvas document hydration runs before the runtime catalog is available.
+  // Preserve long-form drafts here; execution still validates the chosen model.
+  const maxSeconds = videoProfile?.maxSeconds ?? (runtime ? 60 : 1800);
+  const defaultSeconds = clampInteger(videoProfile?.durationDefault ?? videoProfile?.fixedSeconds ?? fallback.duration, minSeconds, maxSeconds, minSeconds);
   const operation =
     raw.operation === "edit" || raw.operation === "extend"
       ? raw.operation
@@ -623,14 +645,14 @@ export function normalizeVideoCreationSettings(
   }
   return {
     kind: "video",
-    model: availableModel(runtime, "video", raw.model || raw.modelId),
+    model: modelId,
     operation,
     inputMode,
     duration: clampInteger(
       raw.duration ?? raw.seconds,
-      1,
-      60,
-      fallback.duration,
+      minSeconds,
+      maxSeconds,
+      defaultSeconds,
     ),
     aspect: String(raw.aspect || raw.aspectRatio || fallback.aspect),
     resolution,

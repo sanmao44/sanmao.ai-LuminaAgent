@@ -31,7 +31,9 @@ const imageRequest = await loadTypeScript('../lib/canvas/image-reference-request
   '@/packages/contracts/creative': { MAX_IMAGE_REFERENCES: 16 },
   '@/lib/model-picker': modelPicker,
 });
+const variantStatus = await loadTypeScript('../lib/canvas/variant-status.ts', {});
 const taskRecovery = await loadTypeScript('../lib/canvas/task-recovery.ts', {
+  './variant-status': variantStatus,
   './model': {
     addEdge: value => value,
     createMedia: () => ({}),

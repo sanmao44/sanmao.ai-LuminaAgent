@@ -28,6 +28,7 @@ type Props = {
   profile: TripoProfile;
   options: Cangyuan3DOptions;
   onChange: (options: Cangyuan3DOptions) => void;
+  alwaysVisible?: boolean;
 };
 
 export function tripoFaceLimitMaximum(profile: TripoProfile, options: Cangyuan3DOptions) {
@@ -54,13 +55,10 @@ export function applyTripoQualityOptions(
   return next;
 }
 
-export default function CangyuanTripoQualityOptions({ profile, options, onChange }: Props) {
+export default function CangyuanTripoQualityOptions({ profile, options, onChange, alwaysVisible = false }: Props) {
   const update = (patch: Partial<Cangyuan3DOptions>) => onChange(applyTripoQualityOptions(profile, options, patch));
   const maxFaceLimit = tripoFaceLimitMaximum(profile, options);
-  return (
-    <details className="cangyuan-3d-advanced">
-      <summary>更多生成选项</summary>
-      <div className="cangyuan-trellis-grid">
+  const fields = <div className="cangyuan-trellis-grid">
         <div className="cangyuan-select-field">
           <span>贴图</span>
           <SelectMenu
@@ -135,9 +133,19 @@ export default function CangyuanTripoQualityOptions({ profile, options, onChange
             <span>四边形网格（输出 FBX）</span>
           </label>
         )}
-      </div>
-      {options.generateParts === true && <p className="cangyuan-model-note">分件生成会自动关闭贴图、PBR 材质和四边形网格。</p>}
-      {profile.modelId === 'tripo3d-p2' && options.quad === true && <p className="cangyuan-model-note">P2 四边形网格模式的面数上限为 25,000，结果为 FBX 文件。</p>}
+      </div>;
+  const notes = <>
+    {options.generateParts === true && <p className="cangyuan-model-note">分件生成会自动关闭贴图、PBR 材质和四边形网格。</p>}
+    {profile.modelId === 'tripo3d-p2' && options.quad === true && <p className="cangyuan-model-note">P2 四边形网格模式的面数上限为 25,000，结果为 FBX 文件。</p>}
+  </>;
+
+  if (alwaysVisible) return <div className="cangyuan-3d-advanced is-always-visible">{fields}{notes}</div>;
+
+  return (
+    <details className="cangyuan-3d-advanced">
+      <summary>更多生成选项</summary>
+      {fields}
+      {notes}
     </details>
   );
 }

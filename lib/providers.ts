@@ -352,6 +352,10 @@ function is65535Provider(provider: RuntimeProvider) {
 }
 
 export function inferVideoTransportFromMetadata(data: unknown, provider: RuntimeProvider): RuntimeProvider['videoTransport'] {
+  if (isCangyuanProvider(provider) && (!provider.videoTransport || provider.videoTransport === 'auto' || provider.videoTransport === 'openai-videos')) {
+    provider.videoTransport = 'cangyuan-videos';
+    return provider.videoTransport;
+  }
   if (provider.videoTransport && provider.videoTransport !== 'auto') return provider.videoTransport;
   if (is65535Provider(provider)) {
     provider.videoTransport = 'native-task';
@@ -1532,7 +1536,7 @@ type CangyuanImageRequestInput = ImageModelParameters & {
 
 function cangyuanParameterError(model: string, parameter: string, value: string) {
   const labels: Record<string, string> = {
-    resolution: '输出清晰度', tier: '生成档位', series: '图片系列', seed: '随机种子',
+    resolution: '输出清晰度', tier: '生成档位', series: '图片系列', variant: '生成模式', seed: '随机种子',
     enable_prompt_expansion: '提示词扩写', quality: '图片质量', output_format: '输出格式',
     background: '背景方式', response_format: '响应格式', input_fidelity: '参考图保真度',
     size: '图片尺寸', aspect_ratio: '图片比例', style: '风格偏好', negative_prompt: '不希望出现的内容',
@@ -1587,7 +1591,7 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
       [input.complexity, 'complexity'], [input.frameCount, 'frame_count'], [input.frameDurationMs, 'frame_duration_ms'],
       [input.chaos, 'chaos'], [input.experimentalStyle, 'exp'], [input.hd, 'hd'], [input.referenceImageWeight, 'iw'],
       [input.rawStyle, 'raw'], [input.referenceMode, 'reference'], [input.referenceSlots, 'reference_slots'],
-      [input.speed, 'speed'], [input.stylize, 'stylize'], [input.styleWeight, 'sw'], [input.weird, 'weird'],
+      [input.speed, 'speed'], [input.stylize, 'stylize'], [input.styleWeight, 'sw'], [input.weird, 'weird'], [input.variant, 'variant'],
       [input.svgAuthorModel, 'svg.model'], [input.svgReasoningEffort, 'svg.reasoning.effort'],
     ];
     for (const [value, name] of unverifiedParameters) {
@@ -1599,6 +1603,10 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
     if (input.responseFormat && input.responseFormat !== 'url') throw cangyuanParameterError(rawModelId, 'response_format', input.responseFormat);
     if (input.fidelity && input.fidelity !== 'high') throw cangyuanParameterError(rawModelId, 'input_fidelity', input.fidelity);
     return { count, parameters: {} as Record<string, unknown> };
+  }
+
+  if (profile.promptMaxLength !== undefined && input.prompt.length > profile.promptMaxLength) {
+    throw new Error(`沧元模型 ${rawModelId} 的提示词最多 ${profile.promptMaxLength} 个字符。`);
   }
 
   if (count > (profile.nMax ?? 1)) {
@@ -1664,6 +1672,12 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
     parameters.series = series;
   } else if (profile.seriesRequired) {
     throw new Error(`沧元模型 ${rawModelId} 必须选择系列；可选值：${seriesOptions.join('、')}。`);
+  }
+
+  if (input.variant !== undefined) {
+    const variant = profile.variantEnum?.find((candidate) => candidate === input.variant);
+    if (!variant) throw cangyuanParameterError(rawModelId, 'variant', input.variant);
+    parameters.variant = variant;
   }
 
   if (input.seed) {
@@ -1799,6 +1813,7 @@ function buildCangyuanImageParameters(rawModelId: string, input: CangyuanImageRe
 
   if (customSize) {
     if (!profile.supportsSize) throw cangyuanParameterError(rawModelId, 'size', 'custom');
+    if (profile.supportsCustomDimensions === false) throw cangyuanParameterError(rawModelId, 'size', '宽 × 高');
     if (!Number.isInteger(input.width) || !Number.isInteger(input.height) || Number(input.width) < 1 || Number(input.height) < 1) {
       throw new Error(`沧元模型 ${rawModelId} 的自定义尺寸无效，请提供正整数宽高。`);
     }

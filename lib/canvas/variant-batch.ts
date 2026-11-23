@@ -77,6 +77,7 @@ export function canvasVariantVideoRequest(input: {
     duration: params.duration,
     aspect: params.aspect,
     resolution: params.resolution,
+    audio: params.audio,
     agnesWidth: params.agnesWidth,
     agnesHeight: params.agnesHeight,
     agnesNumFrames: params.agnesNumFrames,

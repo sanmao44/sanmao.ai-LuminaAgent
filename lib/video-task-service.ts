@@ -1,13 +1,13 @@
 import { finishGenerationLog, startGenerationLog } from './generation-log';
 import { getPublicState, getProviderWithKey, getRuntimeVideoModel, markProviderCredentialFailure } from './store';
 import { persistGeneratedVideos } from './video-storage';
-import { createVideoTask, findVideoTask, updateActiveVideoTask, updateVideoTask, type VideoTask } from './video-task-store';
+import { canRecoverVideoTaskResult, claimFailedVideoTaskRetry, claimVideoTaskSubmission, createVideoTask, findVideoTask, releaseFailedVideoTaskRetry, resumeVideoTaskResultRecovery, updateActiveVideoTask, updateVideoTask, VIDEO_TASK_SUBMISSION_TIMEOUT_MS, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
 import { getVideoModelLimits, getVideoModelLimitsForInput, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
 import { validateCangyuanVideoInput } from './cangyuan-video-capabilities';
+import { usesCangyuanVideoProtocol } from './cangyuan-provider';
 import { is65535Provider, isJimengProvider, isAgnesProvider } from './video-platform';
-import { isCangyuanProvider } from './cangyuan-provider';
 import { prepareVideoInputMedia } from './video-input-media';
 import type { GenerationSource } from './generation-source';
 import { canRetryVideoTask, isStaleVideoTask, videoTaskRuntime } from './video-task-runtime';
@@ -17,15 +17,16 @@ function cleanInput(
   input: VideoGenerationInput,
   defaultSeconds?: number,
   maxReferenceImages: number = VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages,
+  maxSeconds = 60,
 ): VideoGenerationInput {
   const prompt = String(input.prompt || '').trim();
   const operation = input.operation === 'edit' || input.operation === 'extend' ? input.operation : 'generate';
   const requestedSeconds = Number(input.seconds);
   const fallbackSeconds = defaultSeconds === undefined
     ? undefined
-    : Number.isFinite(defaultSeconds) ? Math.max(1, Math.min(60, defaultSeconds)) : 5;
+    : Number.isFinite(defaultSeconds) ? Math.max(1, Math.min(maxSeconds, defaultSeconds)) : 5;
   const seconds = Number.isFinite(requestedSeconds)
-    ? Math.max(1, Math.min(60, requestedSeconds))
+    ? Math.max(1, Math.min(maxSeconds, requestedSeconds))
     : fallbackSeconds;
   const cleanString = (value: unknown) => {
     if (typeof value !== 'string') return undefined;
@@ -102,10 +103,12 @@ function videoModelInputContext(input: VideoGenerationInput) {
   };
 }
 
-function assertGenericInputLimits(input: VideoGenerationInput, limits?: ReturnType<typeof getVideoModelLimits>) {
+function assertGenericInputLimits(input: VideoGenerationInput, limits?: ReturnType<typeof getVideoModelLimits>, includeFramesInReferenceCount = true) {
+  // Cangyuan validates first/last frames separately from reference_images.
+  // Some frame-capable models explicitly do not accept reference_images.
   const referenceImages = validItemCount(input.referenceImages)
-    + (input.firstFrame ? 1 : 0)
-    + (input.lastFrame ? 1 : 0);
+    + (includeFramesInReferenceCount && input.firstFrame ? 1 : 0)
+    + (includeFramesInReferenceCount && input.lastFrame ? 1 : 0);
   const referenceVideos = effectiveMediaCount(input.referenceVideos, input.referenceVideo);
   const audios = effectiveMediaCount(input.audios, input.audio);
   const maxReferenceImages = limits?.maxReferenceImages ?? VIDEO_INPUT_SAFETY_LIMITS.maxReferenceImages;
@@ -123,11 +126,8 @@ function assertGenericInputLimits(input: VideoGenerationInput, limits?: ReturnTy
   }
 }
 
-function isCangyuanVideoProvider(provider: { videoTransport?: string; platform?: string; baseUrl?: string; videoBaseUrl?: string }) {
-  if (provider.videoTransport && provider.videoTransport !== 'auto') {
-    return provider.videoTransport === 'cangyuan-videos';
-  }
-  return isCangyuanProvider(provider);
+function isCangyuanVideoProvider(provider: Parameters<typeof usesCangyuanVideoProtocol>[0]) {
+  return usesCangyuanVideoProtocol(provider);
 }
 
 async function prepareCangyuanVideoMedia(input: VideoGenerationInput): Promise<VideoGenerationInput> {
@@ -284,6 +284,8 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const completedAt = new Date().toISOString();
   const updated = await updateActiveVideoTask(task.id, {
     status: 'done',
+    errorCode: undefined,
+    ...(result.providerTaskId || task.providerTaskId ? { providerTaskId: result.providerTaskId || task.providerTaskId } : {}),
     videoUrls,
     remoteVideoUrls,
     localVideoPaths: stored.videos.map((video) => video.localPath).filter((item): item is string => Boolean(item)),
@@ -300,6 +302,8 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
   if (!updated) return findVideoTask(task.id);
   await finishGenerationLog(task.id, {
     status: 'success',
+    error: '',
+    errorCode: '',
     durationMs: Date.now() - new Date(task.createdAt).getTime(),
     providerDurationMs: Date.now() - new Date(task.startedAt || task.createdAt).getTime(),
     videoUrls,
@@ -333,12 +337,23 @@ export async function saveVideoTaskLocally(id: string) {
   });
 }
 
-async function failTask(task: VideoTask, error: unknown, code?: string, providerResponse?: unknown) {
+async function failTask(task: VideoTask, error: unknown, code?: string, providerResponse?: unknown, accepted?: VideoProviderTask) {
   const message = error instanceof Error ? error.message : String(error || '视频任务失败');
-  const updated = await updateActiveVideoTask(task.id, { status: 'failed', error: message, errorCode: code, ...(providerResponse !== undefined ? { providerResponse } : {}), completedAt: new Date().toISOString(), nextPollAt: undefined });
+  const updated = await updateActiveVideoTask(task.id, {
+    status: 'failed', error: message, errorCode: code,
+    ...(providerResponse !== undefined ? { providerResponse } : {}),
+    ...(accepted?.providerTaskId ? { providerTaskId: accepted.providerTaskId } : {}),
+    ...(accepted?.videoId ? { videoId: accepted.videoId } : {}),
+    ...(accepted?.model ? { providerModel: accepted.model } : {}),
+    completedAt: new Date().toISOString(), nextPollAt: undefined,
+  });
   if (!updated) return findVideoTask(task.id);
   await finishGenerationLog(task.id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: message, errorCode: code }).catch(() => undefined);
   return updated;
+}
+
+function failUnconfirmedVideoSubmission(task: VideoTask) {
+  return failTask(task, '服务商可能已接收视频任务，但未返回任务编号。为避免重复计费，平台已停止自动重新提交；请先核对服务商任务记录。', 'VIDEO_SUBMISSION_UNCONFIRMED');
 }
 
 function isRetryableVideoProviderError(error: unknown) {
@@ -383,6 +398,7 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
     pollCount: task.pollCount + 1,
     nextPollAt: Date.now() + submissionRetryDelayMs(task, error),
     providerStatus: providerStatus || (providerError?.status ? `HTTP ${providerError.status}` : 'submission_retry'),
+    errorCode: 'VIDEO_SUBMISSION_RETRY',
     error: retryableVideoErrorMessage(error),
     ...(providerResponse !== undefined ? { providerResponse } : {}),
     completedAt: undefined,
@@ -396,11 +412,12 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
   if (cangyuanVideo) validateCangyuanVideoInput(runtime.model.rawId, options.input, { requirePublicMedia: false });
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
   const requestedModelLimits = getVideoModelLimitsForInput(runtime.model, runtime.provider, videoModelInputContext(options.input));
-  assertGenericInputLimits(options.input, requestedModelLimits);
+  assertGenericInputLimits(options.input, requestedModelLimits, !cangyuanVideo);
   const cleanedInput = cleanInput(
     options.input,
     cangyuanVideo ? undefined : baseModelLimits.fixedSeconds || 5,
     requestedModelLimits.maxReferenceImages,
+    cangyuanVideo ? requestedModelLimits.maxSeconds : 60,
   );
   const preparedMediaInput = await prepareVideoInputMedia(cleanedInput, {
     // Agnes 2.5 gives reference media a strong composition prior.  Put the
@@ -431,6 +448,8 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     operation: input.operation || 'generate',
     source: options.source || 'workspace',
     status: 'pending',
+    errorCode: 'VIDEO_SUBMISSION_IN_PROGRESS',
+    nextPollAt: Date.now() + VIDEO_TASK_SUBMISSION_TIMEOUT_MS,
     idempotencyKey: key,
     input,
     ...(options.retryOf ? { retryOf: options.retryOf } : {}),
@@ -443,11 +462,11 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
     if (result.status === 'done' && result.videos.length) return persistResult({ ...task, providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId }, result);
     if (result.status === 'failed') {
       if (isRetryableVideoSubmissionFailure(result.error)) return keepVideoSubmissionPending(task, result.error, result.providerStatus, result.raw);
-      return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+      return failTask(task, result.error || '视频任务失败', result.errorCode || 'VIDEO_PROVIDER_FAILED', result.raw);
     }
-    if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING');
+    if (result.status === 'done') return failTask(task, '服务商已完成任务，但没有返回可下载的视频地址', 'VIDEO_RESULT_MISSING', result.raw, result);
     const pollInterval = isAgnesProvider(runtime.provider) ? 1500 : isCangyuanVideoProvider(runtime.provider) ? 5000 : 2000;
-    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, ...(result.usage ? { providerUsage: result.usage } : {}), providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + pollInterval, costUsd: result.costUsd });
+    const updated = await applyProviderUpdate(task.id, { status: result.status === 'running' ? 'running' : 'pending', errorCode: undefined, providerTaskId: result.providerTaskId, videoId: result.videoId, providerModel: result.model || runtime.model.rawId, providerStatus: result.providerStatus, providerProgress: result.progress, ...(result.usage ? { providerUsage: result.usage } : {}), providerResponse: result.raw, startedAt: new Date().toISOString(), nextPollAt: Date.now() + pollInterval, costUsd: result.costUsd });
     return updated;
   } catch (error) {
     const upstreamStatus = Number((error as VideoProviderError & { status?: number }).status || 0);
@@ -456,36 +475,7 @@ export async function createVideoGeneration(options: { modelId?: string; input: 
       if (isCangyuanVideoProvider(runtime.provider)) {
         return failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED');
       }
-      // The POST may have reached the provider even though its response was
-      // lost. Re-submit once with the same idempotency key to recover the
-      // provider task handle without creating a second task.
-      try {
-        const recovered = await callSubmit(runtime, input, key);
-        if (recovered.status === 'done' && recovered.videos.length) {
-          return persistResult({ ...task, providerTaskId: recovered.providerTaskId, videoId: recovered.videoId, providerModel: recovered.model || runtime.model.rawId }, recovered);
-        }
-        if (recovered.status === 'failed') return failTask(task, recovered.error || '视频任务失败', recovered.errorCode, recovered.raw);
-        if (recovered.status === 'done') return failTask(task, recovered.error || '服务商已完成任务，但没有返回可下载的视频地址', recovered.errorCode || 'VIDEO_RESULT_MISSING', recovered.raw);
-        return applyProviderUpdate(task.id, {
-          status: recovered.status === 'running' ? 'running' : 'pending',
-          providerTaskId: recovered.providerTaskId,
-          videoId: recovered.videoId,
-          providerModel: recovered.model || runtime.model.rawId,
-          providerStatus: recovered.providerStatus,
-          providerProgress: recovered.progress,
-          ...(recovered.usage ? { providerUsage: recovered.usage } : {}),
-          providerResponse: recovered.raw,
-          startedAt: new Date().toISOString(),
-          nextPollAt: Date.now() + 2000,
-          costUsd: recovered.costUsd,
-        });
-      } catch {
-        return applyProviderUpdate(task.id, {
-          status: 'pending',
-          error: '服务商可能已接收任务，正在等待任务状态。',
-          nextPollAt: Date.now() + 15_000,
-        });
-      }
+      return failUnconfirmedVideoSubmission(task);
     }
     if (isRetryableVideoProviderError(error) || isRetryableVideoSubmissionFailure(error)) {
       return keepVideoSubmissionPending(task, error);
@@ -526,7 +516,9 @@ export async function refreshVideoTaskWithObserver(id: string, observer?: Runtim
 }
 
 async function refreshVideoTaskOnce(id: string) {
-  const task = await findVideoTask(id);
+  let task = await findVideoTask(id);
+  if (!task) return null;
+  if (canRecoverVideoTaskResult(task)) task = await resumeVideoTaskResultRecovery(id) || await findVideoTask(id);
   if (!task) return null;
   if (!videoTaskRuntime.isActive(task.status)) return task;
   if (isStaleVideoTask(task)) {
@@ -537,8 +529,13 @@ async function refreshVideoTaskOnce(id: string) {
   // UI polling interval would turn a full provider queue into a retry storm.
   if (task.nextPollAt && task.nextPollAt > Date.now()) return task;
   if (!task.providerTaskId) {
+    // Initial submission and retry claims live in the Repository, so a
+    // background Worker or a separately loaded HTTP module cannot POST twice.
+    if (task.errorCode !== 'VIDEO_SUBMISSION_RETRY') return failUnconfirmedVideoSubmission(task);
     const runtime = await getRuntimeVideoModel(task.modelId);
     if (!runtime) return failTask(task, '视频服务商配置已删除', 'PROVIDER_NOT_FOUND');
+    const claimed = await claimVideoTaskSubmission(id);
+    if (!claimed) return findVideoTask(id);
     try {
       const result = await callSubmit(runtime, task.input, task.idempotencyKey);
       if (result.status === 'done' && result.videos.length) {
@@ -546,9 +543,9 @@ async function refreshVideoTaskOnce(id: string) {
       }
       if (result.status === 'failed') {
         if (isRetryableVideoSubmissionFailure(result.error)) return keepVideoSubmissionPending(task, result.error, result.providerStatus, result.raw);
-        return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+        return failTask(task, result.error || '视频任务失败', result.errorCode || 'VIDEO_PROVIDER_FAILED', result.raw);
       }
-      if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
+      if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw, result);
       return applyProviderUpdate(id, {
         status: result.status === 'running' ? 'running' : 'pending',
         providerTaskId: result.providerTaskId,
@@ -562,10 +559,13 @@ async function refreshVideoTaskOnce(id: string) {
         nextPollAt: Date.now() + 2000,
         costUsd: result.costUsd,
         error: undefined,
+        errorCode: undefined,
       });
     } catch (error) {
-      if (isCangyuanVideoProvider(runtime.provider) && error instanceof VideoProviderError && error.possiblyAccepted) {
-        return failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED');
+      if (error instanceof VideoProviderError && error.possiblyAccepted) {
+        return isCangyuanVideoProvider(runtime.provider)
+          ? failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED')
+          : failUnconfirmedVideoSubmission(task);
       }
       if (isRetryableVideoProviderError(error)) {
         const providerError = error as VideoProviderError;
@@ -573,6 +573,7 @@ async function refreshVideoTaskOnce(id: string) {
           status: task.status,
           nextPollAt: Date.now() + 15_000,
           providerStatus: providerError.status ? `HTTP ${providerError.status}` : 'submission_pending',
+          errorCode: 'VIDEO_SUBMISSION_RETRY',
           error: undefined,
         });
       }
@@ -586,7 +587,7 @@ async function refreshVideoTaskOnce(id: string) {
     const result = await callPoll(provider, task.videoId || task.providerTaskId, task.providerModel);
     if (result.status === 'done' && result.videos.length) return persistResult(task, result);
     if (result.status === 'done') return failTask(task, result.error || '服务商已完成任务，但没有返回可下载的视频地址', result.errorCode || 'VIDEO_RESULT_MISSING', result.raw);
-    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode, result.raw);
+    if (result.status === 'failed') return failTask(task, result.error || '视频任务失败', result.errorCode || 'VIDEO_PROVIDER_FAILED', result.raw);
     const pollCount = task.pollCount + 1;
     const interval = isCangyuanVideoProvider(provider) ? 5000 : isAgnesProvider(provider) ? Math.round(1000 + Math.random() * 1000) : Math.min(5000, 2000 + Math.max(0, pollCount - 2) * 500);
     return applyProviderUpdate(id, { status: result.status, providerStatus: result.providerStatus, providerProgress: result.progress, ...(result.usage ? { providerUsage: result.usage } : {}), providerResponse: result.raw, pollCount, nextPollAt: Date.now() + interval });
@@ -620,16 +621,43 @@ export async function cancelVideoTask(id: string) {
   return updated;
 }
 
-/** 重试：按原参数重新提交一条新任务，原任务保留在历史记录里（新任务用新的幂等键，不会被去重）。 */
+/** Query failures first recover the existing provider task; confirmed failures may generate anew. */
+const retryingVideoTasks = new Map<string, Promise<VideoTask | null>>();
+
 export async function retryVideoTask(id: string) {
+  const inFlight = retryingVideoTasks.get(id);
+  if (inFlight) return inFlight;
+  const running = retryVideoTaskOnce(id).finally(() => retryingVideoTasks.delete(id));
+  retryingVideoTasks.set(id, running);
+  return running;
+}
+
+async function retryVideoTaskOnce(id: string) {
   const task = await findVideoTask(id);
   if (!task) return null;
+  if (canRecoverVideoTaskResult(task)) return refreshVideoTask(id);
+  if (/(?:^|_)SUBMISSION_UNCONFIRMED$/.test(task.errorCode || '')) throw new Error('服务商提交结果未确认，请先核对原任务记录；平台未重新提交，以避免重复计费。');
   if (!canRetryVideoTask(task.status)) throw new Error('视频还在生成中，先取消才能重试。');
-  return createVideoGeneration({ modelId: task.modelId, input: task.input, source: task.source, retryOf: task.id });
+  const claim = await claimFailedVideoTaskRetry(id, Date.now(), { manualRetry: true });
+  if (!claim.claimed) {
+    if (claim.task) return claim.task;
+    if (claim.reason === 'not_found') return null;
+    throw new Error('该任务正在重试或状态已变化，请稍后查看生成记录，已避免重复提交。');
+  }
+  try {
+    return await createVideoGeneration({
+      modelId: claim.task.modelId, input: claim.task.input, source: claim.task.source, retryOf: claim.task.id,
+      idempotencyKey: `manual-video-retry:${id}:${claim.retryAttempt}`,
+    });
+  } finally {
+    await releaseFailedVideoTaskRetry(id, claim.claimedAt);
+  }
 }
 
 /** Batch retries require a Worker-claimed failed snapshot and use a stable attempt key. */
 export async function retryFailedVideoTask(task: VideoTask, idempotencyKey: string) {
+  if (canRecoverVideoTaskResult(task)) return refreshVideoTask(task.id);
+  if (/(?:^|_)SUBMISSION_UNCONFIRMED$/.test(task.errorCode || '')) throw new Error('服务商提交结果未确认，未自动重新提交，以避免重复计费。');
   return createVideoGeneration({
     modelId: task.modelId,
     input: task.input,

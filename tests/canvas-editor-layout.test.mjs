@@ -26,13 +26,91 @@ test("centers the toolbar above and editor below the selected card", () => {
   );
 });
 
+test("sizes wide media editors to the available canvas width", () => {
+  assert.equal(layout.canvasWideNodeEditorWidth(1440), 840);
+  assert.equal(layout.canvasWideNodeEditorWidth(1440, 740), 740);
+  assert.equal(layout.canvasWideNodeEditorWidth(390), 358);
+  assert.equal(layout.canvasWideNodeEditorWidth(640, 740), 608);
+  assert.equal(layout.canvasWideNodeEditorWidth(10), 1);
+});
+
+test("scales every node editor family inversely with canvas zoom within readable bounds", () => {
+  const widthAtZoomOut = layout.canvasZoomResponsiveNodeEditorWidth(1440, 0.5, 520, 420, 660);
+  const widthAtDefault = layout.canvasZoomResponsiveNodeEditorWidth(1440, 1, 520, 420, 660);
+  const widthAtZoomIn = layout.canvasZoomResponsiveNodeEditorWidth(1440, 2, 520, 420, 660);
+
+  assert.equal(widthAtZoomOut, 660);
+  assert.equal(widthAtDefault, 520);
+  assert.equal(widthAtZoomIn, 420);
+  assert.ok(widthAtZoomOut > widthAtDefault);
+  assert.ok(widthAtDefault > widthAtZoomIn);
+  assert.equal(layout.canvasZoomResponsiveNodeEditorWidth(390, 0.5, 520, 420, 660), 358);
+
+  for (const profile of [
+    { base: 680, min: 560, max: 760 },
+    { base: 680, min: 600, max: 760 },
+    { base: 520, min: 420, max: 660 },
+    { base: 500, min: 420, max: 620 },
+  ]) {
+    const compact = layout.canvasZoomResponsiveNodeEditorWidth(1440, 2, profile.base, profile.min, profile.max);
+    const defaultSize = layout.canvasZoomResponsiveNodeEditorWidth(1440, 1, profile.base, profile.min, profile.max);
+    const expanded = layout.canvasZoomResponsiveNodeEditorWidth(1440, 0.5, profile.base, profile.min, profile.max);
+    assert.ok(compact < defaultSize);
+    assert.ok(defaultSize < expanded);
+    assert.ok(compact >= profile.min);
+    assert.ok(expanded <= profile.max);
+  }
+});
+
+test("keeps the editor below a near-edge node and lets it extend past the viewport", () => {
+  const anchor = { left: 300, top: 790, width: 380, height: 160 };
+  const viewport = { width: 1280, height: 1000 };
+  const editor = layout.placeCanvasNodeEditor(anchor, viewport, { width: 640, height: 560 });
+
+  assert.deepEqual(editor, { left: 170, top: 964 });
+  assert.ok(editor.top + 560 > viewport.height);
+});
+
+test("shifts a below-node editor sideways to avoid covering a neighboring node", () => {
+  const anchor = { left: 896, top: 122, width: 109, height: 91 };
+  const stage = { width: 1630, height: 856 };
+  const editor = layout.placeCanvasNodeEditor(
+    anchor,
+    stage,
+    { width: 620, height: 597 },
+    14,
+    12,
+    [{ left: 625, top: 401, width: 115, height: 53 }],
+  );
+
+  assert.deepEqual(editor, { left: 752, top: 227 });
+  assert.equal(editor.left, 740 + 12);
+  assert.equal(editor.left + 620 < 625 || editor.left > 740, true);
+  assert.equal(editor.top, anchor.top + anchor.height + 14);
+});
+
+test("keeps an open editor attached below its node as the canvas pans", () => {
+  const viewport = { width: 1280, height: 720 };
+  const panel = { width: 840, height: 520 };
+  const beforeNode = { left: 420, top: 180, width: 280, height: 220 };
+  const afterPanNode = { ...beforeNode, left: 300, top: 260 };
+
+  const before = layout.placeCanvasNodeEditor(beforeNode, viewport, panel);
+  const after = layout.placeCanvasNodeEditor(afterPanNode, viewport, panel);
+
+  assert.deepEqual(before, { left: 140, top: 414 });
+  assert.deepEqual(after, { left: 20, top: 494 });
+  assert.equal(after.left - before.left, afterPanNode.left - beforeNode.left);
+  assert.equal(after.top - before.top, afterPanNode.top - beforeNode.top);
+});
+
 test("keeps overlay offsets attached when the node is outside the viewport", () => {
   const anchor = { left: -24, top: 8, width: 280, height: 220 };
   const stage = { width: 360, height: 300 };
   const toolbar = layout.placeCanvasNodeToolbar(anchor, stage, { width: 420, height: 42 });
   const editor = layout.placeCanvasNodeEditor(anchor, stage, { width: 420, height: 420 });
   assert.deepEqual(toolbar, { left: 10, top: 18 });
-  assert.deepEqual(editor, { left: -94, top: 242 });
+  assert.deepEqual(editor, { left: 12, top: 242 });
   assert.equal(editor.top - (anchor.top + anchor.height), 14);
 });
 
@@ -112,55 +190,50 @@ test("keeps the group color popover visible inside narrow and near-edge viewport
   );
 });
 
-test("fits a tall editor below its node without moving it across the anchor", () => {
+test("preserves a tall editor below its node even when the panel extends past the viewport", () => {
   const anchor = { left: 300, top: 180, width: 380, height: 260 };
   const stage = { width: 1280, height: 720 };
-  const editor = layout.fitCanvasNodeEditorBelow(
+  const editor = layout.placeCanvasNodeEditor(
     anchor,
     stage,
     { width: 640, height: 580 },
   );
 
-  assert.deepEqual(editor, { left: 170, top: 454, maxHeight: 254 });
+  assert.deepEqual(editor, { left: 170, top: 454 });
   assert.equal(editor.top, anchor.top + anchor.height + 14);
+  assert.ok(editor.top + 580 > stage.height);
 });
 
-test("keeps the editor below its node even when it extends past the viewport", () => {
-  const editor = layout.placeCanvasNodeEditorDock(
+test("does not shrink a below-node editor to the remaining viewport height", () => {
+  const editor = layout.placeCanvasNodeEditor(
     { left: 300, top: 520, width: 380, height: 120 },
     { width: 1280, height: 720 },
-    { width: 640 },
+    { width: 640, height: 560 },
   );
 
-  assert.deepEqual(editor, {
-    left: 170,
-    top: 654,
-    placement: "bottom",
-  });
+  assert.deepEqual(editor, { left: 170, top: 654 });
+  assert.equal(editor.top, 520 + 120 + 14);
+  assert.ok(editor.top + 560 > 720);
 });
 
 test("keeps the editor below the node when the full panel fits", () => {
-  const editor = layout.placeCanvasNodeEditorDock(
+  const editor = layout.placeCanvasNodeEditor(
     { left: 300, top: 120, width: 380, height: 120 },
     { width: 1280, height: 720 },
-    { width: 640 },
+    { width: 640, height: 400 },
   );
 
-  assert.deepEqual(editor, {
-    left: 170,
-    top: 254,
-    placement: "bottom",
-  });
+  assert.deepEqual(editor, { left: 170, top: 254 });
 });
 
 test("keeps a below-node editor inside the horizontal viewport margins", () => {
-  const editor = layout.fitCanvasNodeEditorBelow(
+  const editor = layout.placeCanvasNodeEditor(
     { left: -80, top: 60, width: 280, height: 180 },
     { width: 900, height: 700 },
     { width: 640, height: 300 },
   );
 
-  assert.deepEqual(editor, { left: 12, top: 254, maxHeight: 300 });
+  assert.deepEqual(editor, { left: 12, top: 254 });
 });
 
 test("places a context menu below and to the right when there is room", () => {
@@ -205,91 +278,4 @@ test("keeps context menus bounded with a short dynamic viewport", () => {
     ),
     { left: 70, top: 10 },
   );
-});
-
-test("places a compact dock horizontally centered below a centered node", () => {
-  const anchor = { left: 300, top: 200, width: 380, height: 260 };
-  const stage = { width: 1280, height: 900 };
-  const dock = layout.placeCanvasNodeEditorDock(
-    anchor,
-    stage,
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 150,
-    top: 474,
-    placement: "bottom",
-  });
-  assert.equal(dock.top, anchor.top + anchor.height + 14);
-});
-
-test("clamps a dock horizontally without changing its below-node position", () => {
-  const dock = layout.placeCanvasNodeEditorDock(
-    { left: -100, top: 60, width: 280, height: 180 },
-    { width: 900, height: 700 },
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 12,
-    top: 254,
-    placement: "bottom",
-  });
-});
-
-test("clamps a compact dock to the right horizontal margin", () => {
-  const dock = layout.placeCanvasNodeEditorDock(
-    { left: 700, top: 60, width: 280, height: 180 },
-    { width: 900, height: 700 },
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 208,
-    top: 254,
-    placement: "bottom",
-  });
-});
-
-test("keeps the full dock below a low node without a viewport height constraint", () => {
-  const dock = layout.placeCanvasNodeEditorDock(
-    { left: 300, top: 600, width: 380, height: 260 },
-    { width: 1280, height: 720 },
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 150,
-    top: 874,
-    placement: "bottom",
-  });
-});
-
-test("keeps the editor below the node even when no viewport space remains", () => {
-  const dock = layout.placeCanvasNodeEditorDock(
-    { left: 300, top: 320, width: 380, height: 260 },
-    { width: 1280, height: 600 },
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 150,
-    top: 594,
-    placement: "bottom",
-  });
-});
-
-test("keeps the editor below the node regardless of its full measured height", () => {
-  const dock = layout.placeCanvasNodeEditorDock(
-    { left: 300, top: 100, width: 380, height: 300 },
-    { width: 1280, height: 600 },
-    { width: 680 },
-  );
-
-  assert.deepEqual(dock, {
-    left: 150,
-    top: 414,
-    placement: "bottom",
-  });
 });

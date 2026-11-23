@@ -8,7 +8,7 @@ export function speechVoiceOptions(profile: SpeechModelProfile, providerKey: str
     return {
       value: voice,
       label: speechVoiceLabel(voice, profile.publicModel),
-      description: hasSample ? '可播放本地样音，不消耗额度' : '该音色暂无样音',
+      description: hasSample ? '可播放本地样音，不消耗额度' : '对应音色样音待生成',
     };
   });
 }

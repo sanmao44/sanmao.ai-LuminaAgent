@@ -230,6 +230,28 @@ test('deleting a canvas retries against the refreshed index and preserves a conc
   assert.deepEqual(storage.loadCanvasDocument('other'), empty);
 });
 
+test('deleting a canvas rebases atomically over a concurrent save and prevents stale sessions from restoring it', async () => {
+  const { storage, project, imageDocument, empty, indexedDB, CanvasProjectSession } = await fixture();
+  await storage.createCanvasProject(project('b'), empty);
+  const staleSession = new CanvasProjectSession();
+  staleSession.open('b');
+  const competingProject = { ...project('other'), projectId: 'other-creative' };
+  const concurrentDocument = imageDocument('concurrent-edit');
+
+  indexedDB.beforeNextReadWrite = () => {
+    indexedDB.seed('canvas-state', 'canvas:projects', [project('a'), { ...project('b'), updatedAt: 200 }, competingProject]);
+    indexedDB.seed('canvas-state', 'canvas:active', 'b');
+    indexedDB.seed('canvas-state', 'canvas:document:b', concurrentDocument);
+    indexedDB.seed('canvas-state', 'meta:creative-projects', []);
+  };
+
+  assert.equal(await storage.deleteCanvasProject('b'), true);
+  assert.deepEqual(storage.readCanvasProjects().map((item) => item.id).sort(), ['a', 'other']);
+  assert.deepEqual(storage.loadCanvasDocument('other'), empty);
+  assert.equal((await staleSession.saveRecoveringConflict(imageDocument('late-edit'))).saved, false);
+  assert.equal((await storage.ensureCanvasStorage()).activeId, 'a');
+});
+
 test('a winning IndexedDB index survives a concurrent first legacy migration', async () => {
   const { storage, project, imageDocument, indexedDB } = await fixture({ initialize: false });
   const staleProjects = [{ ...project('stale'), projectId: 'stale-project' }];

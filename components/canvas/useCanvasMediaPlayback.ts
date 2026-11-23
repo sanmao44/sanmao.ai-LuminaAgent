@@ -31,6 +31,9 @@ export function useCanvasMediaPlayback({
   const [mediaRetryKey, setMediaRetryKey] = useState(0);
   const [videoPlaybackState, setVideoPlaybackState] =
     useState<CanvasVideoPlaybackState>("paused");
+  const mediaProbeRef = useRef<AbortController | null>(null);
+  const sourceUrlRef = useRef(url);
+  sourceUrlRef.current = url;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -47,6 +50,8 @@ export function useCanvasMediaPlayback({
       clearTimeout(mediaRetryTimerRef.current);
     }
     mediaRetryAttemptRef.current = 0;
+    mediaProbeRef.current?.abort();
+    mediaProbeRef.current = null;
     setMediaUnavailable(false);
     setMediaLoadMessage("temporary");
   }, [url, videoClip?.startTime]);
@@ -63,6 +68,7 @@ export function useCanvasMediaPlayback({
       if (mediaRetryTimerRef.current) {
         clearTimeout(mediaRetryTimerRef.current);
       }
+      mediaProbeRef.current?.abort();
     },
     [],
   );
@@ -77,11 +83,16 @@ export function useCanvasMediaPlayback({
       }, 500 * (attempt + 1));
       return;
     }
+    mediaProbeRef.current?.abort();
+    const probe = new AbortController();
+    mediaProbeRef.current = probe;
     void fetch(String(url), {
       cache: "no-store",
       headers: { Range: "bytes=0-1" },
+      signal: probe.signal,
     })
       .then((response) => {
+        if (probe.signal.aborted || sourceUrlRef.current !== url) return;
         setMediaLoadMessage(
           response.status === 404 || response.status === 400
             ? "missing"
@@ -90,6 +101,7 @@ export function useCanvasMediaPlayback({
         setMediaUnavailable(true);
       })
       .catch(() => {
+        if (probe.signal.aborted || sourceUrlRef.current !== url) return;
         setMediaLoadMessage("temporary");
         setMediaUnavailable(true);
       });
@@ -102,6 +114,8 @@ export function useCanvasMediaPlayback({
         clearTimeout(mediaRetryTimerRef.current);
       }
       mediaRetryAttemptRef.current = 0;
+      mediaProbeRef.current?.abort();
+      mediaProbeRef.current = null;
       setMediaUnavailable(false);
       setMediaLoadMessage("temporary");
       setMediaRetryKey((value) => value + 1);

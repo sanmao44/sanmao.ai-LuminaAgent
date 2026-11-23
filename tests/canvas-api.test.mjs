@@ -8,6 +8,7 @@ async function loadTypeScript(path) {
   const sourceUrl = new URL(path, import.meta.url);
   const source = await readFile(sourceUrl, 'utf8');
   globalThis.__canvasApiCreativeContract = createTsRequire(process.cwd())('./packages/contracts/creative');
+  globalThis.__canvasApiVideoCapabilities = createTsRequire(process.cwd())('./lib/cangyuan-video-capabilities');
   let compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
     fileName: sourceUrl.pathname,
@@ -56,10 +57,15 @@ async function loadTypeScript(path) {
     /import \{\s*MAX_IMAGE_REFERENCES,\s*parseImageModelParameters\s*\} from ["']@\/packages\/contracts\/creative["'];/u,
     'const { MAX_IMAGE_REFERENCES, parseImageModelParameters } = globalThis.__canvasApiCreativeContract;',
   );
+  compiled = compiled.replace(
+    /import \{\s*getCangyuanVideoModelProfile\s*\} from ["']\.\.\/cangyuan-video-capabilities["'];/u,
+    'const { getCangyuanVideoModelProfile } = globalThis.__canvasApiVideoCapabilities;',
+  );
   try {
     return await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
   } finally {
     delete globalThis.__canvasApiCreativeContract;
+    delete globalThis.__canvasApiVideoCapabilities;
   }
 }
 
@@ -477,7 +483,7 @@ test('canvas video generation keeps provider-specific parameters off non-Cangyua
   assert.equal('modelParameters' in payload.input, false);
 });
 
-test('canvas Cangyuan video generation serializes saved model parameters beside the prompt', async () => {
+test('canvas Cangyuan video generation keeps primary settings separate from model parameters', async () => {
   let request;
   await withFetch(async (input, options) => {
     request = { input, options };
@@ -485,7 +491,7 @@ test('canvas Cangyuan video generation serializes saved model parameters beside 
   }, () => api.generateCanvasVideo({
     prompt: 'a paper boat',
     model: 'cangyuan-video-model',
-    modelRawId: 'sd20-seedance-2.0-fast',
+    modelRawId: 'sd11-seedance-2.0',
     videoTransport: 'cangyuan-videos',
     operation: 'generate',
     inputMode: 'text',
@@ -498,7 +504,11 @@ test('canvas Cangyuan video generation serializes saved model parameters beside 
   const payload = JSON.parse(request.options.body);
   assert.equal(request.input, '/api/video/generate');
   assert.equal(payload.model, 'cangyuan-video-model');
-  assert.deepEqual(payload.input, { prompt: 'a paper boat', referenceImages: [], modelParameters: { face_mode: 'asset', seed: '42', duration: 5, aspect_ratio: '16:9', resolution: '720p' } });
+  assert.deepEqual(payload.input, {
+    prompt: 'a paper boat', operation: 'generate', seconds: 5,
+    aspectRatio: '16:9', resolution: '720p', seed: 42,
+    referenceImages: [], modelParameters: { face_mode: 'asset' },
+  });
   assert.equal('videoTransport' in payload, false);
 });
 
@@ -519,31 +529,45 @@ test('canvas Cangyuan video generation rejects malformed model parameters before
   assert.equal(fetchCalled, false);
 });
 
-test('canvas Cangyuan video generation blocks connected media before encoding or network submission', async () => {
+test('canvas Cangyuan first-frame generation preserves the picture and does not send an unsupported audio switch', async () => {
   const mocks = withImageCanvas();
-  let fetchCalled = false;
   try {
-    await assert.rejects(
-      () => withFetch(async () => {
-        fetchCalled = true;
-        return jsonResponse({ task: { id: 'should-not-submit', status: 'pending' } });
-      }, () => api.generateCanvasVideo({
-        prompt: 'animate the connected image',
-        model: 'cangyuan-video-model',
-        videoTransport: 'cangyuan-videos',
-        inputMode: 'reference',
-        references: [{ url: 'data:image/png;base64,SOURCE' }],
-      })),
-      /只提交模型和提示词/,
-    );
-    assert.equal(fetchCalled, false);
-    assert.deepEqual(mocks.encodedTypes, []);
+    let request;
+    let calls = 0;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      calls += 1;
+      return jsonResponse({ task: { id: 'first-frame-video', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'animate the connected image',
+      idempotencyKey: 'canvas-first-frame',
+      model: 'cangyuan-video-model',
+      modelRawId: 'gf1-gemini-omni-1.2-flash',
+      videoTransport: 'cangyuan-videos',
+      inputMode: 'first-frame',
+      firstFrame: 'data:image/png;base64,SOURCE',
+      duration: 15,
+      aspect: '9:16',
+      resolution: '1080p',
+      audio: true,
+    }));
+    const payload = JSON.parse(request.options.body);
+    assert.equal(calls, 1);
+    assert.equal(request.options.headers['Idempotency-Key'], 'canvas-first-frame');
+    assert.equal(payload.input.seconds, 15);
+    assert.equal(payload.input.aspectRatio, '9:16');
+    assert.equal(payload.input.resolution, '1080p');
+    assert.equal(payload.input.firstFrame, 'data:image/png;base64,SOURCE');
+    assert.deepEqual(payload.input.referenceImages, []);
+    assert.equal('generateAudio' in payload.input, false);
+    assert.equal('modelParameters' in payload.input, false);
+    assert.equal('videoMode' in payload.input, false);
   } finally {
     mocks.restore();
   }
 });
 
-test('canvas Cangyuan video generation forwards non-default controls as model parameters', async () => {
+test('canvas Cangyuan video generation forwards non-default controls through the shared primary contract', async () => {
   let request;
   await withFetch(async (input, options) => {
     request = { input, options };
@@ -558,7 +582,163 @@ test('canvas Cangyuan video generation forwards non-default controls as model pa
     resolution: '480p',
   }));
   const payload = JSON.parse(request.options.body);
-  assert.deepEqual(payload.input.modelParameters, { duration: 8, aspect_ratio: '9:16', resolution: '480p' });
+  assert.deepEqual(payload.input, {
+    prompt: 'a paper boat', seconds: 8, aspectRatio: '9:16', resolution: '480p', referenceImages: [],
+  });
+});
+
+test('canvas Cangyuan video generation keeps explicit first and last frame slots', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let payload;
+    await withFetch(async (_input, options) => {
+      payload = JSON.parse(options.body);
+      return jsonResponse({ task: { id: 'keyframe-video', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'turn to the last frame', modelRawId: 'gf1-gemini-omni-1.2-flash',
+      videoTransport: 'cangyuan-videos', inputMode: 'frames',
+      firstFrame: 'data:image/png;base64,FIRST', lastFrame: 'data:image/png;base64,LAST',
+    }));
+    assert.equal(payload.input.firstFrame, 'data:image/png;base64,FIRST');
+    assert.equal(payload.input.lastFrame, 'data:image/png;base64,LAST');
+    assert.deepEqual(payload.input.referenceImages, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas Cangyuan video generation forwards reference images, videos and audio together', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let payload;
+    await withFetch(async (_input, options) => {
+      payload = JSON.parse(options.body);
+      return jsonResponse({ task: { id: 'reference-video', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'follow the connected references', modelRawId: 'sd20-seedance-2.0-fast',
+      videoTransport: 'cangyuan-videos', inputMode: 'reference',
+      references: [{ url: 'data:image/png;base64,PICTURE' }],
+      referenceVideos: [{ url: 'https://assets.example.test/motion.mp4' }],
+      audios: [{ url: 'data:audio/mpeg;base64,SOUND' }],
+    }));
+    assert.equal(payload.input.referenceImages.length, 1);
+    assert.match(payload.input.referenceImages[0], /^data:image\//u);
+    assert.deepEqual(payload.input.referenceVideos, ['https://assets.example.test/motion.mp4']);
+    assert.equal(payload.input.referenceVideo, 'https://assets.example.test/motion.mp4');
+    assert.deepEqual(payload.input.audios, ['data:audio/mpeg;base64,SOUND']);
+    assert.equal(payload.input.audio, 'data:audio/mpeg;base64,SOUND');
+  } finally {
+    mocks.restore();
+  }
+});
+
+test('canvas Cangyuan audio generation switch is sent only for documented support', async () => {
+  const payloads = [];
+  for (const audio of [true, false, undefined]) {
+    await withFetch(async (_input, options) => {
+      payloads.push(JSON.parse(options.body));
+      return jsonResponse({ task: { id: 'audio-video', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'a forest with natural sound', modelRawId: 'sd25-seedance-2.0',
+      videoTransport: 'cangyuan-videos', audio,
+    }));
+  }
+  assert.deepEqual(payloads.map((payload) => payload.input.generateAudio), [true, false, true]);
+  assert.ok(payloads.every((payload) => !('modelParameters' in payload.input)));
+});
+
+test('canvas preserves all thirty documented reference images instead of truncating at sixteen', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let payload;
+    const references = Array.from({ length: 30 }, (_, index) => ({ url: `data:image/png;base64,PICTURE${index}` }));
+    await withFetch(async (_input, options) => {
+      payload = JSON.parse(options.body);
+      return jsonResponse({ task: { id: 'thirty-image-video', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'use all connected pictures', modelRawId: 'sd21-seedance-2.5',
+      videoTransport: 'cangyuan-videos', inputMode: 'reference', references,
+    }));
+    assert.deepEqual(payload.input.referenceImages, references.map((item) => item.url));
+  } finally { mocks.restore(); }
+});
+
+test('canvas rejects excess reference media before uploading or generating', async () => {
+  for (const [field, count, message] of [
+    ['references', 31, /最多支持 30 张参考图/u],
+    ['referenceVideos', 11, /最多支持 10 个参考视频/u],
+    ['audios', 11, /最多支持 10 段参考音频/u],
+  ]) {
+    let calls = 0;
+    await assert.rejects(() => withFetch(async () => {
+      calls += 1;
+      return jsonResponse({ task: { id: 'must-not-submit', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'connected references', modelRawId: 'sd21-seedance-2.5',
+      videoTransport: 'cangyuan-videos', inputMode: 'reference',
+      [field]: Array.from({ length: count }, () => ({ url: 'data:image/png;base64,PICTURE' })),
+    })), message);
+    assert.equal(calls, 0);
+  }
+});
+
+test('canvas Cangyuan video omits unsupported stale basic controls', async () => {
+  let payload;
+  await withFetch(async (_input, options) => {
+    payload = JSON.parse(options.body);
+    return jsonResponse({ task: { id: 'podcast-video', status: 'pending' } });
+  }, () => api.generateCanvasVideo({
+    prompt: 'two speakers discussing a story', modelRawId: 'mu1-muse-podcast',
+    videoTransport: 'cangyuan-videos', duration: 120, aspect: '9:16', resolution: '1080p', audio: true,
+  }));
+  assert.deepEqual(payload.input, { prompt: 'two speakers discussing a story', seconds: 120, referenceImages: [] });
+});
+
+test('canvas Cangyuan video seed rejects fractional and unsafe values before submission', async () => {
+  for (const seed of ['1.5', '9007199254740992', 'random']) {
+    let calls = 0;
+    await assert.rejects(() => withFetch(async () => {
+      calls += 1;
+      return jsonResponse({ task: { id: 'invalid-seed', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'a paper boat', modelRawId: 'gf1-gemini-omni-1.2-flash',
+      videoTransport: 'cangyuan-videos', modelParameters: { seed },
+    })), /随机种子必须是安全整数/u);
+    assert.equal(calls, 0);
+  }
+});
+
+test('a failed canvas video node recovers its original task with GET only and keeps one output', async () => {
+  const load = createTsRequire(process.cwd());
+  const { createMedia, normalizeDocument } = load('./lib/canvas/model');
+  const { canRecoverCanvasTaskInBackground } = load('./lib/canvas/task-recovery');
+  const { applyCanvasVideoTaskRecovery } = load('./lib/canvas/task-record-recovery');
+  const node = createMedia('video', '', '原视频节点', { x: 120, y: 240 });
+  node.data.status = 'failed';
+  node.data.jobId = 'existing-video-task';
+  let document = normalizeDocument({ nodes: [node], edges: [], groups: [] });
+  const requests = [];
+  assert.equal(canRecoverCanvasTaskInBackground(document.nodes[0]), true);
+  const result = await withFetch(async (url, options) => {
+    requests.push({ url, method: options?.method ?? 'GET' });
+    return jsonResponse({ task: {
+      id: 'existing-video-task', status: 'done', videoUrls: ['/recovered-video.mp4', '/extra-video.mp4'],
+    } });
+  }, () => applyCanvasVideoTaskRecovery({
+    nodeId: node.id, taskId: 'existing-video-task', imageParams: { kind: 'image', model: 'auto', aspect: '1:1' },
+    readTask: async (id) => (await api.getCanvasVideoTask(id)).task,
+    updateDocument: (updater) => { document = updater(document); },
+  }));
+  assert.deepEqual(result, { kind: 'recovered' });
+  assert.deepEqual(requests, [{ url: '/api/video/tasks/existing-video-task?refresh=false', method: 'GET' }]);
+  assert.equal(document.nodes.length, 1);
+  assert.equal(document.nodes[0].id, node.id);
+  assert.equal(document.nodes[0].x, 120);
+  assert.equal(document.nodes[0].y, 240);
+  assert.equal(document.nodes[0].data.jobId, 'existing-video-task');
+  assert.equal(document.nodes[0].data.status, 'completed');
+  assert.equal(document.nodes[0].data.url, '/recovered-video.mp4');
+  assert.equal(canRecoverCanvasTaskInBackground(document.nodes[0]), false);
 });
 
 test('canvas video generation includes saved project style and constraints in its prompt', async () => {

@@ -11,7 +11,20 @@ export const SPEECH_OUTPUT_FORMATS = Object.freeze([
 
 export type SpeechOutputFormat = typeof SPEECH_OUTPUT_FORMATS[number];
 
-export const SPEECH_PLATFORM_TEXT_LIMIT = 5000;
+export const SPEECH_PLATFORM_TEXT_LIMIT = 10000;
+
+export const MINIMAX_SPEECH_LANGUAGE_OPTIONS = Object.freeze([
+  'auto', 'Chinese', 'Chinese,Yue', 'English', 'Japanese', 'Korean', 'Spanish', 'French', 'German', 'Italian',
+  'Portuguese', 'Russian', 'Arabic', 'Turkish', 'Dutch', 'Ukrainian', 'Vietnamese', 'Indonesian', 'Thai',
+  'Polish', 'Romanian', 'Greek', 'Czech', 'Finnish', 'Hindi', 'Bulgarian', 'Danish', 'Hebrew', 'Malay',
+  'Persian', 'Slovak', 'Swedish', 'Croatian', 'Filipino', 'Hungarian', 'Norwegian', 'Slovenian', 'Catalan',
+  'Nynorsk', 'Tamil', 'Afrikaans',
+] as const);
+export const MINIMAX_SPEECH_BITRATE_OPTIONS = Object.freeze(['32000', '64000', '128000', '256000'] as const);
+export const MINIMAX_SPEECH_CHANNEL_OPTIONS = Object.freeze(['1', '2'] as const);
+export const MINIMAX_SPEECH_SAMPLE_RATE_OPTIONS = Object.freeze(['8000', '16000', '22050', '24000', '32000', '44100'] as const);
+export const MINIMAX_SPEECH_EFFECT_OPTIONS = Object.freeze(['spacious_echo', 'auditorium_echo', 'lofi_telephone', 'robotic'] as const);
+export const MINIMAX_SPEECH_NORMALIZATION_OPTIONS = Object.freeze(['basic', 'quality'] as const);
 
 export type SpeechAdvancedOptionKey =
   | 'applyTextNormalization'
@@ -24,7 +37,20 @@ export type SpeechAdvancedOptionKey =
   | 'voiceId'
   | 'emotion'
   | 'instruct'
-  | 'dialogue';
+  | 'dialogue'
+  | 'aigcWatermark'
+  | 'bitrate'
+  | 'channel'
+  | 'effectIntensity'
+  | 'effectPitch'
+  | 'effectTimbre'
+  | 'latexRead'
+  | 'pitch'
+  | 'pronunciationTone'
+  | 'sampleRate'
+  | 'soundEffects'
+  | 'textNormalizationMode'
+  | 'volume';
 
 export const SPEECH_VOICE_PREVIEW_TEXT = '你好，这是一段音色试听。';
 
@@ -129,9 +155,39 @@ const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Obje
     languageCodes: Object.freeze(['auto', 'ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko'] as const),
     emotionOptions: Object.freeze(['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised'] as const),
     advancedOptionKeys: Object.freeze(['engine', 'language', 'seed', 'similarityBoost', 'stability', 'voiceId', 'emotion', 'instruct'] as const),
-    engineOptions: Object.freeze(['qwen3', 'chatterbox', 'minimax-speech-02-hd', 'minimax-speech-02-turbo', 'minimax-speech-2.6-hd', 'minimax-speech-2.6-turbo', 'minimax-speech-2.8-hd', 'minimax-speech-2.8-turbo', 'elevenlabs-v4', 'elevenlabs-v4-turbo'] as const),
+    engineOptions: Object.freeze(['qwen3', 'chatterbox', 'elevenlabs-v4', 'elevenlabs-v4-turbo'] as const),
+  }),
+  'minimax-speech-2.8-hd-tts': Object.freeze({
+    providerKey: 'cangyuan',
+    publicModel: 'minimax-speech-2.8-hd-tts',
+    suggestedVoices: Object.freeze([] as const),
+    responseFormats: Object.freeze(['mp3', 'wav', 'flac'] as const),
+    textMaxLength: 10000,
+    speedRange: Object.freeze({ min: 0.5, max: 2 }),
+    requiresVoiceId: true,
+    supportsVoiceId: true,
+    supportsAdvancedControls: true,
+    languageCodes: MINIMAX_SPEECH_LANGUAGE_OPTIONS,
+    emotionOptions: Object.freeze(['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm', 'fluent', 'whisper'] as const),
+    advancedOptionKeys: Object.freeze(['voiceId', 'emotion', 'language', 'aigcWatermark', 'bitrate', 'channel', 'effectIntensity', 'effectPitch', 'effectTimbre', 'latexRead', 'pitch', 'pronunciationTone', 'sampleRate', 'soundEffects', 'textNormalizationMode', 'volume'] as const),
+  }),
+  'minimax-speech-2.8-turbo-tts': Object.freeze({
+    providerKey: 'cangyuan',
+    publicModel: 'minimax-speech-2.8-turbo-tts',
+    suggestedVoices: Object.freeze([] as const),
+    responseFormats: Object.freeze(['mp3', 'wav', 'flac'] as const),
+    textMaxLength: 10000,
+    speedRange: Object.freeze({ min: 0.5, max: 2 }),
+    requiresVoiceId: true,
+    supportsVoiceId: true,
+    supportsAdvancedControls: true,
+    languageCodes: MINIMAX_SPEECH_LANGUAGE_OPTIONS,
+    emotionOptions: Object.freeze(['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'calm', 'fluent', 'whisper'] as const),
+    advancedOptionKeys: Object.freeze(['voiceId', 'emotion', 'language', 'aigcWatermark', 'bitrate', 'channel', 'effectIntensity', 'effectPitch', 'effectTimbre', 'latexRead', 'pitch', 'pronunciationTone', 'sampleRate', 'soundEffects', 'textNormalizationMode', 'volume'] as const),
   }),
 });
+
+export const SPEECH_MODEL_PROFILE_LIST: readonly SpeechModelProfile[] = Object.freeze(Object.values(SPEECH_MODEL_PROFILES));
 
 export function getSpeechModelProfile(publicModel: string, providerKey?: string): SpeechModelProfile | null {
   const normalizedModel = speechPublicModelId(publicModel);
@@ -149,7 +205,6 @@ export function getSpeechModelResponseFormats(publicModel: string, engine?: stri
   if (profile.publicModel !== 'voice-clone-tts') return profile.responseFormats;
   const selected = (engine || profile.defaultEngine || '').toLowerCase();
   if (selected === 'elevenlabs-v4' || selected === 'elevenlabs-v4-turbo') return ['mp3', 'wav', 'opus', 'pcm'];
-  if (/minimax-speech-.*-(?:hd|turbo)$/.test(selected)) return ['mp3', 'flac'];
   return ['mp3', 'wav'];
 }
 
@@ -185,6 +240,19 @@ export type AudioSynthesisRequest = {
   emotion?: string;
   instruct?: string;
   dialogue?: readonly SpeechDialogueLine[];
+  aigcWatermark?: boolean;
+  bitrate?: typeof MINIMAX_SPEECH_BITRATE_OPTIONS[number];
+  channel?: typeof MINIMAX_SPEECH_CHANNEL_OPTIONS[number];
+  effectIntensity?: number;
+  effectPitch?: number;
+  effectTimbre?: number;
+  latexRead?: boolean;
+  pitch?: number;
+  pronunciationTone?: string;
+  sampleRate?: typeof MINIMAX_SPEECH_SAMPLE_RATE_OPTIONS[number];
+  soundEffects?: typeof MINIMAX_SPEECH_EFFECT_OPTIONS[number];
+  textNormalizationMode?: typeof MINIMAX_SPEECH_NORMALIZATION_OPTIONS[number];
+  volume?: number;
   modelId?: string;
   source?: 'workspace' | 'agent' | 'canvas';
   projectId?: string;
@@ -197,7 +265,7 @@ export type SpeechDialogueLine = {
   voice: string;
 };
 
-export type SpeechAdvancedOptions = Pick<AudioSynthesisRequest, 'applyTextNormalization' | 'engine' | 'languageCode' | 'language' | 'seed' | 'similarityBoost' | 'stability' | 'voiceId' | 'emotion' | 'instruct' | 'dialogue'>;
+export type SpeechAdvancedOptions = Pick<AudioSynthesisRequest, 'applyTextNormalization' | 'engine' | 'languageCode' | 'language' | 'seed' | 'similarityBoost' | 'stability' | 'voiceId' | 'emotion' | 'instruct' | 'dialogue' | 'aigcWatermark' | 'bitrate' | 'channel' | 'effectIntensity' | 'effectPitch' | 'effectTimbre' | 'latexRead' | 'pitch' | 'pronunciationTone' | 'sampleRate' | 'soundEffects' | 'textNormalizationMode' | 'volume'>;
 
 export type AudioSynthesisResult = {
   data: Uint8Array;

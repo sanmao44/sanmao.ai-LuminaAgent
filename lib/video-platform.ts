@@ -55,7 +55,7 @@ export function requiresPublicMediaRelay(
   options: { hasVideoModel?: boolean } = {},
 ) {
   if (!provider || isJimengProvider(provider) || is65535Provider(provider) || provider.videoTransport === 'native-task') return false;
-  if (provider.videoTransport === 'agnes-videos' || provider.videoTransport === 'openai-videos') return true;
+  if (provider.videoTransport === 'agnes-videos' || provider.videoTransport === 'openai-videos' || provider.videoTransport === 'cangyuan-videos') return true;
   if (isAgnesProvider(provider)) return options.hasVideoModel !== false;
   return (provider.videoTransport === 'auto' || !provider.videoTransport) && options.hasVideoModel === true;
 }

@@ -1,6 +1,6 @@
 ﻿# Migration Status
 
-Last reviewed: 2026-10-04
+Last reviewed: 2026-11-23
 
 Architecture Migration: **complete**. Final Architecture Lock: **complete**.
 
@@ -33,6 +33,26 @@ in the compatibility column.
 | Observability | cutover completed | `RuntimeObserver` port plus the redacted JSONL sink | No legacy ownership; broader export is product hardening, not an ownership blocker |
 | Architecture enforcement | locked | `tests/architecture-enforcement.test.mjs` | Machine-checks contract purity, core dependency direction, transport boundary, worker task boundary and the single SQLite opener |
 | Physical boundary | settled | Modular Next Monolith with in-process worker dispatch | Separate Web/API/Worker deployables are intentionally deferred until deployment needs justify them |
+
+### Cangyuan video configuration compatibility
+
+Earlier discovery could persist `openai-videos` and the generic
+`/v1/tasks/{id}` query path for an official Cangyuan connection. Reading those
+values literally drops model-specific reference fields and queries the wrong
+task endpoint. Existing saved providers and imported backups therefore retain
+a bounded read-normalization adapter:
+
+| Item | Compatibility scope |
+| --- | --- |
+| Identity | Exact official hosts `ai.cangyuansuanli.cn` / `direct-api.cangyuansuanli.cn`, the explicit Cangyuan platform, or explicit `cangyuan-videos` transport |
+| Adapters | `usesCangyuanVideoProtocol` in `lib/cangyuan-provider.ts`; discovery inference in `lib/providers.ts`; public provider projection in `lib/store.ts`; transport resolution and task-query path normalization in `lib/video-providers.ts` |
+| Consumers | Saved/imported provider configurations, model discovery, main creation UI, Canvas capability/input selection, and the video task service polling persisted provider task IDs |
+| Normalization | Historical `auto` / `openai-videos` configurations on official connections use Cangyuan payloads and `/v1/videos/{id}`. Only inherited `/v1/tasks/{id}`, `{taskId}` and `{task_id}` templates are repaired; explicit custom query paths remain intact. Explicit native-task, Agnes and Jimeng transport dispatch remains separate. |
+| Authority | Existing Provider/Model Runtime and Task Repository remain the only owners; these adapters project configuration and do not create another provider or task store. |
+| Deletion condition | All supported saved/imported configurations write explicit `cangyuan-videos` with the documented query path; old persisted tasks have been recovered or retired; discovery no longer creates generic Cangyuan video settings; supported backup compatibility and protocol regression tests establish that no legacy consumers remain. Until then retain read normalization. |
+
+The dated parameter/protocol audit and verification limits are recorded in
+`docs/cangyuan-video-integration-audit.md`.
 
 Canvas browser storage migration keeps a full Nova rollback snapshot in the
 `canvas-state` IndexedDB store before it attempts the optional

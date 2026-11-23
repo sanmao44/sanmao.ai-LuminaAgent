@@ -1,3 +1,4 @@
+import { isCrossSiteBrowserRequest } from '@/lib/auth';
 import { hasSeenWelcome, markWelcomeSeen } from '@/lib/onboarding';
 
 export const runtime = 'nodejs';
@@ -10,7 +11,8 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (isCrossSiteBrowserRequest(request)) return Response.json({ error: '非法请求来源。' }, { status: 403 });
   try {
     await markWelcomeSeen();
     return Response.json({ seen: true });

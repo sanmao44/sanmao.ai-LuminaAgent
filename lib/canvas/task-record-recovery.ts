@@ -1,5 +1,6 @@
 import { canvasGenerationLogRecoveryStatus, recoverCanvasTask } from './task-recovery';
 import type { CanvasDocument, CanvasNodeParams } from './types';
+import { canvasVideoTaskProgress } from './variant-batch';
 
 export type CanvasTaskRecordSnapshot = {
   status?: string;
@@ -56,4 +57,35 @@ export async function applyCanvasTaskRecordRecovery(input: {
     return { kind: 'recovered', imageCount: urls.length };
   }
   return { kind: 'pending' };
+}
+
+/** Read the existing Worker task and project its result; recovery never submits a generation. */
+export async function applyCanvasVideoTaskRecovery(input: {
+  nodeId: string;
+  taskId: string;
+  imageParams: CanvasNodeParams;
+  readTask(taskId: string): Promise<Parameters<typeof canvasVideoTaskProgress>[0]>;
+  updateDocument(updater: (document: CanvasDocument) => CanvasDocument): boolean | void | Promise<boolean | void>;
+}) {
+  const task = await input.readTask(input.taskId).catch(() => null);
+  if (!task) return { kind: 'unavailable' as const };
+  const progress = canvasVideoTaskProgress(task);
+  if (progress.status === 'failed') return { kind: 'terminal' as const };
+  if (progress.status === 'completed' && !progress.url) return { kind: 'missing_output' as const };
+
+  let changed = false;
+  const saved = await input.updateDocument((document) => {
+    const next = recoverCanvasTask(document, {
+      nodeId: input.nodeId,
+      taskId: input.taskId,
+      status: progress.url ? 'success' : 'pending',
+      urls: progress.url ? [progress.url] : [],
+      imageParams: input.imageParams,
+    });
+    changed = next !== document;
+    return next;
+  });
+  if (saved === false) return { kind: 'save_failed' as const };
+  if (!changed) return { kind: 'stale' as const };
+  return { kind: progress.url ? 'recovered' as const : 'pending' as const };
 }

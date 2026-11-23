@@ -775,24 +775,56 @@ export async function renameCanvasProject(id: string, name: string) {
 }
 
 export async function deleteCanvasProject(id: string) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    storageConflict = false;
-    const latest = readCanvasProjects();
-    if (latest.length <= 1 || !latest.some((project) => project.id === id)) return false;
-    const next = latest.filter((project) => project.id !== id);
-    const tombstones = readCanvasDeletionTombstones();
-    delete tombstones[id];
-    const result = await persistProjectIdentity(next, readCreativeProjects(), new Map([
-      [`${CANVAS_PROJECT_PREFIX}${id}`, null],
-      [CANVAS_DELETION_TOMBSTONES_KEY, JSON.stringify(tombstones)],
-    ]));
-    if (result.saved) {
-      emitWorkspaceChange();
-      return true;
+  storageQuotaExceeded = false;
+  storageConflict = false;
+  const documentKey = `${DB_DOCUMENT_PREFIX}${id}`;
+  const keys = [DB_PROJECTS_KEY, DB_ACTIVE_KEY, DB_TOMBSTONES_KEY, CREATIVE_PROJECTS_STORAGE_KEY, documentKey];
+  try {
+    const result = await transactCanvasStorage<{
+      deleted: boolean;
+      records: [string, unknown][];
+      current: [string, unknown][];
+    }>(keys, (current) => {
+      const latest = normalizeProjects(current.get(DB_PROJECTS_KEY));
+      if (latest.length <= 1 || !latest.some((project) => project.id === id)) {
+        return { result: { deleted: false, records: [], current: [...current.entries()] }, mutations: [] };
+      }
+      const next = latest.filter((project) => project.id !== id);
+      const activeId = current.get(DB_ACTIVE_KEY);
+      const tombstones = normalizeDeletionTombstones(current.get(DB_TOMBSTONES_KEY));
+      delete tombstones[id];
+      const identity = reconcileCreativeProjects(next, normalizeCreativeProjects(current.get(CREATIVE_PROJECTS_STORAGE_KEY)));
+      const records: [string, unknown][] = [
+        [DB_PROJECTS_KEY, identity.canvasProjects],
+        [DB_ACTIVE_KEY, activeId === id ? next[0].id : activeId || next[0].id],
+        [DB_TOMBSTONES_KEY, tombstones],
+        [CREATIVE_PROJECTS_STORAGE_KEY, normalizeCreativeProjects(identity.creativeProjects)],
+      ];
+      const mutations: CanvasStorageMutation[] = [
+        { type: 'put', key: DB_PROJECTS_KEY, value: identity.canvasProjects },
+        { type: 'put', key: DB_ACTIVE_KEY, value: records[1][1] },
+        { type: 'put', key: DB_TOMBSTONES_KEY, value: tombstones },
+        { type: 'put', key: CREATIVE_PROJECTS_STORAGE_KEY, value: records[3][1] },
+        { type: 'delete', key: documentKey },
+      ];
+      return { result: { deleted: true, records, current: [...current.entries()] }, mutations };
+    });
+    if (!result.deleted) {
+      for (const [key, value] of result.current) applyDbRecord(key, value);
+      for (const key of keys) if (!result.current.some(([currentKey]) => currentKey === key)) removeDbRecord(key);
+      return false;
     }
-    if (!storageConflict) return false;
+    for (const [key, value] of result.records) applyDbRecord(key, value);
+    removeDbRecord(documentKey);
+    storageQuotaExceeded = false;
+    storageConflict = false;
+    notifyCanvasStorageChanged();
+    publishCanvasStorageChange();
+    return true;
+  } catch (error) {
+    storageQuotaExceeded = isQuotaExceededError(error);
+    return false;
   }
-  return false;
 }
 
 export function readCanvasUi<T extends Record<string, unknown>>() {

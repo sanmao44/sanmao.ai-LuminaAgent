@@ -62,7 +62,10 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m,
       '',
     ).replace(
-      /^\s*import\s+\{\s*isCangyuanProvider\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
+      /^\s*import\s+\{\s*getCangyuanVideoModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
+      'const getCangyuanVideoModelProfile = () => null;',
+    ).replace(
+      /^\s*import\s+\{\s*isCangyuanProvider,\s*usesCangyuanVideoProtocol\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
       '',
     ).replace(
       /^\s*import\s+\{\s*parseVideoModelParameterValues[\s\S]*?\}\s+from\s+["']@\/packages\/contracts\/video-generation["'];?\s*$/m,

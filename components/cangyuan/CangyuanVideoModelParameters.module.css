@@ -1,4 +1,5 @@
 .panel {
+  container-type: inline-size;
   display: grid;
   gap: 8px;
   margin-top: 8px;
@@ -112,6 +113,16 @@
   font-size: 10px;
 }
 
+.field input[type="number"] {
+  appearance: textfield;
+}
+
+.field input[type="number"]::-webkit-inner-spin-button,
+.field input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
 .field textarea {
   min-height: 66px;
   resize: vertical;
@@ -149,6 +160,12 @@
 
 .wideField {
   grid-column: span 2;
+}
+
+@container (min-width: 640px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {

@@ -2,9 +2,26 @@ import { addEdge, createMedia, nodeById, nodeSize } from './model';
 import type { CanvasDocument, CanvasNode, CanvasNodeParams } from './types';
 import type { GenerationLog } from '@/lib/generation-log';
 import { CANVAS_TASK_STALE_AFTER_MS, displayGenerationLogStatus } from './activity-log';
+import { canvasVariantBatchStatus } from './variant-status';
 
 export function canvasNodeHasTask(node: CanvasNode | undefined, taskId: string) {
   return Boolean(node && taskId && String(node.data.jobId || node.data.generation?.taskId || '') === taskId);
+}
+
+/** Active videos have their own poller; failed or paused nodes still need late-result checks. */
+export function canRecoverCanvasTaskInBackground(node: CanvasNode) {
+  if (node.type === 'upscale') {
+    return node.data.status === 'running' && Boolean(node.data.jobId)
+      && Boolean(node.data.upscaleRequestId) && !node.data.url;
+  }
+  if (node.type !== 'prompt' && node.type !== 'media') return false;
+  const taskId = String(node.data.jobId || node.data.generation?.taskId || '').trim();
+  if (!taskId || node.data.url) return false;
+  if (node.type === 'media' && node.data.kind === 'video') {
+    return node.data.status === 'failed' || node.data.taskTracking === 'stale' || node.data.taskTracking === 'stopped';
+  }
+  return node.data.status === 'queued' || node.data.status === 'running'
+    || node.data.taskTracking === 'stale' || node.data.taskTracking === 'stopped';
 }
 
 /** A missing task snapshot is not a provider failure; keep tracking the same video task. */
@@ -194,8 +211,25 @@ export function recoverCanvasTask(document: CanvasDocument, input: {
   const urls = [...new Set(input.urls.filter(Boolean))];
   if (node.data.kind === 'video') {
     if (!urls[0]) return document;
-    return { ...document, nodes: document.nodes.map((item) => item.id === node.id
-      ? { ...item, data: { ...item.data, url: urls[0], status: 'completed' as const, statusLabel: '视频已完成', taskTracking: undefined, taskUpdatedAt: undefined, progress: 100, processingStartedAt: undefined } } : item) };
+    const generation = node.data.generation;
+    return { ...document, nodes: document.nodes.map((item) => {
+      if (item.id === node.id) return {
+        ...item,
+        data: { ...item.data, url: urls[0], status: 'completed' as const, statusLabel: '视频已完成', taskTracking: undefined, taskUpdatedAt: undefined, progress: 100, processingStartedAt: undefined },
+      };
+      const index = generation?.variantIndex;
+      if (item.id !== generation?.sourceGeneratorId || item.type !== 'generator' || typeof index !== 'number') return item;
+      if (generation?.variantBatchId && item.data.variantBatchId && generation.variantBatchId !== item.data.variantBatchId) return item;
+      const currentStates = item.data.variantStates || [];
+      const state = currentStates[index];
+      if (!state || state.taskIds?.length && !state.taskIds.includes(input.taskId)) return item;
+      const states = currentStates.map((variant, variantIndex) => variantIndex === index
+        ? { ...variant, status: 'completed' as const, progress: 100, error: undefined, updatedAt: Date.now(), resultIds: [...new Set([...(variant.resultIds || []), node.id])] }
+        : variant);
+      const status = canvasVariantBatchStatus(states);
+      return { ...item, data: { ...item.data, variantStates: states, status,
+        statusLabel: status === 'completed' ? '视频变体生成完成' : status === 'failed' ? '部分视频变体失败' : '视频变体生成中' } };
+    }) };
   }
   const outputs = urls.map((url, index) => createMedia('image', url, `生成图片 ${index + 1}`, {
     x: node.x + (node.type === 'media' ? 0 : nodeSize(node).w + 90) + (index % 2) * 400,

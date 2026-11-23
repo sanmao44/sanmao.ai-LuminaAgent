@@ -42,6 +42,7 @@ export type CanvasNodeLayerProps = {
   onCancelAngle: (node: CanvasNode) => void;
   onOutputPreview: (node: CanvasNode) => void;
   onLocalEdit: (node: CanvasNode) => void;
+  onReplaceMedia?: (nodeId: string, file: File) => Promise<void>;
   onTextPreview: (node: CanvasNode) => void;
   onUseAsImagePrompt: (node: CanvasNode) => void;
   onRetryVariant: (nodeId: string, variantIndex: number) => void;
@@ -139,6 +140,7 @@ function CanvasNodeLayerItem({ node, ...props }: MemoizedCanvasNodeLayerItemProp
       onOpenVideoEditor={() => props.callbacksRef.current.onOpenVideoEditor(node)}
       onOutputPreview={(target) => props.callbacksRef.current.onOutputPreview(target)}
       onLocalEdit={() => props.callbacksRef.current.onLocalEdit(node)}
+      onReplaceMedia={props.callbacksRef.current.onReplaceMedia ? (file) => props.callbacksRef.current.onReplaceMedia!(node.id, file) : undefined}
       onTextPreview={() => props.callbacksRef.current.onTextPreview(node)}
       onUseAsImagePrompt={() => props.callbacksRef.current.onUseAsImagePrompt(node)}
       onRetryVariant={(variantIndex) => props.callbacksRef.current.onRetryVariant(node.id, variantIndex)}
@@ -209,6 +211,7 @@ export default function CanvasNodeLayer({
   onCancelAngle,
   onOutputPreview,
   onLocalEdit,
+  onReplaceMedia,
   onTextPreview,
   onUseAsImagePrompt,
   onRetryVariant,
@@ -243,6 +246,7 @@ export default function CanvasNodeLayer({
     onCancelAngle,
     onOutputPreview,
     onLocalEdit,
+    onReplaceMedia,
     onTextPreview,
     onUseAsImagePrompt,
     onRetryVariant,
@@ -276,6 +280,7 @@ export default function CanvasNodeLayer({
     onCancelAngle,
     onOutputPreview,
     onLocalEdit,
+    onReplaceMedia,
     onTextPreview,
     onUseAsImagePrompt,
     onRetryVariant,

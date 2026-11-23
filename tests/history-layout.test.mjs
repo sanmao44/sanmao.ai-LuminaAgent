@@ -11,6 +11,15 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 const layout = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
+test('grid capacity handles hidden containers and invalid measurements without invalid columns', () => {
+  assert.equal(layout.historyGridColumnCapacity(0, 280, 12), 1);
+  assert.equal(layout.historyGridColumnCapacity(Number.NaN, 280, 12), 1);
+  assert.equal(layout.historyGridColumnCapacity(700, 0, 12), 1);
+  assert.equal(layout.historyGridColumnCapacity(700, Number.NaN, 12), 1);
+  assert.equal(layout.historyGridColumnCapacity(560, 280, 0), 2);
+  assert.equal(layout.historyGridColumnCapacity(560, 280, -12), 2);
+});
+
 test('automatic history pages end on complete grid rows', () => {
   assert.equal(layout.completeHistoryPageSize(7, 12), 14);
   assert.equal(layout.completeHistoryPageSize(6, 12), 12);

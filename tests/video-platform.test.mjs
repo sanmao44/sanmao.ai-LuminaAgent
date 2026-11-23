@@ -14,6 +14,7 @@ const platform = await import(`data:text/javascript;base64,${Buffer.from(compile
 test('enables the public media relay for remote URL-based video transports', () => {
   assert.equal(platform.requiresPublicMediaRelay({ platform: 'agnes', videoTransport: 'agnes-videos' }), true);
   assert.equal(platform.requiresPublicMediaRelay({ platform: 'custom', videoTransport: 'openai-videos' }), true);
+  assert.equal(platform.requiresPublicMediaRelay({ platform: 'custom', videoTransport: 'cangyuan-videos' }), true);
   assert.equal(platform.requiresPublicMediaRelay({ platform: 'custom', videoTransport: 'auto' }, { hasVideoModel: true }), true);
   assert.equal(platform.requiresPublicMediaRelay({ platform: 'agnes', videoTransport: 'auto' }, { hasVideoModel: false }), false);
 });

@@ -16,6 +16,7 @@ import {
   type AgentStreamEvent,
 } from "../agent-client";
 import { videoTaskOutputUrl } from "../video-task-output";
+import { getCangyuanVideoModelProfile } from "../cangyuan-video-capabilities";
 
 export type CanvasAsset = {
   id: string;
@@ -894,50 +895,57 @@ export async function generateCanvasVideo(input: {
   const modelParameters = usesCangyuan && input.modelParameters
     ? parseVideoModelParameterValues(input.modelParameters)
     : undefined;
-  const cangyuanParameters = usesCangyuan
+  const cangyuanProfile = usesCangyuan && input.modelRawId
+    ? getCangyuanVideoModelProfile(input.modelRawId)
+    : null;
+  const cangyuanParameters: VideoModelParameterValues | undefined = usesCangyuan
     ? {
         ...(modelParameters || {}),
         ...(input.operation && input.operation !== "generate" ? { mode: input.operation } : {}),
-        ...(input.duration !== undefined ? { duration: input.duration } : {}),
-        ...(input.aspect ? { aspect_ratio: input.aspect } : {}),
-        ...(input.resolution ? { resolution: input.resolution } : {}),
       }
     : undefined;
-  if (usesCangyuan) {
-    const hasReferences = [input.references, input.referenceVideos, input.audios].some(
-      (values) => values?.some((item) => Boolean(item.url.trim())),
-    );
-    const hasFrameInput = Boolean(input.firstFrame?.trim() || input.lastFrame?.trim() || input.referenceVideo?.trim());
-    const hasCustomSettings =
-      (input.inputMode && input.inputMode !== "text") ||
-      Boolean(input.audio) ||
-      (input.agnesWidth !== undefined && input.agnesWidth !== 1152) ||
-      (input.agnesHeight !== undefined && input.agnesHeight !== 768) ||
-      (input.agnesNumFrames !== undefined && input.agnesNumFrames !== 81) ||
-      (input.agnesFrameRate !== undefined && input.agnesFrameRate !== 24);
-    if (hasReferences || hasFrameInput || hasCustomSettings) {
-      throw new Error("沧元算力视频接口当前只提交模型和提示词；请移除画布连接的图片、视频或音频素材，并恢复默认视频参数后再生成。");
-    }
+  const seedValue = cangyuanParameters?.seed;
+  const seed = seedValue !== undefined && String(seedValue).trim() ? Number(seedValue) : undefined;
+  if (seed !== undefined && !Number.isSafeInteger(seed)) {
+    throw new Error("随机种子必须是安全整数，留空则随机生成。");
+  }
+  if (cangyuanParameters) {
+    // The canvas keeps the seed with its model settings, but the shared video
+    // contract owns primary fields separately from model-specific options.
+    delete cangyuanParameters.seed;
+  }
+  // Keep every selected reference. Reject excess inputs before uploading rather
+  // than silently dropping media that the user expects the model to receive.
+  const imageLimit = cangyuanProfile?.maxReferenceImages ?? 16;
+  const videoLimit = cangyuanProfile?.maxReferenceVideos ?? 10;
+  const audioLimit = cangyuanProfile?.maxReferenceAudios ?? 10;
+  if ((!input.inputMode || input.inputMode === "reference") && (input.references?.length || 0) > imageLimit) {
+    throw new Error(`当前模型最多支持 ${imageLimit} 张参考图，请减少图片后再生成。`);
+  }
+  if ((input.referenceVideos?.length || 0) > videoLimit) {
+    throw new Error(`当前模型最多支持 ${videoLimit} 个参考视频，请减少视频后再生成。`);
+  }
+  if ((input.audios?.length || 0) > audioLimit) {
+    throw new Error(`当前模型最多支持 ${audioLimit} 段参考音频，请减少音频后再生成。`);
   }
   const referenceData = await Promise.all(
-    (usesCangyuan ? [] : input.references || [])
-      .slice(0, 16)
+    (input.references || [])
       .map(async (item) => compressReferenceDataUrl(await asDataUrl(item.url))),
   );
   const firstFrame =
-      !usesCangyuan && (input.inputMode === "first-frame" || input.inputMode === "frames")
+      (input.inputMode === "first-frame" || input.inputMode === "frames")
       ? input.firstFrame
         ? await compressReferenceDataUrl(await asDataUrl(input.firstFrame))
         : referenceData[0]
       : undefined;
   const lastFrame =
-      !usesCangyuan && input.inputMode === "frames"
+      input.inputMode === "frames"
       ? input.lastFrame
         ? await compressReferenceDataUrl(await asDataUrl(input.lastFrame))
         : referenceData[1]
       : undefined;
   const audioData = await Promise.all(
-    (usesCangyuan ? [] : input.audios || []).slice(0, 10).map(async (item) => ({
+    (input.audios || []).map(async (item) => ({
       ...item,
       url: await asDataUrl(item.url),
     })),
@@ -958,7 +966,7 @@ export async function generateCanvasVideo(input: {
   const usesAgnesV20 = /agnes(?:-video| video)?[- ]?(?:v2\.0|v20)/i.test(
     `${input.modelRawId || ""} ${input.model || ""}`,
   );
-  const referenceVideo = !usesCangyuan && (input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend")
+  const referenceVideo = (input.inputMode === "reference" || input.operation === "edit" || input.operation === "extend")
     ? input.referenceVideo
     : undefined;
   const idempotencyKey = input.idempotencyKey || crypto.randomUUID();
@@ -988,7 +996,7 @@ export async function generateCanvasVideo(input: {
       operation: input.operation || "generate",
       input: {
         prompt,
-        ...(!usesCangyuan && input.operation ? { operation: input.operation } : {}),
+        ...(input.operation ? { operation: input.operation } : {}),
         ...(videoMode ? { videoMode } : {}),
         ...(!usesAgnesV20 && !usesCangyuan
           ? {
@@ -997,6 +1005,13 @@ export async function generateCanvasVideo(input: {
               resolution: input.resolution || "720p",
             }
           : {}),
+        ...(usesCangyuan ? {
+          ...((!cangyuanProfile || cangyuanProfile.supportsDuration) && input.duration !== undefined ? { seconds: input.duration } : {}),
+          ...((!cangyuanProfile || cangyuanProfile.supportsAspectRatio) && input.aspect ? { aspectRatio: input.aspect } : {}),
+          ...((!cangyuanProfile || cangyuanProfile.supportsResolution) && input.resolution ? { resolution: input.resolution } : {}),
+          ...(seed !== undefined ? { seed } : {}),
+          ...(cangyuanProfile?.supportsGenerateAudio ? { generateAudio: input.audio ?? cangyuanProfile.generateAudioDefault ?? true } : {}),
+        } : {}),
         ...(usesAgnesV20
           ? {
               width: input.agnesWidth ?? 1152,
@@ -1018,7 +1033,7 @@ export async function generateCanvasVideo(input: {
           : {}),
         ...(input.referenceVideos?.length
           ? {
-              referenceVideos: input.referenceVideos.slice(0, 10).map((item) => item.url),
+              referenceVideos: input.referenceVideos.map((item) => item.url),
               referenceVideo: referenceVideo || input.referenceVideos[0]?.url,
             }
           : {}),

@@ -14,7 +14,7 @@ import { normalizeMcpApprovalPolicy } from '@/lib/agent/approval';
 import { providerStateRepository } from './repositories/server-provider-repository';
 import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternalIntentModel } from './intent-classifier';
 import { isRetiredAgnesModel } from './agnes';
-import { isCangyuanProvider } from './cangyuan-provider';
+import { isCangyuanProvider, usesCangyuanVideoProtocol } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 import type { ManualModelAudioTask, ManualProviderModelInput } from '@/packages/contracts/model-library';
@@ -214,6 +214,8 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   const classifiedPurposes = hasReviewableAiSuggestion ? [] : audioClassification.purposes;
   for (const purpose of classifiedPurposes) {
     if (purpose === 'speech') audioCapabilities.add('speech');
+    if (purpose === 'voice-conversion') audioCapabilities.add('voice-conversion');
+    if (purpose === 'audio-isolation') audioCapabilities.add('audio-isolation');
     if (purpose === 'transcription') audioCapabilities.add('transcription');
     if (purpose === 'music') audioCapabilities.add('music-generate');
     if (purpose === 'sound-effect') audioCapabilities.add('sound-effect');
@@ -265,7 +267,7 @@ function normalizeModel(model: RegistryModel, platform?: ProviderPlatform): Regi
   const inferred = inferModel(model.rawId, platform, model.nativeSearchProtocol, { displayName: model.displayName, capabilities: model.capabilities, classification: model.classification });
   const editOnly = isImageEditOnlyModel({ rawId: model.rawId, displayName: model.displayName });
   const nativeEnabled = inferred.capabilities.includes('web-search') || model.capabilities?.includes('web-search');
-  const audioTaskCapabilities: readonly ModelCapability[] = ['speech', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'];
+  const audioTaskCapabilities: readonly ModelCapability[] = ['speech', 'voice-conversion', 'audio-isolation', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation'];
   const retained = (model.capabilities || []).filter((capability) => capability !== 'web-search' && !audioTaskCapabilities.includes(capability) && !(editOnly && capability === 'generate'));
   const capabilities = Array.from(new Set([...retained, ...inferred.capabilities.filter((capability) => capability !== 'web-search'), ...(nativeEnabled ? ['web-search' as const] : []), ...(model.kind === 'video' ? ['video-generate' as const] : [])]));
   const nativeSearchProtocol = model.nativeSearchProtocol || inferred.nativeSearchProtocol;
@@ -313,10 +315,10 @@ export async function getPublicState(): Promise<PublicState> {
       responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
       textProtocol: p.textProtocol || 'chat-completions',
         creativeTaskProtocol: p.creativeTaskProtocol,
-      videoTransport: p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
+      videoTransport: usesCangyuanVideoProtocol(p) ? 'cangyuan-videos' : p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
       videoBaseUrl: p.videoBaseUrl || (legacy65535 ? 'https://task-api-1-cn.65535.space' : ''),
       videoTaskPath: p.videoTaskPath || '/v1/tasks',
-      videoTaskStatusPath: p.videoTaskStatusPath || '/v1/tasks/{id}',
+      videoTaskStatusPath: usesCangyuanVideoProtocol(p) && (!p.videoTaskStatusPath || /^\/v1\/tasks\/\{(?:id|taskId|task_id)\}\/?$/.test(p.videoTaskStatusPath.trim())) ? '/v1/videos/{id}' : p.videoTaskStatusPath || '/v1/tasks/{id}',
       videoGenerationPath: p.videoGenerationPath || '/v1/videos',
       videoQueryPath: p.videoQueryPath || '',
       videoModelsPath: p.videoModelsPath || '/v1/models',

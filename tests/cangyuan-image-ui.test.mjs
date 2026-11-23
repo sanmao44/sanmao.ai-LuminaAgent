@@ -6,6 +6,7 @@ import { createTsRequire } from './ts-require.mjs';
 
 const noop = () => null;
 const loader = createTsRequire(process.cwd(), {
+  './VideoDurationField.css': {},
   '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: noop },
   '@/components/cangyuan/CangyuanVideoModelParameters': { __esModule: true, default: noop },
   './EditableSuggestionField.css': {},
@@ -17,7 +18,7 @@ const loader = createTsRequire(process.cwd(), {
   },
 });
 const CreationParameterEditor = loader('./components/CreationParameterEditor').default;
-const { defaultImageCreationSettings, normalizeImageCreationSettings } = loader('./lib/creation/settings');
+const { defaultImageCreationSettings, imageModelParametersFromSettings, normalizeImageCreationSettings } = loader('./lib/creation/settings');
 
 function createRuntime({ rawId = 'nano-banana2.1', provider = { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan' } } = {}) {
   const model = {
@@ -115,6 +116,35 @@ test('Cangyuan resolution controls retain exact documented enum spellings', () =
   const markup = renderEditor(runtime, settings);
   assert.match(markup, /模型清晰度/);
   assert.match(markup, /2K/);
+});
+
+test('MiniMax H3 image settings show documented quality and generation mode controls', () => {
+  const runtime = createRuntime({ rawId: 'minimax-h3-image' });
+  const modelId = runtime.models[0].id;
+  const settings = normalizeImageCreationSettings({
+    ...defaultImageCreationSettings(runtime),
+    model: modelId,
+    count: 8,
+    quality: 'high',
+    variant: 'invalid',
+    sizeMode: 'custom',
+    width: 1920,
+    height: 1080,
+  }, runtime);
+
+  assert.equal(settings.count, 4);
+  assert.equal(settings.quality, '1k');
+  assert.equal(settings.variant, 'standard');
+  assert.equal(settings.sizeMode, 'system');
+  assert.equal(imageModelParametersFromSettings(settings).variant, 'standard');
+  const markup = renderEditor(runtime, settings);
+  assert.match(markup, /生成模式/);
+  assert.match(markup, /标准/);
+  assert.match(markup, /高速/);
+  assert.match(markup, /质量、格式与背景/);
+  assert.match(markup, /aria-expanded="false"/);
+  assert.doesNotMatch(markup, /自定义像素/);
+  assert.doesNotMatch(markup, /aria-label="图片尺寸方式"/);
 });
 
 test('Flux 3 Klein image settings retain prompt expansion and a reproducible seed', () => {

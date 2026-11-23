@@ -15,7 +15,7 @@ phase. Non-blocking architecture debt is tracked separately in
 | Remaining source-coupled UI assertions | 0.7.x baseline | Some historical UI tests still assume implementation file locations | UI / migration tooling | low | existing source assertions | tracked; not a pre-lock blocker |
 | Canvas Agent memory and conversation scope | 0.7.66 behavior | Canvas Agent history was stored in one shared key and requests only carried the latest bounded turns; long or switched-canvas conversations lost continuity | Agent / Canvas | P1 | canvas dock, memory and architecture tests | resolved |
 | OpenAI-compatible vision media protocol | 0.7.66 behavior | All compatible chat providers converted inline `data:image/*` references into relay URLs; DeepSeek rejected the resulting `image_url` format | Provider / Agent | P1 | provider compatibility and Agnes relay tests | resolved |
-| Historical canvas media reference | 0.7.66 workspace behavior | One saved canvas node references an image that is absent from the current and legacy media roots | Canvas / Storage | P0 | media library and canvas reference tests; live file audit | confirmed data loss; UI asks for re-import |
+| Historical canvas media reference | 0.7.66 workspace behavior | One saved canvas node references an image that is absent from the current and legacy media roots | Canvas / Storage | P0 | media library and canvas reference tests; live file audit; replacement and undo/redo behavior tests | confirmed data loss; in-place upload replacement and retry added 2026-11-22; original bytes remain unrecovered |
 
 ## Final convergence checkpoint (2026-10-04)
 

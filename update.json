@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip"
   ],
-  "sha256": "9f937ce05da8ebd5093b0af5f070f22ad0fa834a86e16a92f90b70a78f447a9b",
+  "sha256": "cde6707159b591b03a91b7d5977dc2311c9fd90fea3b859cd7304ab5fd7c6278",
   "notes": [
     "扩展媒体工作台的创意模型兼容性，优化媒体生成流程和画布音频草稿恢复。",
     "增加音频聊天与 Agent 的转写模型选择，改进云端转写回退、字幕校正和语音样例。",

@@ -62,6 +62,50 @@ test('audio speech route records its persistent result URL while returning playa
   assert.equal(Number.isFinite(route.finished[0].patch.durationMs), true);
 });
 
+test('audio speech route percent-encodes Unicode model names in response headers', async () => {
+  const modelName = 'MiniMax 2.8 高保真配音';
+  const route = createRoute({
+    data: new Uint8Array([1, 2, 3]),
+    contentType: 'audio/mpeg',
+    extension: 'mp3',
+    engine: 'provider',
+    modelId: 'minimax-speech-2.8-hd-tts',
+    modelName,
+  });
+  const response = await route.POST(new Request('http://localhost/api/audio/speech', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'Unicode model name' }),
+  }));
+
+  assert.equal(response.status, 200);
+  const encoded = response.headers.get('X-Audio-Model');
+  assert.equal(encoded, encodeURIComponent(modelName));
+  assert.equal(decodeURIComponent(encoded), modelName);
+});
+
+test('audio speech route keeps successful responses alive for malformed Unicode model names', async () => {
+  const malformed = `MiniMax ${String.fromCharCode(0xd800)} 配音`;
+  const route = createRoute({
+    data: new Uint8Array([1, 2, 3]),
+    contentType: 'audio/mpeg',
+    extension: 'mp3',
+    engine: 'provider',
+    modelId: 'minimax-speech-2.8-hd-tts',
+    modelName: malformed,
+  });
+
+  const response = await route.POST(new Request('http://localhost/api/audio/speech', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'Malformed Unicode model name' }),
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('X-Audio-Model'), '');
+  assert.equal(route.finished[0].patch.status, 'success');
+});
+
 test('audio speech route percent-encodes storage failures for ByteString headers', async () => {
   const message = '音频生成成功，但保存到媒体库失败。请先下载本次结果。';
   const route = createRoute({

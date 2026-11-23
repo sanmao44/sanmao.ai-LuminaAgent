@@ -411,15 +411,18 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-compose-context .jimeng-account-grid span{font-size:7px}
 .video-compose-context .jimeng-account-grid b{font-size:10px}
 .video-compose-card{height:100%;display:grid;grid-template-rows:minmax(0,1fr) auto;overflow:hidden!important;padding:15px 17px;border-radius:18px}
-.video-compose-scroll{overflow:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:none;padding:0 2px 2px 0}
-.video-compose-scroll::-webkit-scrollbar,.video-task-list-scroll::-webkit-scrollbar{width:0;height:0}
+.video-compose-scroll{overflow:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent;padding:0 6px 2px 0}
+.video-compose-scroll::-webkit-scrollbar{width:6px;height:6px}
+.video-compose-scroll::-webkit-scrollbar-thumb{border-radius:999px;background:var(--line-strong)}
+.video-compose-scroll::-webkit-scrollbar-track{background:transparent}
+.video-task-list-scroll::-webkit-scrollbar{width:0;height:0}
 .video-card-heading{gap:8px}
 .video-card-heading span:first-child,.video-task-list-heading span,.video-input-heading span{font-size:13px}
 .video-card-heading small,.video-task-list-heading small,.video-input-heading small{font-size:9px}
 .video-prompt-field{margin-top:10px;gap:4px}
 .video-field{gap:5px}
 .video-field>span,.video-prompt-heading>span,.video-option-segment>span{font-size:10px}
-.video-field .reference-mention-editor-content{min-height:82px;max-height:132px;padding:9px 11px;line-height:1.5;font-size:11px}
+.video-field .reference-mention-editor-content{height:120px;min-height:120px;max-height:120px;padding:9px 11px;line-height:1.5;font-size:11px}
 .video-field small{font-size:8px;margin-top:-3px}
 .video-creation-selects{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,.78fr) minmax(0,1fr);gap:8px;margin-top:9px;min-width:0}
 .video-creation-selects.without-operation{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}
@@ -430,16 +433,12 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-creation-selects .model-picker-trigger{height:35px;min-height:35px;padding:0 9px;border-radius:11px;background:var(--panel-2)}
 .video-creation-selects .model-picker-trigger-copy>span{font-size:10px}
 .video-creation-selects .video-model-field{position:relative;z-index:1}
-.video-advanced-details{margin-top:9px;border:1px solid color-mix(in srgb,var(--line) 86%,transparent);border-radius:11px;background:color-mix(in srgb,var(--panel-2) 62%,transparent);overflow:hidden}
-.video-advanced-details>summary{min-height:30px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 9px;cursor:pointer;list-style:none;color:var(--text-2)}
-.video-advanced-details>summary::-webkit-details-marker{display:none}
-.video-advanced-details>summary::after{content:'⌄';flex:none;color:var(--muted);font-size:13px;transition:transform .15s ease}
-.video-advanced-details[open]>summary::after{transform:rotate(180deg)}
-.video-advanced-details>summary span{font-size:9px;font-weight:850}
-.video-advanced-details>summary small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:8px}
-.video-advanced-body{max-height:min(42dvh,360px);overflow:auto;scrollbar-width:none;padding:0 9px 8px;border-top:1px solid var(--line)}
-.video-advanced-body::-webkit-scrollbar{width:0;height:0}
-.video-advanced-body .video-model-notice:first-child{margin-top:8px}
+.video-parameter-settings{display:grid;gap:8px;min-width:0;margin-top:9px}
+.video-parameter-settings>.video-option-segment{margin-top:0}
+.video-parameter-settings>.video-option-segment:not(.video-v20-parameter-panel)>div{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+.video-parameter-settings .video-option-segment label{min-width:0}
+.video-parameter-settings input[type=number]{appearance:textfield}
+.video-parameter-settings input[type=number]::-webkit-inner-spin-button,.video-parameter-settings input[type=number]::-webkit-outer-spin-button{appearance:none;margin:0}
 .video-option-segment{gap:6px;margin-top:8px;padding:9px 10px;border-radius:13px}
 .video-option-segment>div{gap:6px}
 .video-option-segment label{gap:4px;font-size:9px}
@@ -474,6 +473,11 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-task-actions{gap:4px;margin-top:2px;padding-top:5px}
 .video-task-actions a,.video-task-actions button{min-height:24px;padding:0 7px;border-radius:7px;font-size:8px}
 .video-task-error{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;font-size:8px}
+.video-task-error-detail{display:grid;gap:7px;min-width:0}
+.video-task-error-detail>.video-task-error,.video-task-error-detail>.creative-video-error{display:block;-webkit-line-clamp:unset;margin:0;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.video-task-error-detail details{min-width:0;color:var(--muted);font-size:12px}
+.video-task-error-detail summary{cursor:pointer;color:var(--accent-text);font-weight:800}
+.video-task-error-detail details pre{max-height:160px;margin-top:6px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2);color:var(--muted);font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow:auto;overflow-wrap:anywhere}
 .video-task-waiting{font-size:8px}
 .video-task-dialog{position:fixed;inset:0;z-index:241;display:grid;place-items:center;padding:18px;background:var(--overlay);backdrop-filter:blur(10px);overscroll-behavior:contain}
 .video-task-dialog-inner{position:relative;width:min(620px,calc(100vw - 32px));max-height:min(700px,calc(100dvh - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line-strong);border-radius:18px;background:var(--panel);box-shadow:var(--shadow)}
@@ -535,7 +539,7 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
   .video-creation-selects .video-field:first-child{grid-column:1/-1}
   .video-creation-selects.without-operation{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
   .video-creation-selects.without-operation .video-field:first-child{grid-column:auto}
-  .video-advanced-body{max-height:48dvh}
+  .video-parameter-settings>.video-option-segment:not(.video-v20-parameter-panel)>div{grid-template-columns:repeat(2,minmax(0,1fr))}
   .video-task-dialog-meta{grid-template-columns:1fr}
   .creative-video-parameters-dialog{padding:12px}
   .creative-video-parameters-dialog .video-task-dialog-inner{width:min(100%,680px);max-height:calc(100dvh - 24px);border-radius:16px}
@@ -545,11 +549,8 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
   .creative-video-parameters-dialog .creative-video-parameter-grid{gap:9px}
   .creative-video-parameters-dialog .creative-video-parameter-grid span{min-height:56px;padding:10px 12px}
 }
-@media(prefers-reduced-motion:reduce){html:not([data-motion="on"]) .video-advanced-details>summary::after{transition:none}}
-
-/* Keep the live desktop composition balanced: the prompt owns spare height,
-   while the media tray stays at its content height and the account card is
-   never clipped by the compact context row. */
+/* Let every parameter remain visible in one scrolling composition while the
+   prompt stays compact and keeps its separate focused editing workspace. */
 @media(min-width:1101px){
   .video-compose-column{
     grid-template-rows:minmax(0,max-content) minmax(0,1fr);
@@ -574,20 +575,20 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
   .video-compose-scroll>.video-fields-two,
   .video-compose-scroll>.video-creation-selects,
   .video-compose-scroll>.video-input-mode-field,
-  .video-compose-scroll>.video-advanced-details,
+  .video-compose-scroll>.video-parameter-settings,
   .video-compose-scroll>.video-input-heading,
   .video-compose-scroll>.video-upload-grid{
     flex:none;
   }
   .video-prompt-field{
-    flex:1 1 clamp(220px,34vh,620px);
-    min-height:clamp(120px,15vh,460px);
-    grid-template-rows:auto minmax(0,1fr) auto;
+    flex:0 0 auto;
+    min-height:0;
+    grid-template-rows:auto 120px auto;
   }
   .video-field .reference-mention-editor-content{
-    height:auto;
-    min-height:0;
-    max-height:none;
+    height:120px;
+    min-height:120px;
+    max-height:120px;
   }
   .video-upload-grid{
     height:auto;

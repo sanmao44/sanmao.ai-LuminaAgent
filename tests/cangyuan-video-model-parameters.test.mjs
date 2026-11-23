@@ -24,6 +24,9 @@ const load = createTsRequire(process.cwd(), {
     default: ({ value, options, ariaLabel }) => createElement('select', { 'aria-label': ariaLabel, value: String(value), onChange: () => undefined },
       ...options.map((option) => createElement('option', { key: String(option.value), value: String(option.value) }, option.label))),
   },
+  '@/components/canvas/overlay-events': {
+    CANVAS_NODE_EDITOR_OVERLAY_POSITION_EVENT: 'canvas-node-editor:overlay-position-change',
+  },
 });
 const CangyuanVideoModelParameters = load('./components/cangyuan/CangyuanVideoModelParameters').default;
 const { getCangyuanVideoParameterSuggestions, cangyuanVideoParameterValueLabel, getCangyuanVideoAdvancedParameters } = load('./lib/cangyuan-video-model-catalog');

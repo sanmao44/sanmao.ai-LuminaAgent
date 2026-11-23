@@ -13,6 +13,7 @@ import CanvasProcessingIndicator, {
 } from "@/components/canvas/CanvasProcessingIndicator";
 import { useCanvasMediaPlayback } from "@/components/canvas/useCanvasMediaPlayback";
 import CanvasInlineNameEditor from "@/components/canvas/CanvasInlineNameEditor";
+import CanvasMediaRecoveryActions from "@/components/canvas/CanvasMediaRecoveryActions";
 
 export type CanvasMediaNodeCardProps = {
   node: CanvasNode;
@@ -35,6 +36,7 @@ export type CanvasMediaNodeCardProps = {
     sourceUrl?: string,
   ) => void;
   onLocalEdit: () => void;
+  onReplaceMedia?: (file: File) => Promise<void>;
   onRename?: (value: string) => void;
   renaming?: boolean;
   onRenamingChange?: (editing: boolean) => void;
@@ -55,6 +57,7 @@ export default function CanvasMediaNodeCard({
   maskState,
   onNaturalSize,
   onLocalEdit,
+  onReplaceMedia,
   onRename,
   renaming,
   onRenamingChange,
@@ -111,15 +114,17 @@ export default function CanvasMediaNodeCard({
               <div className={`canvas-media-state ${mediaLoadMessage === "missing" ? "missing" : "temporary"}`}>
                 <span>!</span>
                 <b>{mediaLoadMessage === "missing" ? "素材文件已丢失" : "素材暂时无法加载"}</b>
-                <small>{mediaLoadMessage === "missing" ? "文件不在媒体库中，可重新生成或上传替换" : "可能是服务暂时重启或网络波动，原视频不会被删除"}</small>
-                <button
+                <small>{mediaLoadMessage === "missing" ? "上传同类型文件替换，保留节点与连线" : "可能是服务暂时重启或网络波动，可稍后重试"}</small>
+                {mediaLoadMessage === "missing" && onReplaceMedia && (data.kind === "image" || data.kind === "video") ? (
+                  <CanvasMediaRecoveryActions kind={data.kind} onReplace={onReplaceMedia} onRetry={retryMediaLoad} />
+                ) : <button
                   type="button"
                   className="canvas-media-retry"
                   onPointerDown={(event) => event.stopPropagation()}
                   onClick={retryMediaLoad}
                 >
                   重试加载
-                </button>
+                </button>}
               </div>
             ) : data.kind === "video" ? (
               <video
@@ -214,7 +219,7 @@ export default function CanvasMediaNodeCard({
                 </svg>
               </button>
             )}
-            {data.kind === "video" && data.url && (
+            {data.kind === "video" && data.url && !mediaUnavailable && (
               <span
                 className="canvas-video-mark"
                 title={`视频${videoDuration ? ` · ${videoDuration}` : ""}`}
@@ -223,7 +228,7 @@ export default function CanvasMediaNodeCard({
                 ▶ 视频{videoDuration ? ` · ${videoDuration}` : ""}
               </span>
             )}
-            {imageResolution && (
+            {imageResolution && !mediaUnavailable && (
               <span
                 className="canvas-image-resolution"
                 title={`图片分辨率 ${imageResolution}`}
@@ -232,7 +237,7 @@ export default function CanvasMediaNodeCard({
                 {imageResolution}
               </span>
             )}
-            {videoResolution && (
+            {videoResolution && !mediaUnavailable && (
               <span
                 className="canvas-image-resolution canvas-video-resolution"
                 title={`视频分辨率 ${videoResolution}`}
@@ -241,7 +246,7 @@ export default function CanvasMediaNodeCard({
                 {videoResolution}
               </span>
             )}
-            {data.url && (
+            {data.url && !mediaUnavailable && (
               <span
                 className="canvas-node-asset-drag-handle"
                 role="button"
@@ -262,12 +267,12 @@ export default function CanvasMediaNodeCard({
                 ↗
               </span>
             )}
-            {data.url && data.maskApplied && (
+            {data.url && !mediaUnavailable && data.maskApplied && (
               <span className="canvas-node-mask-badge used" title="本次生成请求使用了局部编辑">
                 ◌ 本次使用局部编辑
               </span>
             )}
-            {data.url && maskState && !data.maskApplied && (
+            {data.url && !mediaUnavailable && maskState && !data.maskApplied && (
               <button
                 type="button"
                 className={`canvas-node-mask-badge ${maskState.status}`}

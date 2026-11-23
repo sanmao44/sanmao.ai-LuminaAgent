@@ -69,6 +69,8 @@ test('video task timeout only closes accepted provider tasks after the orphan th
   assert.equal(isStaleVideoTask({ createdAt, providerTaskId: '  ' }, now), false, 'submission retry without a provider id must stay active');
   assert.equal(isStaleVideoTask({ createdAt: new Date(now).toISOString(), providerTaskId: 'remote-2' }, now), false);
   assert.equal(isStaleVideoTask({ createdAt: 'invalid', providerTaskId: 'remote-3' }, now), false);
+  assert.equal(isStaleVideoTask({ createdAt, providerTaskId: 'remote-recovery', resultRecoveryStartedAt: now }, now), false);
+  assert.equal(isStaleVideoTask({ createdAt, providerTaskId: 'remote-recovery', resultRecoveryStartedAt: now - VIDEO_TASK_STALE_AFTER_MS - 1 }, now), true);
 });
 
 test('Clone adapter preserves stage, cancellation, recovery, and idempotency behavior', () => {

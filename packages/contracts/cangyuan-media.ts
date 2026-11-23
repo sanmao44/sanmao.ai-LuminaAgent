@@ -165,6 +165,8 @@ const CANGYUAN_MUSIC_MODEL_PROFILES: Readonly<Record<string, CangyuanMusicModelP
   'suno-timestamped-lyrics': workflowProfile('suno-timestamped-lyrics', SUNO_TIMESTAMPED_LYRICS_OPTIONS),
 });
 
+export const CANGYUAN_MUSIC_MODEL_PROFILE_LIST: readonly CangyuanMusicModelProfile[] = Object.freeze(Object.values(CANGYUAN_MUSIC_MODEL_PROFILES));
+
 export function getCangyuanMusicModelProfile(modelId: string): CangyuanMusicModelProfile | null {
   return CANGYUAN_MUSIC_MODEL_PROFILES[String(modelId || '')] || null;
 }

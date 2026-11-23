@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { VideoTask } from '@/lib/video-task-store';
-import { videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
+import { videoTaskErrorPresentation, videoTaskOutputUrl, videoTaskStatus } from '@/lib/video-task-output';
 
 type Props = {
   task: VideoTask;
@@ -48,6 +48,10 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, o
   const canCancel = status === 'pending' || status === 'running';
   const canRetry = status === 'failed' || status === 'cancelled';
   const input = task.input;
+  const errorPresentation = videoTaskErrorPresentation(task.error, {
+    localArchiveFailed: status === 'done',
+    isTracking: status === 'pending' || status === 'running',
+  });
 
   useEffect(() => {
     if (!parametersOpen) return;
@@ -82,7 +86,7 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, o
       <div className="creative-video-meta"><span className={`creative-status-pill ${status}`}>{statusLabel(status)}</span><time>{new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false })}</time></div>
       <strong>{task.input?.prompt || '未命名视频任务'}</strong>
       <small>{operationLabel(task.operation)} · {task.modelName || '自动选择模型'}{typeof task.costUsd === 'number' ? ` · $${task.costUsd.toFixed(4)}` : ''}</small>
-      {task.error && <p className="creative-video-error">{task.error}</p>}
+      {errorPresentation && <p className="creative-video-error">{errorPresentation.summary}</p>}
       <div className="creative-video-actions">
         <button type="button" className="creative-video-view-parameters" onClick={() => setParametersOpen(true)} title="查看这条任务的生成参数" aria-label="查看这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">⌕</span><span>查看参数</span></button>
         {canRestore && onRestore && <button type="button" className="creative-video-restore" onClick={() => void onRestore()} title="恢复这条任务的生成参数" aria-label="恢复这条任务的生成参数"><span className="creative-action-icon" aria-hidden="true">↺</span><span>恢复参数</span></button>}
@@ -93,6 +97,6 @@ export default function VideoRecordCard({ task, onNotify, onDelete, onRestore, o
         <button type="button" className="creative-video-delete" onClick={handleDelete} title={canDelete ? '删除视频任务' : '先生成结束或取消任务再删除'} aria-label="删除视频任务"><span className="creative-action-icon" aria-hidden="true">⌫</span><span>删除</span></button>
       </div>
     </div>
-    {parametersOpen && <div className="video-task-dialog creative-video-parameters-dialog" role="dialog" aria-modal="true" aria-label="视频参数" onClick={() => setParametersOpen(false)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>视频参数</span><strong>{statusLabel(status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭视频参数" onClick={() => setParametersOpen(false)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta creative-video-parameter-grid"><span>模型<b>{task.modelName || '自动选择模型'}</b></span><span>操作<b>{operationLabel(task.operation)}</b></span><span>输入方式<b>{inputModeLabel(input)}</b></span><span>时长<b>{durationLabel(input)}</b></span><span>比例<b>{input?.aspectRatio || 'Auto'}</b></span><span>分辨率<b>{input?.resolution || input?.videoSize || '默认清晰度'}</b></span><span>参考素材<b>{inputModeLabel(input)}</b></span>{input?.width && input?.height && <span>尺寸<b>{input.width} × {input.height}</b></span>}</div>{task.error && <p className="creative-video-error">{task.error}</p>}</div></div></div>}
+    {parametersOpen && <div className="video-task-dialog creative-video-parameters-dialog" role="dialog" aria-modal="true" aria-label="视频参数" onClick={() => setParametersOpen(false)}><div className="video-task-dialog-inner" onClick={(event) => event.stopPropagation()}><div className="video-task-dialog-head"><div><span>视频参数</span><strong>{statusLabel(status)}</strong></div><button type="button" className="video-media-dialog-close" aria-label="关闭视频参数" onClick={() => setParametersOpen(false)}>×</button></div><div className="video-task-dialog-content"><label>提示词<pre>{input?.prompt || '未命名视频任务'}</pre></label><div className="video-task-dialog-meta creative-video-parameter-grid"><span>模型<b>{task.modelName || '自动选择模型'}</b></span><span>操作<b>{operationLabel(task.operation)}</b></span><span>输入方式<b>{inputModeLabel(input)}</b></span><span>时长<b>{durationLabel(input)}</b></span><span>比例<b>{input?.aspectRatio || 'Auto'}</b></span><span>分辨率<b>{input?.resolution || input?.videoSize || '默认清晰度'}</b></span><span>参考素材<b>{inputModeLabel(input)}</b></span>{input?.width && input?.height && <span>尺寸<b>{input.width} × {input.height}</b></span>}</div>{errorPresentation && <div className="video-task-error-detail"><p className="creative-video-error">{errorPresentation.summary}</p><details><summary>查看技术详情</summary><pre>{errorPresentation.detail}</pre></details></div>}</div></div></div>}
   </article>;
 }

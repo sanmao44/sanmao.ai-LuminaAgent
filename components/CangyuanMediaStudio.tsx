@@ -397,10 +397,15 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
       if (speechUrlRef.current) URL.revokeObjectURL(speechUrlRef.current);
       speechUrlRef.current = persistedUrl ? '' : url;
       const extension = response.headers.get('X-Audio-Extension') || 'mp3';
+      const encodedModelName = response.headers.get('X-Audio-Model');
+      let modelName = encodedModelName || speechModel.displayName;
+      if (encodedModelName) {
+        try { modelName = decodeURIComponent(encodedModelName); } catch { /* Keep the transport value as a fallback. */ }
+      }
       setSpeechResult({
         url,
         name: `speech-${Date.now()}.${extension}`,
-        modelName: response.headers.get('X-Audio-Model') || speechModel.displayName,
+        modelName,
         contentType: blob.type || 'audio/mpeg',
         extension,
       });
@@ -709,7 +714,13 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                       className="cangyuan-field-select"
                       menuClassName="cangyuan-field-select-menu"
                       options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
-                      onChange={(format) => setSpeechFormat(format as SpeechOutputFormat)}
+                      onChange={(format) => {
+                        const nextFormat = format as SpeechOutputFormat;
+                        setSpeechFormat(nextFormat);
+                        if (nextFormat !== 'mp3' && speechAdvanced.bitrate !== undefined) {
+                          setSpeechAdvanced((current) => ({ ...current, bitrate: undefined }));
+                        }
+                      }}
                     />
                   </div>
                 </div>}
@@ -756,7 +767,13 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         className="cangyuan-field-select"
                         menuClassName="cangyuan-field-select-menu"
                         options={speechFormats.map((format) => ({ value: format, label: speechOutputFormatLabel(format) }))}
-                        onChange={(format) => setSpeechFormat(format as SpeechOutputFormat)}
+                        onChange={(format) => {
+                          const nextFormat = format as SpeechOutputFormat;
+                          setSpeechFormat(nextFormat);
+                          if (nextFormat !== 'mp3' && speechAdvanced.bitrate !== undefined) {
+                            setSpeechAdvanced((current) => ({ ...current, bitrate: undefined }));
+                          }
+                        }}
                       />
                     </div>}
                     {speechSpeedRange && (
@@ -783,7 +800,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         <small>{speechProfile.publicModel === 'voice-clone-tts' && speechAdvanced.engine?.startsWith('elevenlabs-v4') ? '该引擎限制为 0.7–1.2' : `${speechSpeedRange.min}–${speechSpeedRange.max}，默认 1`}</small>
                       </div>
                     )}
-                    <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={setSpeechAdvanced} disabled={busy} />
+                    <SpeechAdvancedOptions profile={speechProfile} value={speechAdvanced} onChange={setSpeechAdvanced} disabled={busy} modelId={speechModel?.id} format={selectedSpeechFormat} />
                   </div>
                 )}
                 <label className="cangyuan-field-label" htmlFor="cangyuan-speech-text">配音文本</label>

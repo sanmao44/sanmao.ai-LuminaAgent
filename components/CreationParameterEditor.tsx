@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import ModelPicker from "./ModelPicker";
 import SelectMenu from "./SelectMenu";
 import EditableSuggestionField from "./EditableSuggestionField";
+import VideoDurationField from "./VideoDurationField";
 import CangyuanImageModelOptions from "@/components/cangyuan/CangyuanImageModelOptions";
 import CangyuanVideoModelParameters from "@/components/cangyuan/CangyuanVideoModelParameters";
 import {
@@ -21,9 +22,14 @@ import {
 } from "@/lib/creation/settings";
 import { normalizeImageCreationSettings, resolveAvailableCreationModel } from "@/lib/creation/settings";
 import { getCangyuanImageModelProfile } from "@/lib/cangyuan-image-capabilities";
-import { isCangyuanProvider } from "@/lib/cangyuan-provider";
+import { isCangyuanProvider, usesCangyuanVideoProtocol } from "@/lib/cangyuan-provider";
 import { getCangyuanVideoModelProfile } from "@/lib/cangyuan-video-capabilities";
-import { getCangyuanVideoAdvancedParameters, getCangyuanVideoModelSpec } from "@/lib/cangyuan-video-model-catalog";
+import {
+  cangyuanVideoParameterValueLabel,
+  getCangyuanVideoAdvancedParameters,
+  getCangyuanVideoModelSpec,
+  getCangyuanVideoParameter,
+} from "@/lib/cangyuan-video-model-catalog";
 import type { CangyuanVideoModelSpec, VideoModelParameterValues } from "@/packages/contracts/video-generation";
 import { getVideoModelLimitsForInput, type VideoModelInputContext } from "@/lib/video-model-limits";
 import { is65535Provider } from "@/lib/video-platform";
@@ -353,6 +359,24 @@ function ImageEditor({
       ariaLabel="图片系列"
     />
   ) : null;
+  const cangyuanVariantField = cangyuanProfile?.variantEnum?.length ? (
+    <label className="creation-field compact">
+      <small>生成模式</small>
+      <SelectMenu
+        portalZIndex={portalZIndex}
+        value={cangyuanProfile.variantEnum.includes(settings.variant || "")
+          ? settings.variant || ""
+          : cangyuanProfile.variantDefault || cangyuanProfile.variantEnum[0]}
+        onChange={(value) => update("variant", value as ImageCreationSettings["variant"])}
+        options={cangyuanProfile.variantEnum.map((value) => ({
+          value,
+          label: value === "standard" ? "标准" : value === "highspeed" ? "高速" : value,
+          description: value === "standard" ? "标准生成速度" : "高速生成模式",
+        }))}
+        ariaLabel="图片生成模式"
+      />
+    </label>
+  ) : null;
   const cangyuanPromptExpansionControl = cangyuanProfile?.supportsPromptExpansion ? (
     <label className="creation-field creation-toggle">
       <small>提示词扩写</small>
@@ -522,6 +546,7 @@ function ImageEditor({
             <span className="canvas-parameter-group-label">生成系列</span>
             {cangyuanSeriesSelect}
           </div>}
+          {cangyuanVariantField}
           <button
             type="button"
             className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -699,6 +724,7 @@ function ImageEditor({
                   <span className="canvas-parameter-group-label">生成系列</span>
                   {cangyuanSeriesSelect}
                 </div>}
+                {cangyuanVariantField}
                 <button
                   type="button"
                   className={`creation-advanced-toggle ${advanced ? "active" : ""}`}
@@ -877,6 +903,7 @@ function ImageEditor({
           <small>生成系列</small>
           {cangyuanSeriesSelect}
         </label>}
+        {cangyuanVariantField}
         {flat && imageQualityOptions.length > 0 && (
           <label className="creation-field compact">
             <small>质量</small>
@@ -1014,6 +1041,7 @@ function cangyuanVideoParameterValues(
   if (!spec) return {};
   const parameters = getCangyuanVideoAdvancedParameters(spec);
   const allowedNames = new Set(parameters.map((parameter) => parameter.name));
+  if (getCangyuanVideoParameter(spec, "seed")) allowedNames.add("seed");
   const defaults = Object.fromEntries(parameters
     .filter((parameter) => parameter.suggestedDefault !== undefined)
     .map((parameter) => [parameter.name, parameter.suggestedDefault])) as VideoModelParameterValues;
@@ -1060,7 +1088,7 @@ function VideoEditor({
   const provider = runtime?.providers.find(
     (item) => item.id === operationModel?.providerId,
   );
-  const usesCangyuan = provider?.videoTransport === "cangyuan-videos";
+  const usesCangyuan = usesCangyuanVideoProtocol(provider);
   const cangyuanProfile = usesCangyuan && model
     ? getCangyuanVideoModelProfile(model.rawId)
     : null;
@@ -1068,6 +1096,21 @@ function VideoEditor({
     ? getCangyuanVideoModelSpec(model.rawId)
     : null;
   const cangyuanParameters = cangyuanVideoParameterValues(cangyuanSpec, settings.modelParameters);
+  const cangyuanAspectEnum = cangyuanSpec
+    ? getCangyuanVideoParameter(cangyuanSpec, "aspect_ratio")?.enum
+    : undefined;
+  const cangyuanAspectOptions = Array.isArray(cangyuanAspectEnum)
+    ? cangyuanAspectEnum
+    : cangyuanAspectEnum ? [cangyuanAspectEnum] : [];
+  const cangyuanSuggestedResolutions = cangyuanProfile?.suggestedResolutions.filter(
+    (value) => !cangyuanProfile.unsupportedResolutions?.includes(value.toLowerCase()),
+  ) ?? [];
+  const cangyuanResolutionOptions = cangyuanProfile?.allowedResolutions?.filter(
+    (value) => !cangyuanProfile.unsupportedResolutions?.includes(value.toLowerCase()),
+  );
+  const cangyuanResolutionValue = cangyuanSuggestedResolutions.find(
+    (value) => value.toLowerCase() === settings.resolution.toLowerCase(),
+  ) ?? settings.resolution;
   const limits = useMemo(
     () => getVideoModelLimitsForInput(model || undefined, provider, videoModelInput || {}),
     [
@@ -1088,18 +1131,20 @@ function VideoEditor({
   // audio remains gated by its explicit capability below.
   const supportsImageInput =
     usesCangyuan
-      ? Boolean(cangyuanProfile?.supportsFirstLastFrames)
+      ? Boolean(cangyuanProfile?.supportsFirstFrame)
       : (!model || model.capabilities.includes("video-generate") || model.capabilities.includes("video-first-frame"));
   const supportsReferenceImages =
     usesCangyuan
-      ? Boolean(cangyuanProfile?.maxReferenceImages)
+      ? Boolean(cangyuanProfile?.supportsReferenceImages || cangyuanProfile?.supportsReferenceVideos || cangyuanProfile?.supportsReferenceAudios)
       : (!model || model.capabilities.includes("video-generate") || model.capabilities.includes("video-reference"));
   const usesAgnesV20 = Boolean(model?.rawId && /agnes-video-v2\.0/i.test(model.rawId));
-  const supportsAudio = !usesAgnesV20 && (supports("video-audio") || !is65535Provider(provider));
+  const supportsAudio = usesCangyuan
+    ? Boolean(cangyuanProfile?.supportsGenerateAudio)
+    : !usesAgnesV20 && (supports("video-audio") || !is65535Provider(provider));
   const supportsOperationEdit =
-    !usesCangyuan && (!operationModel || operationModel.capabilities.includes("video-edit"));
+    usesCangyuan ? Boolean(cangyuanProfile?.supportsEdit) : (!operationModel || operationModel.capabilities.includes("video-edit"));
   const supportsOperationExtend =
-    !usesCangyuan && (!operationModel || operationModel.capabilities.includes("video-extend"));
+    usesCangyuan ? Boolean(cangyuanProfile?.supportsExtend) : (!operationModel || operationModel.capabilities.includes("video-extend"));
   const operationOptions = [
     {
       value: "generate" as const,
@@ -1126,7 +1171,9 @@ function VideoEditor({
       : []),
   ];
   const inputOptions = [
-    { value: "text" as const, label: "文生视频", description: "仅使用提示词" },
+    ...(!usesCangyuan || cangyuanProfile?.allowsNoReferences !== false && !cangyuanProfile?.requiresReferenceImage
+      ? [{ value: "text" as const, label: "文生视频", description: "仅使用提示词" }]
+      : []),
     ...(!usesCangyuan && supportsImageInput
       ? [
           {
@@ -1141,30 +1188,39 @@ function VideoEditor({
           },
         ]
       : []),
-    ...(usesCangyuan && supportsImageInput
-      ? [{ value: "frames" as const, label: "首尾帧", description: "必须同时提供公网 HTTPS 首帧与尾帧" }]
+    ...(usesCangyuan && supportsImageInput && cangyuanProfile?.allowsFirstFrameWithoutLastFrame !== false
+      ? [{ value: "first-frame" as const, label: "图生视频 · 首帧", description: "使用一张图片作为首帧，平台自动处理上传" }]
+      : []),
+    ...(usesCangyuan && cangyuanProfile?.supportsFirstLastFrames
+      ? [{ value: "frames" as const, label: "图生视频 · 首尾帧", description: "两张图片分别约束起始和结束画面" }]
       : []),
     ...(supportsReferenceImages
       ? [
           {
             value: "reference" as const,
-            label: "参考图生视频",
-            description: `最多 ${limits.maxReferenceImages} 张`,
+            label: usesCangyuan && !cangyuanProfile?.supportsReferenceImages ? "参考素材生视频" : "参考图生视频",
+            description: usesCangyuan && !cangyuanProfile?.supportsReferenceImages ? "使用模型支持的视频或音频素材" : `最多 ${limits.maxReferenceImages} 张`,
           },
         ]
       : []),
   ];
   const showOperationField = operationOptions.length > 1;
-  const allowedDurations = useMemo(
-    () => durationValues(
+  const durationsForResolution = (resolution: string) => durationValues(
       limits.minSeconds,
       limits.maxSeconds,
       limits.fixedSeconds,
       limits.allowedSeconds,
       settings.duration,
-    ),
-    [limits, settings.duration],
-  );
+    ).filter((value) => !cangyuanProfile?.unsupportedSecondsByResolution?.[resolution.toLowerCase()]?.includes(value));
+  const allowedDurations = durationsForResolution(settings.resolution);
+  const updateCangyuanResolution = (resolution: string) => {
+    const durations = durationsForResolution(resolution);
+    const duration = durations.includes(settings.duration)
+      ? settings.duration
+      : durations.reduce((nearest, value) => Math.abs(value - settings.duration) < Math.abs(nearest - settings.duration) ? value : nearest,
+        durations[0] ?? limits.minSeconds);
+    onChange({ ...settings, resolution, duration });
+  };
   const normalizedDuration = allowedDurations.includes(settings.duration)
     ? settings.duration
     : allowedDurations.reduce((nearest, value) =>
@@ -1287,7 +1343,7 @@ function VideoEditor({
           <span>{unavailableModelId} 将在重新生成时回退到自动模型。</span>
         </div>
       )}
-      <div className="creation-parameter-grid primary">
+      <div className="creation-parameter-grid primary video-primary-grid">
         {!dock && (
           <label className="creation-field model">
             <small>视频模型</small>
@@ -1310,12 +1366,31 @@ function VideoEditor({
                   ? resolveAvailableCreationModel(nextSettings, runtime).model
                   : null;
                 const nextProvider = runtime?.providers.find((item) => item.id === nextModel?.providerId);
-                const nextSpec = nextProvider?.videoTransport === "cangyuan-videos" && nextModel
+                const nextSpec = usesCangyuanVideoProtocol(nextProvider) && nextModel
                   ? getCangyuanVideoModelSpec(nextModel.rawId)
                   : null;
+                const nextProfile = nextSpec && nextModel ? getCangyuanVideoModelProfile(nextModel.rawId) : null;
+                const nextInputModes: VideoInputMode[] = nextProfile ? [
+                  ...(nextProfile.allowsNoReferences !== false && !nextProfile.requiresReferenceImage ? ["text" as const] : []),
+                  ...(nextProfile.supportsFirstFrame && nextProfile.allowsFirstFrameWithoutLastFrame !== false ? ["first-frame" as const] : []),
+                  ...(nextProfile.supportsFirstLastFrames ? ["frames" as const] : []),
+                  ...(nextProfile.supportsReferenceImages || nextProfile.supportsReferenceVideos || nextProfile.supportsReferenceAudios ? ["reference" as const] : []),
+                ] : [];
+                const nextInputMode = nextInputModes.includes(settings.inputMode)
+                  ? settings.inputMode
+                  : settings.inputMode !== "text" && nextInputModes.includes("reference")
+                    ? "reference"
+                    : nextInputModes[0] ?? "text";
                 onChange({
                   ...nextSettings,
                   modelParameters: cangyuanVideoParameterValues(nextSpec),
+                  ...(nextProfile ? {
+                    duration: nextProfile.durationDefault ?? Math.max(nextProfile.minSeconds, Math.min(nextProfile.maxSeconds, settings.duration)),
+                    aspect: nextProfile.aspectRatioDefault ?? nextProfile.suggestedAspectRatios[0] ?? settings.aspect,
+                    resolution: nextProfile.resolutionDefault ?? nextProfile.suggestedResolutions[0] ?? settings.resolution,
+                    audio: nextProfile.supportsGenerateAudio ? nextProfile.generateAudioDefault ?? true : false,
+                    inputMode: nextInputMode,
+                  } : {}),
                 });
               }}
             />
@@ -1346,14 +1421,14 @@ function VideoEditor({
             ariaLabel="视频生成方式"
           />
         </label>}
-        {!usesAgnesV20 && !usesCangyuan && <label className="creation-field">
+        {!usesAgnesV20 && !usesCangyuan && <label className={`creation-field${allowedDurations.some((value) => value > 60) ? " video-duration-wide" : ""}`}>
           <small>{limits.durationScope === "per-transition" ? "每段转场时长" : limits.durationScope === "total" ? "总时长" : "时长"}</small>
-          <SelectMenu
+            <VideoDurationField
             portalZIndex={portalZIndex}
             disabled={inheritSettings}
             value={settings.duration}
             onChange={(value) => update("duration", value)}
-            options={allowedDurations.map((value) => ({ value, label: `${value} 秒` }))}
+              values={allowedDurations}
             ariaLabel="视频时长"
           />
         </label>}
@@ -1393,38 +1468,58 @@ function VideoEditor({
           />
         </label>}
         {usesCangyuan && cangyuanProfile && <>
-          <label className="creation-field">
+          {cangyuanProfile.supportsDuration && <label className={`creation-field${allowedDurations.some((value) => value > 60) ? " video-duration-wide" : ""}`}>
             <small>时长</small>
-            <SelectMenu
+            <VideoDurationField
               portalZIndex={portalZIndex}
               value={settings.duration}
               onChange={(value) => update("duration", value)}
-              options={allowedDurations.map((value) => ({ value, label: `${value} 秒` }))}
-              ariaLabel="沧元视频时长"
+              values={allowedDurations}
+              ariaLabel="视频时长"
             />
-          </label>
-          <label className="creation-field">
-            <small>比例（建议值，可自定义）</small>
-            <EditableSuggestionField
+          </label>}
+          {cangyuanProfile.supportsAspectRatio && <label className="creation-field">
+            <small>比例</small>
+            {cangyuanAspectOptions?.length ? <SelectMenu
+              portalZIndex={portalZIndex}
+              value={settings.aspect}
+              options={cangyuanAspectOptions.map((value) => ({ value: String(value), label: cangyuanVideoParameterValueLabel("aspect_ratio", String(value)) }))}
+              ariaLabel="视频比例"
+              onChange={(value) => update("aspect", value)}
+            /> : <EditableSuggestionField
               value={settings.aspect}
               options={cangyuanProfile.suggestedAspectRatios}
-              ariaLabel="沧元视频比例"
+              optionLabel={(value) => cangyuanVideoParameterValueLabel("aspect_ratio", value)}
+              ariaLabel="视频比例"
               placeholder="例如 16:9"
               onChange={(value) => update("aspect", value)}
-            />
-          </label>
-          <label className="creation-field">
-            <small>分辨率（建议值，可自定义）</small>
-            <EditableSuggestionField
-              value={settings.resolution}
-              options={cangyuanProfile.suggestedResolutions}
-              ariaLabel="沧元视频分辨率"
+            />}
+          </label>}
+          {cangyuanProfile.supportsResolution && <label className="creation-field">
+            <small>分辨率</small>
+            {cangyuanResolutionOptions?.length ? <SelectMenu
+              portalZIndex={portalZIndex}
+              value={cangyuanResolutionValue}
+              options={cangyuanResolutionOptions.map((value) => ({ value, label: cangyuanVideoParameterValueLabel("resolution", value) }))}
+              ariaLabel="视频分辨率"
+              onChange={updateCangyuanResolution}
+            /> : <EditableSuggestionField
+              value={cangyuanResolutionValue}
+              options={cangyuanSuggestedResolutions}
+              optionLabel={(value) => cangyuanVideoParameterValueLabel("resolution", value)}
+              ariaLabel="视频分辨率"
               placeholder="例如 720p"
-              onChange={(value) => update("resolution", value)}
-            />
-          </label>
+              onChange={updateCangyuanResolution}
+            />}
+          </label>}
+          {cangyuanProfile.supportsSeed && <label className="creation-field">
+            <small>随机种子</small>
+            <input className="creation-field-input" type="number" aria-label="视频随机种子" min={cangyuanProfile.seedMin} max={cangyuanProfile.seedMax} step={1}
+              value={String(cangyuanParameters.seed ?? "")} placeholder="留空随机"
+              onChange={(event) => update("modelParameters", { ...cangyuanParameters, seed: event.target.value })} />
+          </label>}
         </>}
-        {!usesCangyuan && <label className="creation-field creation-toggle">
+        {(!usesCangyuan || supportsAudio) && <label className="creation-field creation-toggle">
           <small>原生音频</small>
           <button
             type="button"
@@ -1505,7 +1600,7 @@ function VideoEditor({
             {usesCangyuan
               ? cangyuanProfile
                 ? `仅对已核实型号开放扩展参数。${limits.notes.join("；")}。上传大小与未公开数量上限属于本站中转服务限制。`
-                : "该沧元型号尚未核实专属参数，仅支持模型和提示词。"
+                : "当前型号的参数与素材要求尚未核实，请先选择已支持的型号。"
               : limits.notes.join(" · ") || "当前操作不会提交自定义比例和分辨率。"}
           </span>
         </div>

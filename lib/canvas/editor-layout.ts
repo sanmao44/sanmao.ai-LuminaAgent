@@ -28,13 +28,32 @@ export type CanvasPopoverPosition = CanvasOverlayPosition & {
   width: number;
 };
 
-export type CanvasOverlayFit = CanvasOverlayPosition & {
-  maxHeight: number;
-};
+/** Caps a node editor to the width available beside canvas overlays. */
+export function canvasWideNodeEditorWidth(
+  viewportWidth: number,
+  preferredWidth = 840,
+  viewportMargin = 16,
+) {
+  return Math.max(1, Math.min(
+    preferredWidth,
+    viewportWidth - viewportMargin * 2,
+  ));
+}
 
-export type CanvasNodeEditorDockLayout = CanvasOverlayPosition & {
-  placement: "bottom";
-};
+/** Adapts an editor's width inversely to canvas zoom without shrinking its controls. */
+export function canvasZoomResponsiveNodeEditorWidth(
+  viewportWidth: number,
+  zoom: number,
+  baseWidth: number,
+  minWidth: number,
+  maxWidth: number,
+  viewportMargin = 16,
+) {
+  const safeZoom = Math.max(0.12, Number.isFinite(zoom) ? zoom : 1);
+  const zoomAdjustedWidth = baseWidth / Math.sqrt(safeZoom);
+  const preferredWidth = Math.max(minWidth, Math.min(maxWidth, zoomAdjustedWidth));
+  return canvasWideNodeEditorWidth(viewportWidth, preferredWidth, viewportMargin);
+}
 
 /**
  * Places a fixed context menu next to its pointer while keeping it inside the
@@ -62,7 +81,6 @@ export function placeCanvasContextMenu(
     top: Math.min(Math.max(fitsBelow ? below : above, margin), maxTop),
   };
 }
-
 /** Places a small anchored popover in the viewport and flips it above as needed. */
 export function placeCanvasActionPopover(
   anchor: CanvasOverlayAnchor,
@@ -143,58 +161,51 @@ export function placeCanvasGroupToolbar(
   };
 }
 
-/** Places the editor below the node; it never switches to a side placement. */
+/** Keeps the editor centered on its node and anchored below it, even past the viewport. */
 export function placeCanvasNodeEditor(
   anchor: CanvasOverlayAnchor,
   stage: CanvasOverlayStage,
   overlay: CanvasOverlaySize,
   gap = 14,
+  margin = 12,
+  obstacles: CanvasOverlayAnchor[] = [],
 ): CanvasOverlayPosition {
-  return {
-    left: centeredLeft(anchor, stage, overlay),
-    top: anchor.top + anchor.height + gap,
-  };
-}
-
-/**
- * Keeps the editor attached below its node while fitting its scrollable body
- * into the remaining viewport. Unlike clamping the editor's top edge, this
- * can never move the panel back across the node that owns it.
- */
-export function fitCanvasNodeEditorBelow(
-  anchor: CanvasOverlayAnchor,
-  stage: CanvasOverlayStage,
-  overlay: CanvasOverlaySize,
-  gap = 14,
-  margin = 12,
-): CanvasOverlayFit {
-  const position = placeCanvasNodeEditor(anchor, stage, overlay, gap);
-  const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
-  return {
-    left: Math.min(Math.max(position.left, margin), rightmostLeft),
-    top: position.top,
-    maxHeight: Math.max(
-      0,
-      Math.min(overlay.height, stage.height - position.top - margin),
-    ),
-  };
-}
-
-/** Keeps the editor below its node and sizes its scrollable body to the viewport. */
-export function placeCanvasNodeEditorDock(
-  anchor: CanvasOverlayAnchor,
-  stage: CanvasOverlayStage,
-  overlay: Pick<CanvasOverlaySize, "width">,
-  gap = 14,
-  margin = 12,
-): CanvasNodeEditorDockLayout {
-  const top = anchor.top + anchor.height + gap;
   const centered = centeredLeft(anchor, stage, overlay);
-  const rightmostLeft = Math.max(margin, stage.width - overlay.width - margin);
+  const maxLeft = Math.max(margin, stage.width - overlay.width - margin);
+  const top = anchor.top + anchor.height + gap;
+  const candidates = [centered, anchor.left, anchor.left + anchor.width - overlay.width];
+
+  for (const obstacle of obstacles) {
+    candidates.push(
+      obstacle.left - overlay.width - margin,
+      obstacle.left,
+      obstacle.left + obstacle.width - overlay.width,
+      obstacle.left + obstacle.width + margin,
+    );
+  }
+
+  const positions = [...new Set(candidates.map((left) => Math.min(Math.max(left, margin), maxLeft)))];
+  const overlapArea = (left: number) => obstacles.reduce((area, obstacle) => {
+      const horizontalOverlap = Math.max(
+        0,
+        Math.min(left + overlay.width, obstacle.left + obstacle.width) - Math.max(left, obstacle.left),
+      );
+      const obstacleVerticalOverlap = Math.max(
+        0,
+        Math.min(top + overlay.height, obstacle.top + obstacle.height) - Math.max(top, obstacle.top),
+      );
+      return area + horizontalOverlap * obstacleVerticalOverlap;
+    }, 0);
+  const left = positions.reduce((best, candidate) => {
+    const candidateOverlap = overlapArea(candidate);
+    const bestOverlap = overlapArea(best);
+    if (candidateOverlap < bestOverlap) return candidate;
+    if (candidateOverlap === bestOverlap && Math.abs(candidate - centered) < Math.abs(best - centered)) return candidate;
+    return best;
+  }, positions[0] ?? Math.min(Math.max(centered, margin), maxLeft));
 
   return {
-    left: Math.min(Math.max(centered, margin), rightmostLeft),
+    left,
     top,
-    placement: "bottom",
   };
 }

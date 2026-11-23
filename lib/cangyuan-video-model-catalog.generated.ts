@@ -660,6 +660,133 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     }
   },
   {
+    "id": "model-gemini-omni-1.2-flash",
+    "publicModel": "gemini-omni-1.2-flash",
+    "title": "gemini-omni-1.2-flash",
+    "summary": "gemini-omni-1.2-flash 的接口、请求参数与调用示例。",
+    "source": "models/gemini-omni-1.2-flash.json",
+    "lastReviewed": "2026-11-21",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "gemini-omni-1.2-flash",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "3–15 秒，可首帧，也可多主体参考。",
+      "facePolicy": "open",
+      "nativePolicy": "原生/4K超高清",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 gemini-omni-1.2-flash。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "aspect_ratio。支持值：16:9 / 9:16。不在列表中的值会被拒绝。",
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16"
+          ],
+          "suggestedDefault": "16:9"
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "duration。",
+          "type": "number",
+          "minimum": 3,
+          "maximum": 15,
+          "suggestedDefault": 5
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "resolution。支持值：360P / 720P / 1080P / 4K。不在列表中的值会被拒绝。",
+          "type": "string",
+          "enum": [
+            "360P",
+            "720P",
+            "1080P",
+            "4K"
+          ],
+          "suggestedDefault": "720P"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 3 个。",
+          "type": "array",
+          "maxItems": 3
+        },
+        {
+          "name": "first_image_url",
+          "role": "firstFrame",
+          "description": "可以只传首帧。不要传尾帧。首帧不能和参考图、参考视频一起传。",
+          "type": "string"
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "model": "gemini-omni-1.2-flash",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "sections": [
+        {
+          "title": "参数组合与素材要求",
+          "variant": "list",
+          "items": [
+            "只支持首帧，不要传尾帧。",
+            "首尾帧不能与参考图、参考视频或参考音频同时使用。"
+          ]
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-21"
+    }
+  },
+  {
     "id": "model-gemini-omni-flash",
     "publicModel": "gemini-omni-flash",
     "title": "gemini-omni-flash",
@@ -12514,23 +12641,23 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     }
   },
   {
-    "id": "model-sd24-seedance-2.5",
-    "publicModel": "sd24-seedance-2.5",
-    "title": "sd24-seedance-2.5",
-    "summary": "sd24-seedance-2.5 的接口、请求参数与调用示例。",
-    "source": "models/sd24-seedance-2.5.json",
-    "lastReviewed": "2026-11-16",
+    "id": "model-sd24-seedance-2.0",
+    "publicModel": "sd24-seedance-2.0",
+    "title": "sd24-seedance-2.0",
+    "summary": "sd24-seedance-2.0 的接口、请求参数与调用示例。",
+    "source": "models/sd24-seedance-2.0.json",
+    "lastReviewed": "2026-11-20",
     "status": "current",
     "spec": {
       "schemaVersion": 1,
-      "publicModel": "sd24-seedance-2.5",
+      "publicModel": "sd24-seedance-2.0",
       "capabilityRefs": [
         "video"
       ],
       "supportedModes": [
         "async"
       ],
-      "intro": "Seedance 2.5 按条线路。固定 720p，5 到 30 秒，可以带参考图、参考视频和参考音频。",
+      "intro": "Seedance 2.0 按条线路。固定 720p，4 到 15 秒，可以带参考图和参考音频。",
       "facePolicy": "open",
       "nativePolicy": "native",
       "warnings": [
@@ -12541,44 +12668,43 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
       "params": [
         {
           "name": "model",
-          "description": "固定传 sd24-seedance-2.5。",
+          "description": "固定传 sd24-seedance-2.0。",
           "required": true,
           "type": "string"
         },
         {
           "name": "prompt",
-          "description": "生成内容的描述。最少 1 字符。",
+          "description": "生成内容的描述。最少 1 字符。最多 15000 字符。",
           "required": true,
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 15000
         },
         {
           "name": "aspect_ratio",
-          "description": "aspect_ratio。推荐值：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；推荐值不代表完整允许集合。",
+          "description": "aspect_ratio。推荐值：16:9 / 9:16 / 1:1 / 4:3；推荐值不代表完整允许集合。",
           "type": "string",
           "suggestions": [
             "16:9",
             "9:16",
             "1:1",
-            "4:3",
-            "3:4",
-            "21:9"
-          ]
+            "4:3"
+          ],
+          "suggestedDefault": "16:9"
         },
         {
           "name": "duration",
           "role": "duration",
           "description": "duration。",
-          "required": true,
           "type": "number",
-          "minimum": 5,
-          "maximum": 30
+          "minimum": 4,
+          "maximum": 15,
+          "suggestedDefault": 4
         },
         {
           "name": "resolution",
           "role": "resolution",
           "description": "resolution。推荐值：720p；推荐值不代表完整允许集合。",
-          "required": true,
           "type": "string",
           "suggestions": [
             "720p"
@@ -12588,23 +12714,16 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         {
           "name": "reference_image_urls",
           "role": "referenceImage",
-          "description": "参考图 HTTPS URL 数组，最多 30 个。图、视频、音频合计最多 50 个。",
+          "description": "参考图 HTTPS URL 数组，最多 9 个。图、视频、音频合计最多 12 个。",
           "type": "array",
-          "maxItems": 30
-        },
-        {
-          "name": "reference_videos",
-          "role": "referenceVideo",
-          "description": "参考视频 HTTPS URL 数组，最多 10 个。图、视频、音频合计最多 50 个。",
-          "type": "array",
-          "maxItems": 10
+          "maxItems": 9
         },
         {
           "name": "reference_audios",
           "role": "referenceAudio",
-          "description": "参考音频 HTTPS URL 数组，最多 10 个。图、视频、音频合计最多 50 个。",
+          "description": "参考音频 HTTPS URL 数组，最多 3 个。图、视频、音频合计最多 12 个。",
           "type": "array",
-          "maxItems": 10
+          "maxItems": 3
         }
       ],
       "endpoints": [
@@ -12623,16 +12742,239 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         {
           "title": "最小请求",
           "request": {
-            "duration": 5,
-            "model": "sd24-seedance-2.5",
-            "prompt": "温暖的午后，阳光洒在窗台上。",
-            "resolution": "720p"
+            "model": "sd24-seedance-2.0",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
           }
         }
       ],
       "status": "current",
       "source": "capabilities/video",
-      "lastReviewed": "2026-11-16"
+      "lastReviewed": "2026-11-20"
+    }
+  },
+  {
+    "id": "model-sd24-seedance-2.0-2",
+    "publicModel": "sd24-seedance-2.0-2",
+    "title": "sd24-seedance-2.0-2",
+    "summary": "sd24-seedance-2.0-2 的接口、请求参数与调用示例。",
+    "source": "models/sd24-seedance-2.0-2.json",
+    "lastReviewed": "2026-11-20",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "sd24-seedance-2.0-2",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "Seedance 2.0 竖屏按条线路。固定 720p 和 9:16，5 到 15 秒，可以带参考图、参考视频和参考音频。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 sd24-seedance-2.0-2。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。最少 1 字符。最多 15000 字符。",
+          "required": true,
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15000
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "aspect_ratio。推荐值：9:16；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "9:16"
+          ],
+          "suggestedDefault": "9:16"
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "duration。",
+          "type": "number",
+          "minimum": 5,
+          "maximum": 15,
+          "suggestedDefault": 5
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "resolution。推荐值：720p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "720p"
+          ],
+          "suggestedDefault": "720p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 9 个。图、视频、音频合计最多 12 个。",
+          "type": "array",
+          "maxItems": 9
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 3 个。图、视频、音频合计最多 12 个。",
+          "type": "array",
+          "maxItems": 3
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 3 个。图、视频、音频合计最多 12 个。",
+          "type": "array",
+          "maxItems": 3
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "model": "sd24-seedance-2.0-2",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-20"
+    }
+  },
+  {
+    "id": "model-sd24-seedance-2.5-1080p",
+    "publicModel": "sd24-seedance-2.5-1080p",
+    "title": "sd24-seedance-2.5-1080p",
+    "summary": "sd24-seedance-2.5-1080p 的接口、请求参数与调用示例。",
+    "source": "models/sd24-seedance-2.5-1080p.json",
+    "lastReviewed": "2026-11-20",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "sd24-seedance-2.5-1080p",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "Seedance 2.5 按条线路。固定 1080p，5 到 30 秒，可以带参考图和参考音频。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 sd24-seedance-2.5-1080p。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。最少 1 字符。",
+          "required": true,
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "aspect_ratio。推荐值：16:9 / 9:16；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "16:9",
+            "9:16"
+          ],
+          "suggestedDefault": "16:9"
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "duration。",
+          "type": "number",
+          "minimum": 5,
+          "maximum": 30,
+          "suggestedDefault": 5
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "resolution。推荐值：1080p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "1080p"
+          ],
+          "suggestedDefault": "1080p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 9 个。图、视频、音频合计最多 12 个。",
+          "type": "array",
+          "maxItems": 9
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 3 个。图、视频、音频合计最多 12 个。",
+          "type": "array",
+          "maxItems": 3
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "model": "sd24-seedance-2.5-1080p",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-20"
     }
   },
   {
@@ -12641,7 +12983,7 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     "title": "sd24-seedance-2.5-2",
     "summary": "sd24-seedance-2.5-2 的接口、请求参数与调用示例。",
     "source": "models/sd24-seedance-2.5-2.json",
-    "lastReviewed": "2026-11-16",
+    "lastReviewed": "2026-11-20",
     "status": "current",
     "spec": {
       "schemaVersion": 1,
@@ -12677,31 +13019,31 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         },
         {
           "name": "aspect_ratio",
-          "description": "aspect_ratio。推荐值：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；推荐值不代表完整允许集合。",
+          "description": "aspect_ratio。推荐值：16:9 / 21:9 / 4:3 / 1:1 / 3:4 / 9:16；推荐值不代表完整允许集合。",
           "type": "string",
           "suggestions": [
             "16:9",
-            "9:16",
-            "1:1",
+            "21:9",
             "4:3",
+            "1:1",
             "3:4",
-            "21:9"
-          ]
+            "9:16"
+          ],
+          "suggestedDefault": "16:9"
         },
         {
           "name": "duration",
           "role": "duration",
           "description": "duration。",
-          "required": true,
           "type": "number",
           "minimum": 4,
-          "maximum": 30
+          "maximum": 30,
+          "suggestedDefault": 4
         },
         {
           "name": "resolution",
           "role": "resolution",
           "description": "resolution。推荐值：720p；推荐值不代表完整允许集合。",
-          "required": true,
           "type": "string",
           "suggestions": [
             "720p"
@@ -12746,16 +13088,136 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         {
           "title": "最小请求",
           "request": {
-            "duration": 4,
             "model": "sd24-seedance-2.5-2",
-            "prompt": "温暖的午后，阳光洒在窗台上。",
-            "resolution": "720p"
+            "prompt": "温暖的午后，阳光洒在窗台上。"
           }
         }
       ],
       "status": "current",
       "source": "capabilities/video",
-      "lastReviewed": "2026-11-16"
+      "lastReviewed": "2026-11-20"
+    }
+  },
+  {
+    "id": "model-sd24-seedance-2.5-3",
+    "publicModel": "sd24-seedance-2.5-3",
+    "title": "sd24-seedance-2.5-3",
+    "summary": "sd24-seedance-2.5-3 的接口、请求参数与调用示例。",
+    "source": "models/sd24-seedance-2.5-3.json",
+    "lastReviewed": "2026-11-20",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "sd24-seedance-2.5-3",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "Seedance 2.5 按条线路。480p 或 720p，4 到 30 秒，可以带参考图、参考视频和参考音频。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 sd24-seedance-2.5-3。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。最少 1 字符。最多 15000 字符。",
+          "required": true,
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15000
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "aspect_ratio。推荐值：16:9 / 21:9 / 4:3 / 1:1 / 3:4 / 9:16；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "16:9",
+            "21:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "suggestedDefault": "16:9"
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "duration。",
+          "type": "number",
+          "minimum": 4,
+          "maximum": 30,
+          "suggestedDefault": 4
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "resolution。推荐值：480p / 720p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "480p",
+            "720p"
+          ],
+          "suggestedDefault": "720p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 30 个。图、视频、音频合计最多 50 个。",
+          "type": "array",
+          "maxItems": 30
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 10 个。图、视频、音频合计最多 50 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 10 个。图、视频、音频合计最多 50 个。",
+          "type": "array",
+          "maxItems": 10
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "model": "sd24-seedance-2.5-3",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-20"
     }
   },
   {
@@ -12847,13 +13309,6 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
           "maxItems": 9
         },
         {
-          "name": "reference_videos",
-          "role": "referenceVideo",
-          "description": "参考视频 HTTPS URL 数组，最多 3 个。",
-          "type": "array",
-          "maxItems": 3
-        },
-        {
           "name": "reference_audios",
           "role": "referenceAudio",
           "description": "参考音频 HTTPS URL 数组，最多 3 个。",
@@ -12863,13 +13318,13 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         {
           "name": "first_image_url",
           "role": "firstFrame",
-          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考视频、参考音频一起传。",
+          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考音频一起传。不要参考视频。",
           "type": "string"
         },
         {
           "name": "last_image_url",
           "role": "lastFrame",
-          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考视频、参考音频一起传。",
+          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考音频一起传。不要参考视频。",
           "type": "string"
         }
       ],
@@ -12999,13 +13454,6 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
           "maxItems": 30
         },
         {
-          "name": "reference_videos",
-          "role": "referenceVideo",
-          "description": "参考视频 HTTPS URL 数组，最多 10 个。",
-          "type": "array",
-          "maxItems": 10
-        },
-        {
           "name": "reference_audios",
           "role": "referenceAudio",
           "description": "参考音频 HTTPS URL 数组，最多 10 个。",
@@ -13015,13 +13463,13 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
         {
           "name": "first_image_url",
           "role": "firstFrame",
-          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考视频、参考音频一起传。",
+          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考音频一起传。不要参考视频。",
           "type": "string"
         },
         {
           "name": "last_image_url",
           "role": "lastFrame",
-          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考视频、参考音频一起传。",
+          "description": "可以只传首帧。尾帧必须同时有首帧。首尾帧不能和参考图、参考音频一起传。不要参考视频。",
           "type": "string"
         }
       ],
@@ -15362,6 +15810,134 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
     }
   },
   {
+    "id": "model-vd1-vidu-q4",
+    "publicModel": "vd1-vidu-q4",
+    "title": "vd1-vidu-q4",
+    "summary": "vd1-vidu-q4 的接口、请求参数与调用示例。",
+    "source": "models/vd1-vidu-q4.json",
+    "lastReviewed": "2026-11-20",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "vd1-vidu-q4",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "Vidu Q4 按条线路。必须带参考图，没有文生。480p、720p 与 1080p 分价。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 vd1-vidu-q4。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "画面比例，必填。含 21:9。推荐值：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；推荐值不代表完整允许集合。",
+          "required": true,
+          "type": "string",
+          "suggestions": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ]
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "2–16 秒。",
+          "required": true,
+          "type": "number",
+          "minimum": 2,
+          "maximum": 16
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "480p、720p、1080p。不传按 720p。按条分价。推荐值：480p / 720p / 1080p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "480p",
+            "720p",
+            "1080p"
+          ],
+          "suggestedDefault": "720p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 3 个。",
+          "type": "array",
+          "maxItems": 3
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "aspect_ratio": "16:9",
+            "duration": 2,
+            "model": "vd1-vidu-q4",
+            "prompt": "温暖的午后，阳光洒在窗台上。",
+            "reference_image_urls": [
+              "https://example.com/reference.png"
+            ]
+          }
+        }
+      ],
+      "sections": [
+        {
+          "title": "参数组合与素材要求",
+          "variant": "list",
+          "items": [
+            "需要提供参考素材；编辑请求请同时提供参考图。"
+          ]
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-20"
+    }
+  },
+  {
     "id": "model-ve1-veo-3.1-fast",
     "publicModel": "ve1-veo-3.1-fast",
     "title": "ve1-veo-3.1-fast",
@@ -16603,6 +17179,128 @@ export const CANGYUAN_VIDEO_MODEL_CATALOG = [
       "status": "current",
       "source": "capabilities/video",
       "lastReviewed": "2026-11-16"
+    }
+  },
+  {
+    "id": "model-wan7-wan3.0-3",
+    "publicModel": "wan7-wan3.0-3",
+    "title": "wan7-wan3.0-3",
+    "summary": "wan7-wan3.0-3 的接口、请求参数与调用示例。",
+    "source": "models/wan7-wan3.0-3.json",
+    "lastReviewed": "2026-11-19",
+    "status": "current",
+    "spec": {
+      "schemaVersion": 1,
+      "publicModel": "wan7-wan3.0-3",
+      "capabilityRefs": [
+        "video"
+      ],
+      "supportedModes": [
+        "async"
+      ],
+      "intro": "通义万相 3.0 按条线路，720p 与 1080p 同价。",
+      "facePolicy": "open",
+      "nativePolicy": "native",
+      "warnings": [
+        "本页公共名就是请求里要传的名字。",
+        "未列出的字段不要发送。",
+        "视频只走 POST /v1/videos，再轮询 GET /v1/videos/{task_id}。"
+      ],
+      "params": [
+        {
+          "name": "model",
+          "description": "固定传 wan7-wan3.0-3。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "prompt",
+          "description": "生成内容的描述。",
+          "required": true,
+          "type": "string"
+        },
+        {
+          "name": "aspect_ratio",
+          "description": "画面比例，必填。含 21:9。推荐值：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；推荐值不代表完整允许集合。",
+          "required": true,
+          "type": "string",
+          "suggestions": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ]
+        },
+        {
+          "name": "duration",
+          "role": "duration",
+          "description": "5–30 秒。",
+          "required": true,
+          "type": "number",
+          "minimum": 5,
+          "maximum": 30
+        },
+        {
+          "name": "resolution",
+          "role": "resolution",
+          "description": "720p、1080p。不传按 720p。两档同价，按条计费。推荐值：720p / 1080p；推荐值不代表完整允许集合。",
+          "type": "string",
+          "suggestions": [
+            "720p",
+            "1080p"
+          ],
+          "suggestedDefault": "720p"
+        },
+        {
+          "name": "reference_image_urls",
+          "role": "referenceImage",
+          "description": "参考图 HTTPS URL 数组，最多 10 个。",
+          "type": "array",
+          "maxItems": 10
+        },
+        {
+          "name": "reference_videos",
+          "role": "referenceVideo",
+          "description": "参考视频 HTTPS URL 数组，最多 5 个。",
+          "type": "array",
+          "maxItems": 5
+        },
+        {
+          "name": "reference_audios",
+          "role": "referenceAudio",
+          "description": "参考音频 HTTPS URL 数组，最多 5 个。",
+          "type": "array",
+          "maxItems": 5
+        }
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/videos",
+          "description": "创建视频任务。"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/videos/{task_id}",
+          "description": "查询视频任务。"
+        }
+      ],
+      "examples": [
+        {
+          "title": "最小请求",
+          "request": {
+            "aspect_ratio": "16:9",
+            "duration": 5,
+            "model": "wan7-wan3.0-3",
+            "prompt": "温暖的午后，阳光洒在窗台上。"
+          }
+        }
+      ],
+      "status": "current",
+      "source": "capabilities/video",
+      "lastReviewed": "2026-11-19"
     }
   },
   {

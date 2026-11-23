@@ -5,11 +5,18 @@ import { cangyuanVideoParameterLabel, cangyuanVideoParameterLabelByName, getCang
 
 export const CANGYUAN_SEEDANCE_FAST_MODEL = 'sd20-seedance-2.0-fast';
 export const CANGYUAN_VIDEO_MAX_REFERENCE_IMAGE_BYTES = 30 * 1024 * 1024;
+export const CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH = 6000;
 
 export function isCangyuanVideoModelSelectable(publicModel: string) {
   const spec = getCangyuanVideoModelSpec(publicModel);
   const profile = getCangyuanVideoModelProfile(publicModel);
   return Boolean(spec?.params.length && profile?.publicModel === publicModel);
+}
+
+export function getCangyuanVideoPromptMaxLength(publicModel: string) {
+  const spec = getCangyuanVideoModelSpec(publicModel);
+  const maxLength = spec && getCangyuanVideoParameter(spec, 'prompt')?.maxLength;
+  return typeof maxLength === 'number' && Number.isInteger(maxLength) && maxLength > 0 ? maxLength : undefined;
 }
 
 export type CangyuanVideoModelProfile = {
@@ -26,6 +33,8 @@ export type CangyuanVideoModelProfile = {
   suggestedAspectRatios: readonly string[];
   suggestedResolutions: readonly string[];
   allowedResolutions?: readonly string[];
+  unsupportedResolutions?: readonly string[];
+  unsupportedSecondsByResolution?: Readonly<Record<string, readonly number[]>>;
   maxReferenceImages?: number;
   maxReferenceVideos?: number;
   maxReferenceAudios?: number;
@@ -59,6 +68,7 @@ export type CangyuanVideoModelProfile = {
   allowsFramesWithReferences?: boolean;
   allowsFramesWithAudio?: boolean;
   allowsNoReferences?: boolean;
+  requiresReferenceImage?: boolean;
   requiresImageWithVideoOrAudio?: boolean;
 };
 
@@ -385,7 +395,7 @@ export function getCangyuanVideoModelProfile(publicModel: string): CangyuanVideo
     maxReferenceImages: documented.maxReferenceImages ?? curated.maxReferenceImages,
     maxReferenceVideos: documented.maxReferenceVideos ?? curated.maxReferenceVideos,
     maxReferenceAudios: documented.maxReferenceAudios ?? curated.maxReferenceAudios,
-    maxTotalInputs: curated.maxTotalInputs,
+    maxTotalInputs: documented.maxTotalInputs ?? curated.maxTotalInputs,
     maxReferenceImageFileBytes: documented.maxReferenceImageFileBytes ?? curated.maxReferenceImageFileBytes,
     maxReferenceVideoFileBytes: documented.maxReferenceVideoFileBytes ?? curated.maxReferenceVideoFileBytes,
     maxReferenceAudioFileBytes: documented.maxReferenceAudioFileBytes ?? curated.maxReferenceAudioFileBytes,
@@ -398,6 +408,7 @@ export function getCangyuanVideoModelProfile(publicModel: string): CangyuanVideo
     allowsFramesWithReferences: curated.allowsFramesWithReferences ?? documented.allowsFramesWithReferences,
     allowsFramesWithAudio: curated.allowsFramesWithAudio ?? documented.allowsFramesWithAudio,
     allowsNoReferences: curated.allowsNoReferences ?? documented.allowsNoReferences,
+    requiresReferenceImage: curated.requiresReferenceImage ?? documented.requiresReferenceImage,
     requiresImageWithVideoOrAudio: curated.requiresImageWithVideoOrAudio ?? documented.requiresImageWithVideoOrAudio,
   });
 }
@@ -415,18 +426,22 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
   const firstFrame = parameter('first_image_url');
   const lastFrame = parameter('last_image_url');
   const mode = parameter('mode');
+  const maxTotalInputs = totalInputLimit(spec);
   const supportedModes = normalizedValues(mode?.enum);
-  const durationDefault = numericValue(duration?.suggestedDefault);
+  const durationDefault = numericValue(documentedParameterDefault(duration));
   const describedDurationBounds = durationBounds(duration, spec);
   const fixedSeconds = duration && describedDurationBounds.minimum === undefined && describedDurationBounds.maximum === undefined
     ? durationDefault
     : undefined;
   const rules = cangyuanVideoRuleText(spec);
   const mediaParameters = [image, video, audioReference, firstFrame, lastFrame].filter((item): item is CangyuanVideoParameterSpec => Boolean(item));
-  const requiredMedia = mediaParameters.some((item) => item.required);
+  const requiresReferenceImage = image?.required || hasRule(rules, /必须(?:带|提供|上传)[^。\n]*参考图/);
+  const requiredMedia = mediaParameters.some((item) => item.required)
+    || requiresReferenceImage || hasRule(rules, /需要提供参考素材/);
   const aspectRatios = parameterValues(aspectRatio);
   const resolutions = parameterValues(resolution);
   const resolutionEnum = normalizedValues(resolution?.enum);
+  const combinationRestrictions = documentedResolutionRestrictions(rules);
   return Object.freeze({
     publicModel,
     supportsDuration: Boolean(duration),
@@ -441,11 +456,13 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
     suggestedAspectRatios: aspectRatios,
     suggestedResolutions: resolutions,
     ...(resolutionEnum.length ? { allowedResolutions: resolutionEnum } : {}),
+    ...combinationRestrictions,
     ...(image?.maxItems !== undefined ? { maxReferenceImages: image.maxItems } : {}),
     ...(parameter('reference_videos')?.maxItems !== undefined
       ? { maxReferenceVideos: parameter('reference_videos')?.maxItems }
       : video ? { maxReferenceVideos: 1 } : {}),
     ...(audioReference?.maxItems !== undefined ? { maxReferenceAudios: audioReference.maxItems } : {}),
+    ...(maxTotalInputs !== undefined ? { maxTotalInputs } : {}),
     ...(parameterMaximumBytes(image) !== undefined ? { maxReferenceImageFileBytes: parameterMaximumBytes(image) } : {}),
     ...(parameterMaximumBytes(video) !== undefined ? { maxReferenceVideoFileBytes: parameterMaximumBytes(video) } : {}),
     ...(parameterMaximumBytes(audioReference) !== undefined ? { maxReferenceAudioFileBytes: parameterMaximumBytes(audioReference) } : {}),
@@ -471,13 +488,56 @@ function profileFromVideoSpec(publicModel: string, spec: CangyuanVideoModelSpec)
     ...(hasRule(rules, /首尾帧[^。\n]*不能[^。\n]*参考音频|首尾帧[^。\n]*不能[^。\n]*音频/) ? { allowsFramesWithAudio: false } : {}),
     ...(hasRule(rules, /参考视频或音频[^。\n]*(?:必须|至少)[^。\n]*参考图|参考视频[^。\n]*(?:必须|至少)[^。\n]*参考图/) ? { requiresImageWithVideoOrAudio: true } : {}),
     allowsNoReferences: !requiredMedia,
+    ...(requiresReferenceImage ? { requiresReferenceImage: true } : {}),
   });
+}
+
+function totalInputLimit(spec: CangyuanVideoModelSpec) {
+  const descriptions = [spec.intro, ...spec.params.map((item) => item.description || '')]
+    .filter(Boolean)
+    .join('\n');
+  const matches = [...descriptions.matchAll(/(?:合计|总计|总数)(?:最多|不超过|不能超过)?\s*(\d+)\s*(?:个|项)/gu)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+  return matches.length ? Math.min(...matches) : undefined;
 }
 
 function cangyuanVideoRuleText(spec: CangyuanVideoModelSpec) {
   const sections = (spec.sections || []).flatMap((section) => section.items || []);
   const descriptions = spec.params.map((parameter) => parameter.description || '');
-  return [...(spec.warnings || []), ...sections, ...descriptions].join('\n');
+  return [spec.intro, ...(spec.warnings || []), ...sections, ...descriptions].filter(Boolean).join('\n');
+}
+
+function documentedResolutionRestrictions(rules: string): Pick<
+  CangyuanVideoModelProfile, 'unsupportedResolutions' | 'unsupportedSecondsByResolution'
+> {
+  const unsupportedResolutions = new Set<string>();
+  const secondsByResolution: Record<string, readonly number[]> = {};
+  for (const line of rules.split('\n').map((value) => value.trim())) {
+    // Only explicit prohibitions become hard constraints. Suggested values and
+    // contradictory conditional resolution statements remain advisory text.
+    const resolutionRule = line.match(/^resolution\s*不支持\s*(.+?)。?$/iu);
+    if (resolutionRule) {
+      const values = resolutionRule[1].split(/\s*\/\s*/u);
+      if (values.every((value) => /^\d+(?:p|k)$/iu.test(value))) {
+        values.forEach((value) => unsupportedResolutions.add(value.toLowerCase()));
+      }
+    }
+    const durationRule = line.match(/^当\s*resolution\s*=\s*(\d+p)\s*时，\s*duration\s*不支持\s*(.+?)。?$/iu);
+    if (durationRule) {
+      const values = durationRule[2].split(/\s*\/\s*/u);
+      if (values.every((value) => /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)))) {
+        const resolution = durationRule[1].toLowerCase();
+        secondsByResolution[resolution] = [...new Set([
+          ...(secondsByResolution[resolution] || []), ...values.map(Number),
+        ])].sort((left, right) => left - right);
+      }
+    }
+  }
+  return {
+    ...(unsupportedResolutions.size ? { unsupportedResolutions: [...unsupportedResolutions] } : {}),
+    ...(Object.keys(secondsByResolution).length ? { unsupportedSecondsByResolution: secondsByResolution } : {}),
+  };
 }
 
 function durationBounds(parameter: CangyuanVideoParameterSpec | undefined, spec: CangyuanVideoModelSpec) {
@@ -596,6 +656,26 @@ function numericValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function documentedParameterDefault(parameter: CangyuanVideoParameterSpec | undefined): unknown {
+  const value = parameter?.suggestedDefault;
+  if (!parameter || value === undefined || value === null) return undefined;
+  if (parameter.type === 'array') {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')
+      || parameter.maxItems !== undefined && value.length > parameter.maxItems) return undefined;
+  } else if (typeof value !== parameter.type) return undefined;
+  if (typeof value === 'number' && (!Number.isFinite(value)
+    || parameter.minimum !== undefined && value < parameter.minimum
+    || parameter.maximum !== undefined && value > parameter.maximum)) return undefined;
+  if (typeof value === 'string' && (parameter.minLength !== undefined && value.length < parameter.minLength
+    || parameter.maxLength !== undefined && value.length > parameter.maxLength)) return undefined;
+  const allowed = normalizedValues(parameter.enum);
+  if (allowed.length) {
+    const values = Array.isArray(value) ? value : [value];
+    if (values.some((item) => typeof item !== 'string' || !allowed.some((option) => option.toLowerCase() === item.toLowerCase()))) return undefined;
+  }
+  return value;
+}
+
 function normalizedValues(value: string[] | string | undefined): string[] {
   if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && Boolean(item.trim())) : [];
@@ -670,11 +750,22 @@ export function validateCangyuanVideoInput(
   if (!spec.params.length) throw new Error(`沧元算力 ${publicModel} 的官方参数说明尚未补齐，请选择其他型号。`);
   const profile = getCangyuanVideoModelProfile(publicModel);
   if (!profile) throw new Error(`沧元算力 ${publicModel} 缺少可验证的参数规格。`);
+  const documentedPromptMaxLength = getCangyuanVideoPromptMaxLength(publicModel);
+  const promptMaxLength = documentedPromptMaxLength ?? CANGYUAN_VIDEO_DEFAULT_PROMPT_MAX_LENGTH;
+  if (input.prompt.trim().length > promptMaxLength) {
+    const message = documentedPromptMaxLength !== undefined
+      ? `沧元算力 ${publicModel} 的画面描述最多 ${promptMaxLength} 个字符。`
+      : `当前平台对未注明提示词上限的沧元型号，限制画面描述最多 ${promptMaxLength} 个字符。`;
+    throw new Error(message);
+  }
   const videoSourceParameter = getCangyuanVideoParameter(spec, 'video');
+  const videoReferenceParameter = getCangyuanVideoParameter(spec, 'reference_videos');
   const modeParameter = getCangyuanVideoParameter(spec, 'mode');
   const rawReferenceVideos = mediaValues(input.referenceVideos, videoSourceParameter ? undefined : input.referenceVideo);
-  const sourceVideo = cleanMedia(input.referenceVideo)
-    || (videoSourceParameter && !getCangyuanVideoParameter(spec, 'reference_videos') && rawReferenceVideos.length === 1 ? rawReferenceVideos[0] : undefined);
+  const singleVideo = cleanMedia(input.referenceVideo);
+  const sourceVideo = videoSourceParameter
+    ? singleVideo || (!videoReferenceParameter && rawReferenceVideos.length === 1 ? rawReferenceVideos[0] : undefined)
+    : undefined;
   const referenceVideos = rawReferenceVideos.filter((value) => value !== sourceVideo);
   const unsupported: string[] = [];
   const addIfPresent = (value: unknown, label: string) => {
@@ -714,7 +805,13 @@ export function validateCangyuanVideoInput(
   if (!profile.supportsSeed) addIfPresent(input.seed, 'seed');
   if (!profile.supportsGenerateAudio) addIfPresent(input.generateAudio, 'generate_audio');
   if (!profile.supportsReferenceImages) addIfPresent(referenceImages.length ? referenceImages : undefined, '参考图片');
-  if (!profile.supportsReferenceVideos) addIfPresent(referenceVideos.length ? referenceVideos : undefined, '参考视频');
+  // A legacy single-video alias must reach either the declared source slot or
+  // the reference array. Never accept media that serialization would discard.
+  const unmappedSingleVideo = singleVideo && !videoSourceParameter && !rawReferenceVideos.includes(singleVideo);
+  const unmappedReferenceVideos = !videoReferenceParameter && referenceVideos.length > 0;
+  if (!profile.supportsReferenceVideos || unmappedSingleVideo || unmappedReferenceVideos) {
+    addIfPresent(singleVideo || (referenceVideos.length ? referenceVideos : undefined), '参考视频');
+  }
   if (!profile.supportsReferenceAudios) addIfPresent(referenceAudios.length ? referenceAudios : undefined, '参考音频');
   if (!profile.supportsFirstFrame) addIfPresent(firstFrame, '首帧');
   if (!profile.supportsLastFrame) addIfPresent(lastFrame, '尾帧');
@@ -752,14 +849,31 @@ export function validateCangyuanVideoInput(
   }
   if (input.aspectRatio !== undefined && !String(input.aspectRatio).trim()) throw new Error('沧元算力 aspect_ratio 不能为空。');
   if (input.resolution !== undefined && !String(input.resolution).trim()) throw new Error('沧元算力 resolution 不能为空。');
+  const allowedAspectRatios = normalizedValues(getCangyuanVideoParameter(spec, 'aspect_ratio')?.enum);
+  if (allowedAspectRatios.length && input.aspectRatio !== undefined
+    && !allowedAspectRatios.some((value) => value.toLowerCase() === String(input.aspectRatio).trim().toLowerCase())) {
+    throw new Error(`沧元算力 ${profile.publicModel} 的画面比例仅支持 ${allowedAspectRatios.join(' / ')}。`);
+  }
   if (profile.allowedResolutions && input.resolution !== undefined
-    && !profile.allowedResolutions.includes(String(input.resolution).trim().toLowerCase())) {
+    && !profile.allowedResolutions.some((value) => value.toLowerCase() === String(input.resolution).trim().toLowerCase())) {
     throw new Error(`沧元算力 ${profile.publicModel} 的 resolution 仅支持 ${profile.allowedResolutions.join(' / ')}。`);
+  }
+  const effectiveResolution = (input.resolution ?? profile.resolutionDefault)?.trim().toLowerCase();
+  if (effectiveResolution && profile.unsupportedResolutions?.includes(effectiveResolution)) {
+    throw new Error(`沧元算力 ${profile.publicModel} 不支持 ${effectiveResolution} 画面清晰度，请选择其他清晰度。`);
+  }
+  const effectiveSeconds = input.seconds ?? profile.durationDefault ?? profile.fixedSeconds;
+  if (effectiveResolution && effectiveSeconds !== undefined
+    && profile.unsupportedSecondsByResolution?.[effectiveResolution]?.includes(effectiveSeconds)) {
+    throw new Error(`沧元算力 ${profile.publicModel} 在 ${effectiveResolution} 清晰度下不支持 ${effectiveSeconds} 秒，请调整视频时长或画面清晰度。`);
   }
   if (profile.maxReferenceImages !== undefined && referenceImages.length > profile.maxReferenceImages) {
     throw new Error(`沧元算力 ${profile.publicModel} 最多接收 ${profile.maxReferenceImages} 张参考图。`);
   }
-  if (profile.maxReferenceVideos !== undefined && referenceVideos.length + (sourceVideo && !getCangyuanVideoParameter(spec, 'reference_videos') ? 1 : 0) > profile.maxReferenceVideos) {
+  const submittedReferenceVideoCount = videoReferenceParameter
+    ? rawReferenceVideos.length
+    : referenceVideos.length + (sourceVideo ? 1 : 0);
+  if (profile.maxReferenceVideos !== undefined && submittedReferenceVideoCount > profile.maxReferenceVideos) {
     throw new Error(`沧元算力 ${profile.publicModel} 最多接收 ${profile.maxReferenceVideos} 个参考视频。`);
   }
   if (profile.maxReferenceAudios !== undefined && referenceAudios.length > profile.maxReferenceAudios) {
@@ -771,6 +885,9 @@ export function validateCangyuanVideoInput(
   }
   if (profile.allowsNoReferences === false && !hasReferences && !hasFrames && !sourceVideo) {
     throw new Error(`沧元算力 ${profile.publicModel} 必须至少提供一项参考素材或首尾帧。`);
+  }
+  if (profile.requiresReferenceImage && !referenceImages.length) {
+    throw new Error(`沧元算力 ${profile.publicModel} 必须至少提供一张参考图。`);
   }
   if (input.seed !== undefined) {
     if (!Number.isSafeInteger(input.seed)) throw new Error('沧元算力 seed 必须是安全整数。');
@@ -838,8 +955,14 @@ export function buildCangyuanVideoPayload(publicModel: string, input: VideoGener
   const payload: Record<string, unknown> = {};
   for (const parameter of spec.params) {
     let value = values[parameter.name];
-    if (value === undefined) value = parameter.suggestedDefault;
+    if (value === undefined) value = documentedParameterDefault(parameter);
     if (value === undefined || value === null || value === '' || Array.isArray(value) && value.length === 0) continue;
+    if (['aspect_ratio', 'resolution'].includes(parameter.name) && typeof value === 'string') {
+      // The editor and saved drafts can use lowercase display values, while
+      // some official models require uppercase enum values on the wire.
+      const normalized = value.trim().toLowerCase();
+      value = normalizedValues(parameter.enum).find((option) => option.toLowerCase() === normalized) ?? value;
+    }
     payload[parameter.name] = value;
   }
   return payload;

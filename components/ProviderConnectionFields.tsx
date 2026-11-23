@@ -1,8 +1,16 @@
 "use client";
 
-import type { ComponentType } from "react";
+import type { ComponentType, Ref } from "react";
 
 import AgnesConnectionGuide from "@/components/AgnesConnectionGuide";
+
+export function ProviderConnectionResult({ message, succeeded, resultRef }: {
+  message: string;
+  succeeded: boolean;
+  resultRef?: Ref<HTMLDivElement>;
+}) {
+  return <div ref={resultRef} className={`connection-result ${succeeded ? "success" : "error"}`}>{message}</div>;
+}
 
 export type ProviderConnectionFieldsProps = {
   name: string;

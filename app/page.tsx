@@ -7,6 +7,7 @@ import AngleConsole from '@/components/AngleConsole';
 import ModelPicker from '@/components/ModelPicker';
 import ModelLibraryProviderPicker from '@/components/ModelLibraryProviderPicker';
 import { modelLibraryEmptyStateCopy } from '@/components/model-library-empty-state';
+import { isModelLibraryGroupExpanded, resetModelLibraryGroupExpansion, toggleModelLibraryGroupExpansion } from '@/components/model-library-group-expansion';
 import UpdateNotice from '@/components/UpdateNotice';
 import { useImageStudioDraft } from '@/components/creation/useImageStudioDraft';
 import RuntimeServiceControl from '@/components/RuntimeServiceControl';
@@ -64,7 +65,7 @@ import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVid
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
 import { formatStorageBytes } from '@/lib/storage-presentation';
-import { completeHistoryColumnCount, completeHistoryGridPageSizes, completeHistoryPageSize } from '@/lib/creation/history-layout';
+import { completeHistoryColumnCount, completeHistoryGridPageSizes, completeHistoryPageSize, historyGridColumnCapacity } from '@/lib/creation/history-layout';
 import {
     chatHistoryGroupLabel,
     editorRatio,
@@ -123,6 +124,7 @@ import AgentMcpDetailDock from '@/components/AgentMcpDetailDock';
 import AgentWebModeControl from '@/components/AgentWebModeControl';
 import AgentQuickActions from '@/components/AgentQuickActions';
 import AgentSendButton from '@/components/AgentSendButton';
+import { useAgentInputAutosize } from '@/components/useAgentInputAutosize';
 import AgentMessageAvatar from '@/components/AgentMessageAvatar';
 import AgentMessageVersionSwitch from '@/components/AgentMessageVersionSwitch';
 import AgentMessageError from '@/components/AgentMessageError';
@@ -143,7 +145,7 @@ import ProviderList from '@/components/ProviderList';
 import ProviderPlatformPicker from '@/components/ProviderPlatformPicker';
 import ProviderListToolbar from '@/components/ProviderListToolbar';
 import ProviderPresetSummary from '@/components/ProviderPresetSummary';
-import ProviderConnectionFields from '@/components/ProviderConnectionFields';
+import ProviderConnectionFields, { ProviderConnectionResult } from '@/components/ProviderConnectionFields';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import SupportModal from '@/components/SupportModal';
 import SharePreviewModal from '@/components/SharePreviewModal';
@@ -852,7 +854,7 @@ function Icon({ name, size = 18 }) {
         children: paths[name] || paths.more
     });
 }
-function Dropdown({ value, options, onChange, placeholder = '请选择', className = '' }) {
+function Dropdown({ value, options, onChange, placeholder = '请选择', className = '', menuClassName = '' }) {
     return /*#__PURE__*/ _jsx(SelectMenu, {
         value,
         options: options.map((item)=>({
@@ -863,6 +865,7 @@ function Dropdown({ value, options, onChange, placeholder = '请选择', classNa
             })),
         onChange,
         ariaLabel: placeholder,
+        menuClassName,
         className: `custom-dropdown ${className}`
     });
 }
@@ -2463,6 +2466,7 @@ export default function Page() {
     const [providerBusy, setProviderBusy] = useState(false);
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
+    const [providerTestSucceeded, setProviderTestSucceeded] = useState(false);
     const [providerSetupDismissed, setProviderSetupDismissed] = useState(false);
     const providerTestResultRef = useRef(null);
     useEffect(()=>{
@@ -2504,6 +2508,11 @@ export default function Page() {
     const [modelQuickFilter, setModelQuickFilter] = useState('all');
     const [bulkModelBusy, setBulkModelBusy] = useState(false);
     const [expandedModelProviders, setExpandedModelProviders] = useState(new Set());
+    const [modelProviderGroupExpansion, setModelProviderGroupExpansion] = useState({ filterKey: '', overrides: new Map() });
+    const modelGroupFilters = { search: modelSearch, provider: modelProviderFilter, kind: modelKindFilter, quick: modelQuickFilter };
+    useEffect(()=>{
+        setModelProviderGroupExpansion((current)=>resetModelLibraryGroupExpansion(current, modelGroupFilters));
+    }, [modelSearch, modelProviderFilter, modelKindFilter, modelQuickFilter]);
     const modelKindBusyRef = useRef(new Set());
     const [modelKindBusy, setModelKindBusy] = useState(new Set());
     const [modelFavorites, setModelFavorites] = useState([]);
@@ -3633,13 +3642,12 @@ export default function Page() {
         const getColumns = (grid: HTMLDivElement | null)=>{
             if (!grid) return undefined;
             const isVideoGrid = grid.classList.contains('creative-video-grid');
-            if (window.innerWidth <= (isVideoGrid ? 480 : 520)) return 1;
-            if (window.innerWidth <= (isVideoGrid ? 760 : 780)) return 2;
+            if (!isVideoGrid && window.innerWidth <= 520) return 1;
+            if (!isVideoGrid && window.innerWidth <= 780) return 2;
             const style = getComputedStyle(grid);
-            const minimum = Number.parseFloat(style.getPropertyValue(isVideoGrid ? '--creative-video-grid-min-column-width' : '--history-grid-min-column-width')) || (isVideoGrid ? 230 : 235);
+            const minimum = Number.parseFloat(style.getPropertyValue(isVideoGrid ? '--creative-video-grid-min-column-width' : '--history-grid-min-column-width')) || (isVideoGrid ? 280 : 235);
             const gap = Number.parseFloat(style.columnGap) || 13;
-            const widthCapacity = Math.max(1, Math.floor((grid.clientWidth + gap) / (minimum + gap)));
-            return isVideoGrid && window.innerWidth >= 1600 ? 6 : widthCapacity;
+            return historyGridColumnCapacity(grid.clientWidth, minimum, gap);
         };
         const syncPageSizes = ()=>{
             const imageColumns = historyMediaFilter === 'video' ? undefined : getColumns(historyGridRef.current);
@@ -3975,18 +3983,7 @@ export default function Page() {
     }, [
         viewerId
     ]);
-    useEffect(()=>{
-        const input = agentInputRef.current;
-        if (!input) return;
-        const minHeight = 58;
-        const maxHeight = 320;
-        input.style.height = 'auto';
-        const nextHeight = Math.min(Math.max(input.scrollHeight, minHeight), maxHeight);
-        input.style.height = `${nextHeight}px`;
-        input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
-    }, [
-        agentInput
-    ]);
+    useAgentInputAutosize(agentInputRef, agentInput, section === 'agent' && welcomeStage === 'workspace');
     useEffect(()=>{
         const composer = agentComposerRef.current;
         if (!composer || typeof ResizeObserver === 'undefined') return;
@@ -5215,6 +5212,7 @@ export default function Page() {
         if ((!providerForm.baseUrl.trim() && !localCli) || (!providerForm.apiKey.trim() && !providerEditId && !localCli)) return notify('请先填写服务地址和访问密钥');
         setProviderTestBusy(true);
         setProviderTestResult('');
+        setProviderTestSucceeded(false);
         try {
             const res = await fetch('/api/providers/test', {
                 method: 'POST',
@@ -5228,15 +5226,17 @@ export default function Page() {
             });
             const data = await res.json();
             if (!res.ok) {
-                const status = Number(data.providerStatus || res.status);
-                const hint = status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
+                const status = Number(data.providerStatus || 0);
+                const hint = providerForm.platform === 'agnes' && status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
                 throw new Error(`${data.error || '连接测试失败'}${hint}`);
             }
             const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
             setProviderTestResult(data.message || `${data.verified === false ? '配置就绪' : '连接成功'}，发现 ${data.count} 个模型${names ? `：${names}${data.count > 4 ? '…' : ''}` : ''}`);
+            setProviderTestSucceeded(true);
             return true;
         } catch (error) {
             setProviderTestResult(`连接失败：${error instanceof Error ? error.message : '请求失败'}`);
+            setProviderTestSucceeded(false);
             return false;
         } finally{
             setProviderTestBusy(false);
@@ -5301,7 +5301,10 @@ export default function Page() {
             notify(`读取完成：${data.count} 个模型${newCount ? `，新增 ${newCount} 个` : ''}，已启用 ${enabledCount} 个。`);
             setModelProviderFilter(id);
             setModelSearch('');
+            setModelKindFilter('all');
+            setModelQuickFilter('all');
             setExpandedModelProviders(new Set([id]));
+            setModelProviderGroupExpansion({ filterKey: '', overrides: new Map() });
             setSection('models');
         } catch (error) {
             notify(error instanceof Error ? error.message : '读取模型失败');
@@ -5332,6 +5335,7 @@ export default function Page() {
             setManualModelProvider(null);
             setModelProviderFilter(providerId);
             setExpandedModelProviders((current)=>new Set([...current, providerId]));
+            setModelProviderGroupExpansion({ filterKey: '', overrides: new Map() });
             setSection('models');
             notify(`已登记模型 ${data.model?.displayName || manualModelForm.rawId.trim()}，默认未启用`);
         } catch (error) {
@@ -5341,12 +5345,7 @@ export default function Page() {
         }
     }
     function toggleModelProviderGroup(providerId) {
-        setExpandedModelProviders((current)=>{
-            const next = new Set(current);
-            if (next.has(providerId)) next.delete(providerId);
-            else next.add(providerId);
-            return next;
-        });
+        setModelProviderGroupExpansion((current)=>toggleModelLibraryGroupExpansion(current, providerId, modelGroupFilters, expandedModelProviders));
     }
     async function toggleProviderModelLibrary(provider) {
         try {
@@ -12344,10 +12343,10 @@ export default function Page() {
                                                     })
                                                 ]
                                             }),
-                                            providerTestResult && /*#__PURE__*/ _jsx("div", {
-                                                ref: providerTestResultRef,
-                                                className: `connection-result ${providerTestResult.startsWith('连接成功') || providerTestResult.startsWith('Claude Std 模型清单已载入') || providerTestResult.startsWith('配置就绪') ? 'success' : 'error'}`,
-                                                children: providerTestResult
+                                            providerTestResult && /*#__PURE__*/ _jsx(ProviderConnectionResult, {
+                                                resultRef: providerTestResultRef,
+                                                succeeded: providerTestSucceeded,
+                                                message: providerTestResult
                                             }),
                                             /*#__PURE__*/ _jsxs("div", {
                                                 className: "form-actions provider-simple-actions",
@@ -12620,6 +12619,7 @@ export default function Page() {
                                                          }))
                                                 ],
                                                 onChange: setModelProviderFilter,
+                                                menuClassName: "model-library-provider-filter-menu",
                                                  className: "provider-filter"
                                              }),
                                              /*#__PURE__*/ _jsx("div", {
@@ -12791,7 +12791,7 @@ export default function Page() {
                                             }) : /*#__PURE__*/ _jsx("div", {
                                                 className: "model-groups",
                                                 children: modelProviderGroups.map(([providerId, group])=>{
-                                                    const expanded = Boolean(modelSearch.trim()) || modelQuickFilter !== 'all' || modelProviderFilter !== 'all' || expandedModelProviders.has(providerId);
+                                                    const expanded = isModelLibraryGroupExpanded(providerId, modelGroupFilters, expandedModelProviders, modelProviderGroupExpansion);
                                                     const groupKindSummary = [
                                                         group.some((model)=>model.kind === 'chat') ? '对话' : '',
                                                         group.some((model)=>model.kind === 'image') ? '图片' : '',

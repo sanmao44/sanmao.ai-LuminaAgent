@@ -10,7 +10,7 @@ const dataDir = await mkdtemp(path.join(os.tmpdir(), 'sanmao-video-pagination-')
 process.env.SANMAO_DATA_DIR = dataDir;
 // 任务存储在 lib/task-store.ts 里，两个模块要一起转译后才能跑真实的读—改—写。
 const { main: store } = await buildLibModules(['lib/task-store', 'lib/repositories/task-repository', 'lib/video-task-store'], 'video-task-store');
-const styles = await readFile(new URL('../app/globals.css', import.meta.url), 'utf8');
+const layout = createTsRequire(process.cwd())('./lib/creation/history-layout');
 
 function task(prompt, source, id) {
   return {
@@ -106,8 +106,20 @@ test('video polling uses Worker control boundary', async () => {
   assert.equal(result[0].id, 'missing-task');
 });
 
-test('wide desktop video history uses six columns for complete 12-item rows', () => {
-  assert.match(styles, /@media\(min-width:1600px\)\{\.creative-video-grid\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)\}\}/);
-  assert.match(styles, /@media\(max-width:760px\)[\s\S]*?\.creative-video-grid\{grid-template-columns:1fr 1fr\}/);
-  assert.match(styles, /@media\(max-width:480px\)\{\.creative-video-grid\{grid-template-columns:1fr\}/);
+test('video history fits readable cards to the container and fills complete automatic page rows', () => {
+  for (const { width, columns, pageSize } of [
+    { width: 1480, columns: 5, pageSize: 15 },
+    { width: 700, columns: 2, pageSize: 12 },
+    { width: 271, columns: 1, pageSize: 12 },
+    { width: 2064, columns: 7, pageSize: 14 },
+    { width: 571, columns: 1, pageSize: 12 },
+    { width: 572, columns: 2, pageSize: 12 },
+  ]) {
+    const capacity = layout.historyGridColumnCapacity(width, 280, 12);
+    assert.equal(capacity, columns, `${width}px container column capacity`);
+    assert.equal(layout.completeHistoryGridPageSizes({ videos: capacity }, 12).videos, pageSize);
+    assert.equal(pageSize % capacity, 0);
+  }
+  const capacity = layout.historyGridColumnCapacity(1480, 280, 12);
+  assert.equal(layout.completeHistoryColumnCount(capacity, 12), 4);
 });

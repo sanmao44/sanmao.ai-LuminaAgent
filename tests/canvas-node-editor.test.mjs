@@ -17,6 +17,7 @@ const generationParams = createTsRequire(process.cwd())("./lib/canvas/generation
 const layoutOptions = createTsRequire(process.cwd())("./lib/canvas/layout-options");
 const interactionTargets = createTsRequire(process.cwd())("./lib/canvas/interaction-targets");
 const editorUi = createTsRequire(process.cwd(), {
+  "./VideoDurationField.css": {},
   "./ModelPicker": { __esModule: true, default: () => null },
   "./EditableSuggestionField": { __esModule: true, default: () => null },
   "@/components/cangyuan/CangyuanImageModelOptions": { __esModule: true, default: () => null },
@@ -435,10 +436,14 @@ test("prompt editor measures content and caps scrolling in both display modes", 
   assert.match(component, /textarea\.style\.overflowY = contentHeight > maxHeight \? "auto" : "hidden"/);
 });
 
-test("expanded editor is centered and remains responsive", () => {
-  assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{[^}]*position:fixed/);
+test("expanded editor stays below its node and remains responsive", () => {
+  assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{[^}]*position:absolute/);
+  assert.match(component, /placement: "bottom" as const/);
+  assert.match(component, /placeCanvasNodeEditor\(/);
+  assert.doesNotMatch(component, /onEnsureEditorSpace/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{[^}]*width:min\(860px,calc\(100vw - 32px\)\)/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{[^}]*max-height:calc\(100vh - 32px\)/);
+  assert.match(styles, /\.canvas-workspace \.canvas-node-editor-popover\[data-node-id\]\[data-density\]:not\(\.is-three-d-editor\)\{max-height:none!important\}/);
+  assert.match(styles, /\.canvas-workspace \.canvas-node-editor-popover\.is-three-d-editor\[data-node-id\]\[data-density\]\{height:auto!important;max-height:none!important;overflow:visible!important\}/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded \.canvas-node-editor-columns\{[^}]*grid-template-columns/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded \.canvas-node-editor-settings,\.canvas-node-editor-popover\.is-prompt-expanded \.canvas-editor-references,\.canvas-node-editor-popover\.is-prompt-expanded \.canvas-reference-draft-strip\{display:none!important\}/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded \.canvas-node-editor-prompt-wrap\{display:flex;flex:1;flex-direction:column/);
@@ -462,7 +467,7 @@ test("expanded prompt editing saves without triggering generation", () => {
   assert.match(editor, /const promptLabelSmall = promptExpanded[\s\S]*编辑完成后点击保存/);
   assert.match(editor, /const handleEditorAction = \(\) => \{[\s\S]*?if \(promptExpanded\) \{[\s\S]*?setPromptExpanded\(false\)[\s\S]*?return;[\s\S]*?\}\s*onGenerate\(node\);/);
   assert.match(editor, /!promptExpanded && event\.key === "Enter"/);
-  assert.match(editor, /!audioNode && \(promptExpanded \|\| !isDockNode\)/);
+  assert.match(editor, /!audioNode && !threeDNode && \(promptExpanded \|\| !isDockNode\)/);
   assert.match(editor, /disabled=\{!promptExpanded && \(pending \|\| upscaleMissingInput\)\} onClick=\{handleEditorAction\}>\{editorActionLabel\}/);
 });
 
@@ -849,21 +854,35 @@ test("audio nodes use the branded rounded player instead of browser gray control
   assert.match(audioPanelStyles, /\.canvas-audio-panel-meta-chips span\{[^}]*border-radius:999px/);
 });
 
-test("audio editor opens in the image-editor frame without a desktop body scrollbar", () => {
+test("audio editor stays below its node and keeps model settings visible in a wide workbench", () => {
   assert.match(component + audioPanel, /className="canvas-audio-panel"/);
-  assert.match(nodeEditor, /useState\(\s*node\.type === "media" && node\.data\.kind === "audio"/);
+  assert.match(nodeEditor, /const \[promptExpanded, setPromptExpanded\] = useState\(false\)/);
   assert.match(nodeEditor, /audioNode \? " is-audio-editor"/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded\{height:min\(500px,calc\(100dvh - 32px\)\);max-height:min\(500px,calc\(100dvh - 32px\)\)\}/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor\.is-prompt-expanded \.canvas-node-editor-body\{display:flex;flex:1;overflow:hidden;min-height:0\}/);
-  assert.match(component, /!audioNode && \(promptExpanded \|\| !isDockNode\)/);
+  assert.match(nodeEditor, /placeCanvasNodeEditor\(/);
+  assert.match(nodeEditor, /canvasZoomResponsiveNodeEditorWidth\(/);
+  assert.match(styles, /\.canvas-workspace \.canvas-node-editor-popover\[data-node-id\]\[data-density\]:not\(\.is-three-d-editor\)\{max-height:none!important\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-audio-editor \.canvas-node-editor-body\{height:auto;min-height:0;flex:none;overflow:visible\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-three-d-editor \.canvas-node-editor-body\{height:auto!important;min-height:0;flex:none;overflow:visible\}/);
+  assert.match(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{position:absolute/);
+  assert.doesNotMatch(styles, /\.canvas-node-editor-popover\.is-prompt-expanded\{position:fixed[^}]*top:50%/);
+  assert.match(component, /!audioNode && node\.type !== "upscale" && <button/);
   assert.doesNotMatch(component, /estimatedPopoverHeight/);
   assert.doesNotMatch(component, /naturalHeight = \(head\?\.offsetHeight/);
-  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?width:min\(520px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
+  assert.match(styles, /\.canvas-node-editor-popover\.canvas-node-editor-popover\[data-node-kind="audio"\]:not\(\.is-prompt-expanded\)\[data-density\]\{[\s\S]*?max-width:min\(660px,calc\(100vw - 32px\)\)!important;[\s\S]*?max-height:none!important;[\s\S]*?overflow:visible!important/);
+  assert.match(audioPanel, /canvas-audio-panel-main\$\{showAudioSource \? " has-source" : ""\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-main:not\(\.has-source\)\{grid-template-columns:minmax\(0,1fr\)\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-panel-main\.has-source\{grid-template-columns:minmax\(0,1fr\) minmax\(180px,220px\)\}/);
+  assert.match(audioPanelStyles, /\.canvas-audio-music \.cangyuan-music-options-lyria\{grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel\{display:flex;flex:1;flex-direction:column;gap:0;min-width:0;min-height:0;height:100%\}/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel-main\{display:grid;flex:1;grid-template-columns:minmax\(0,1\.4fr\) minmax\(250px,\.8fr\)[^}]*overflow:visible\}/);
-  assert.match(audioPanelStyles, /\.canvas-audio-speech\{[^}]*padding:6px 8px;box-sizing:border-box\}/);
+  const audioLayout = audioPanelStyles.slice(audioPanelStyles.lastIndexOf("/* The audio node uses a wide"));
+  assert.match(audioLayout, /\.canvas-audio-panel-workbench\{[^}]*overflow:visible/);
+  assert.match(audioLayout, /\.canvas-audio-speech:not\(\.canvas-audio-transcription\):not\(\.canvas-audio-music\)>.canvas-audio-advanced\{[^}]*width:100%[^}]*max-width:100%[^}]*box-sizing:border-box/);
+  assert.match(audioPanelStyles, /\.canvas-audio-voice-sample-row\{[^}]*max-width:100%[^}]*width:100%[^}]*box-sizing:border-box/);
+  assert.match(audioLayout, /\.canvas-audio-speech:not\(\.canvas-audio-transcription\):not\(\.canvas-audio-music\)\{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\)/);
+  assert.match(audioLayout, /\.canvas-audio-music>\.cangyuan-music-options\{[^}]*overflow:visible/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel-actions\{display:grid;grid-template-columns:minmax\(0,1fr\) auto auto/);
-  assert.match(audioPanelStyles, /@media\(max-width:720px\)\{\.canvas-audio-panel-main\{grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(audioPanelStyles, /@media\(max-width:720px\)\{\.canvas-audio-panel\{height:auto\}\.canvas-audio-panel-main\{grid-template-columns:minmax\(0,1fr\)/);
   assert.match(audioPanelStyles, /\.canvas-audio-panel-empty\{[^}]*padding:20px 12px/);
   assert.match(audioPanel, /className="canvas-node-editor-generate canvas-audio-generate"/);
   assert.match(audioPanel, /className="canvas-audio-panel-upload"[\s\S]*?disabled=\{generatingSpeech\}/);
@@ -1028,14 +1047,15 @@ test("dock local edit control keeps editing and removal actions in a clear segme
   assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute/);
 });
 
-test("regular editor stays below its node without viewport fitting", () => {
+test("regular editor stays below its node and can extend beyond the canvas stage", () => {
   assert.doesNotMatch(component, /--canvas-editor-width/);
   assert.doesNotMatch(component, /layoutAnchor/);
   assert.match(component, /data-placement=\{position\.placement\}/);
-  assert.match(component, /placeCanvasNodeEditorDock\(/);
+  assert.match(component, /placeCanvasNodeEditor\(/);
+  assert.doesNotMatch(component, /placeCanvasNodeEditorDock\(/);
   assert.doesNotMatch(component, /isViewportFitted|is-viewport-fitted|--canvas-editor-max-height/);
   assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\[data-density\]\{[^}]*width:min\(620px,calc\(100vw - 24px\)\)!important/);
-  assert.match(styles, /\.canvas-node-editor-popover\.is-columns-node:not\(.is-prompt-expanded\)\{[^}]*max-height:min\(560px,calc\(100dvh - 24px\)\)/);
+  assert.match(styles, /\.canvas-workspace \.canvas-node-editor-popover\[data-node-id\]\[data-density\]:not\(\.is-three-d-editor\)\{max-height:none!important\}/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-columns\{grid-template-columns:minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary\{grid-template-columns:repeat\(4,minmax\(0,1fr\)/);
   assert.match(styles, /\.canvas-node-editor-popover:not\(.is-prompt-expanded\) \.canvas-node-editor-settings>.creation-parameter-editor\.image \.creation-parameter-grid\.primary>.creation-field\.model\{grid-column:1\/-1\}/);

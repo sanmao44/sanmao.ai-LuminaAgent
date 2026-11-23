@@ -11,6 +11,7 @@ const [videoStudio, parameterEditor] = await Promise.all([
 ]);
 
 const loadEditor = createTsRequire(process.cwd(), {
+  './VideoDurationField.css': {},
   '@/components/cangyuan/CangyuanImageModelOptions': { __esModule: true, default: () => null },
   '@/components/cangyuan/CangyuanVideoModelParameters': {
     __esModule: true,
@@ -89,12 +90,15 @@ test('keeps edit and extend operation options capability-driven', () => {
   assert.match(parameterEditor, /supportsOperationExtend/);
 });
 
-test('resets unsupported restored operations in the parameter editor', () => {
-  assert.match(parameterEditor, /operationIsSupported/);
-  assert.match(parameterEditor, /const nextOperation = operationIsSupported \? settings\.operation : "generate"/);
-  assert.match(parameterEditor, /const model = operationModel/);
-  assert.match(parameterEditor, /const allowedDurations = useMemo/);
-  assert.match(parameterEditor, /selectedResolution/);
+test('video editor exposes the selected model documented duration range', () => {
+  const markup = renderVideoEditor({
+    provider: { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan', videoTransport: 'cangyuan-videos' },
+    rawId: 'gf1-gemini-omni-1.2-flash',
+  });
+
+  assert.match(markup, /aria-label="视频时长"/);
+  assert.match(markup, /15 秒/);
+  assert.doesNotMatch(markup, /30 秒/);
 });
 
 test('coarse video-generate models render image input modes', () => {
@@ -107,11 +111,11 @@ test('coarse video-generate models render image input modes', () => {
   assert.match(markup, /参考图生视频/);
 });
 
-test('unlisted Cangyuan models render prompt-only controls while Seedance exposes documented inputs', () => {
+test('unverified Cangyuan models show a verification notice while Seedance exposes documented inputs', () => {
   const provider = { id: 'cangyuan', name: '沧元算力', platform: 'cangyuan', videoTransport: 'cangyuan-videos' };
   const unlisted = renderVideoEditor({ provider, rawId: 'unlisted-model' });
-  assert.match(unlisted, /该沧元型号尚未核实专属参数，仅支持模型和提示词/);
-  assert.doesNotMatch(unlisted, /图生视频|首尾帧|参考图生视频/);
+  assert.match(unlisted, /当前型号的参数与素材要求尚未核实，请先选择已支持的型号/);
+  assert.doesNotMatch(unlisted, /图生视频|首尾帧|参考图生视频|aria-label="视频时长"|aria-label="视频分辨率"/);
 
   const seedance = renderVideoEditor({ provider, rawId: 'sd20-seedance-2.0-fast' });
   assert.match(seedance, /不支持首帧图片/);

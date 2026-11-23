@@ -6,6 +6,8 @@
 
 export type AudioModelPurpose =
   | 'speech'
+  | 'voice-conversion'
+  | 'audio-isolation'
   | 'transcription'
   | 'music'
   | 'sound-effect'

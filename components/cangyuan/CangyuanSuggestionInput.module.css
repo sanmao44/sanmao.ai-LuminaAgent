@@ -40,7 +40,7 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.control input:focus {
+.control:focus-within input:focus {
   box-shadow: none;
 }
 
