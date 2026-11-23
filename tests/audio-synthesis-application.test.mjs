@@ -110,7 +110,6 @@ test('MiniMax 2.8 speech options survive contract parsing without altering other
   });
   assert.deepEqual(received, options);
 });
-
 test('dialogue synthesis keeps structured lines and enforces common input shape limits', async () => {
   let received;
   const port = { synthesize: async (input) => {

@@ -18,6 +18,7 @@ const loadPanel = createTsRequire(process.cwd(), {
   '@/components/cangyuan/CangyuanMediaUploadField': ({ label }) => createElement('div', { 'aria-label': label }, label, ' 上传文件'),
   '@/components/cangyuan/CangyuanThreeDScenarioPicker': () => createElement('div', null, '场景预设'),
   '@/components/cangyuan/CangyuanReferenceImagePreview': () => null,
+  '@/components/ThreeDModelPreview': ({ label }) => createElement('div', { 'aria-label': label || '三维模型预览' }),
   '@/components/cangyuan/CangyuanTripoQualityOptions': {
     __esModule: true,
     default: qualityOptions.default,

@@ -124,4 +124,3 @@ export async function listSpeechVoices(value: unknown, port: SpeechVoiceRegistry
 export async function previewSpeechVoice(value: unknown, port: SpeechVoiceRegistryPort, signal?: AbortSignal): Promise<SpeechVoicePreviewResult> {
   return port.preview(parsePreviewInput(value), signal);
 }
-
