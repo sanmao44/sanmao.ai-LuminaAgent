@@ -109,6 +109,10 @@ const ELEVENLABS_SFX_OPTIONS = Object.freeze(['duration', 'loop', 'output_format
 const SUNO_WEIGHT_RANGE = Object.freeze([0, 1] as const);
 const SUNO_TITLE_MAX_LENGTH = 80;
 const ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS = Object.freeze(['mp3', 'mp3_hq'] as const);
+// The detailed sound-effect chapters explicitly allow 0.5 seconds in addition
+// to whole seconds; the model JSON's generic integer type omits this exception.
+const ELEVENLABS_SFX_V2_DURATIONS = Object.freeze([0.5, ...Array.from({ length: 22 }, (_, index) => index + 1)]);
+const ELEVENLABS_SFX_V3_DURATIONS = Object.freeze([0.5, ...Array.from({ length: 30 }, (_, index) => index + 1)]);
 
 const workflowProfile = (modelId: string, allowedOptions: readonly CangyuanMusicOptionKey[], promptRequired = false): CangyuanMusicModelProfile => {
   const supportsWeights = allowedOptions.some((key) => ['audioWeight', 'styleWeight', 'weirdnessConstraint'].includes(key));
@@ -139,14 +143,14 @@ const CANGYUAN_MUSIC_MODEL_PROFILES: Readonly<Record<string, CangyuanMusicModelP
   }),
   'elevenlabs-sound-effects-v2': Object.freeze({
     modelId: 'elevenlabs-sound-effects-v2', family: 'elevenlabs-sfx', supportsReferences: false, promptRequired: true,
-    promptMaxLength: 4_000, durationRange: Object.freeze([0.5, 22] as const), durationDefault: 5,
+    promptMaxLength: 4_000, durationRange: Object.freeze([0.5, 22] as const), durationValues: ELEVENLABS_SFX_V2_DURATIONS, durationDefault: 5,
     durationInteger: false, promptInfluenceRange: Object.freeze([0, 1] as const),
     outputFormatSuggestions: ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS, allowedOptions: ELEVENLABS_SFX_OPTIONS,
   }),
   'elevenlabs-sound-effects-v3': Object.freeze({
     modelId: 'elevenlabs-sound-effects-v3', family: 'elevenlabs-sfx', supportsReferences: false, promptRequired: true,
-    promptMaxLength: 4_000, durationRange: Object.freeze([undefined, 30] as const), durationDefault: 5,
-    durationInteger: true, promptInfluenceRange: Object.freeze([0, 1] as const),
+    promptMaxLength: 4_000, durationRange: Object.freeze([0.5, 30] as const), durationValues: ELEVENLABS_SFX_V3_DURATIONS, durationDefault: 5,
+    durationInteger: false, promptInfluenceRange: Object.freeze([0, 1] as const),
     outputFormatSuggestions: ELEVENLABS_AUDIO_FORMAT_SUGGESTIONS, allowedOptions: ELEVENLABS_SFX_OPTIONS,
   }),
   'suno-lyrics': workflowProfile('suno-lyrics', SUNO_LYRICS_OPTIONS, true),
@@ -297,10 +301,13 @@ export function validateCangyuanMusicInput(modelId: string, input: { prompt?: st
   if (options.duration !== undefined && profile.durationInteger !== false && !Number.isInteger(options.duration)) {
     throw new Error('时长必须是整数秒');
   }
+  validateMusicRange(profile.modelId, '目标时长', options.duration, profile.durationRange, '秒');
   if (options.duration !== undefined && profile.durationValues && !profile.durationValues.includes(options.duration)) {
+    if (profile.family === 'elevenlabs-sfx') {
+      throw new Error(`音效时长仅支持 0.5 秒或 1–${profile.durationRange?.[1]} 的整数秒`);
+    }
     throw new Error(`elevenlabs-music 时长仅支持 ${profile.durationValues.join('、')} 秒`);
   }
-  validateMusicRange(profile.modelId, '目标时长', options.duration, profile.durationRange, '秒');
   validateMusicRange(profile.modelId, '固定生成编号', options.seed, profile.seedRange);
   validateMusicRange(profile.modelId, '节奏速度', options.bpm, profile.bpmRange);
   if (options.audio_format !== undefined && !['mp3', 'wav', 'm4a'].includes(options.audio_format)) throw new Error('audio_format 必须是 mp3、wav 或 m4a');

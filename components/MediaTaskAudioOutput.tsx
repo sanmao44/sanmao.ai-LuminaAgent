@@ -1,6 +1,7 @@
 'use client';
 
 import { GenerationLogAudioPlayer } from '@/components/GenerationLogAudio';
+import { mediaTaskAudioOutputTitle, type MediaTaskAudioKind } from '@/components/media-task-presentation';
 
 export type MediaTaskAudioOutputValue = {
   url?: string;
@@ -15,16 +16,17 @@ export type MediaTaskAudioOutputValue = {
 type Props = {
   output: MediaTaskAudioOutputValue;
   index: number;
+  kind?: MediaTaskAudioKind;
   canContinue?: boolean;
   onContinue?: (output: MediaTaskAudioOutputValue) => void;
 };
 
-export default function MediaTaskAudioOutput({ output, index, canContinue = false, onContinue }: Props) {
+export default function MediaTaskAudioOutput({ output, index, kind = 'music', canContinue = false, onContinue }: Props) {
   const isText = output.artifactType === 'text';
   const isMidi = output.artifactType === 'midi';
   const isFile = isMidi || output.artifactType === 'file';
-  const title = output.title || (isText ? '文本结果' : isMidi ? `MIDI 文件 ${index + 1}` : output.audioId ? `曲目 ${index + 1}` : `音乐 ${index + 1}`);
-  const details = [output.duration ? `${output.duration} 秒` : '', output.audioId ? `曲目编号 ${output.audioId}` : ''].filter(Boolean).join(' · ');
+  const title = mediaTaskAudioOutputTitle(output, index, kind);
+  const details = [output.duration ? `${output.duration} 秒` : '', output.audioId ? `${kind === 'sound-effect' ? '音频' : '曲目'}编号 ${output.audioId}` : ''].filter(Boolean).join(' · ');
   const downloadName = output.name || `SANMAO-${isMidi ? `曲目-${index + 1}.mid` : `文件-${index + 1}`}`;
 
   return (
@@ -35,7 +37,7 @@ export default function MediaTaskAudioOutput({ output, index, canContinue = fals
       {!isText && !isFile && output.url && <GenerationLogAudioPlayer src={output.url} />}
       {!output.url && !output.text && <p className="cangyuan-task-error">服务商未返回可播放或可读取的结果。</p>}
       {isText && output.url && <div className="cangyuan-output-actions"><a href={output.url} download={downloadName}>下载文本</a></div>}
-      {canContinue && !isText && !isFile && <div className="cangyuan-output-actions"><button type="button" disabled={!output.url || !canContinue} title={!output.url ? '需要服务商返回公开可访问的音频地址' : '将音频带入续写工作流'} onClick={() => onContinue?.(output)}>续写此曲</button></div>}
+      {canContinue && kind === 'music' && !isText && !isFile && <div className="cangyuan-output-actions"><button type="button" disabled={!output.url || !canContinue} title={!output.url ? '需要服务商返回公开可访问的音频地址' : '将音频带入续写工作流'} onClick={() => onContinue?.(output)}>续写此曲</button></div>}
     </div>
   );
 }

@@ -41,18 +41,25 @@ function responseError(value: ApiResponse, status: number) {
   return typeof value.error === 'string' ? value.error : `请求失败（${status}）`;
 }
 
-function audioDuration(file: File) {
+export function readVoiceRecordingDuration(file: File) {
   return new Promise<number>((resolve, reject) => {
     const source = URL.createObjectURL(file);
     const audio = new Audio();
     const finish = (run: () => void) => {
+      audio.onloadedmetadata = null;
+      audio.onerror = null;
       URL.revokeObjectURL(source);
       audio.removeAttribute('src');
       audio.load();
       run();
     };
-    audio.onloadedmetadata = () => finish(() => resolve(audio.duration));
+    audio.onloadedmetadata = () => {
+      // load() clears metadata synchronously, so capture the duration before disposal.
+      const seconds = audio.duration;
+      finish(() => resolve(seconds));
+    };
     audio.onerror = () => finish(() => reject(new Error('无法读取录音时长，请换用有效的 MP3 或 WAV 文件。')));
+    audio.preload = 'metadata';
     audio.src = source;
   });
 }
@@ -179,7 +186,7 @@ export default function SpeechVoiceRegistration({ profile, modelId, value, onCha
 
     setUploading(true);
     try {
-      const seconds = await audioDuration(file);
+      const seconds = await readVoiceRecordingDuration(file);
       if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('无法读取录音时长，请检查文件后重试。');
       if (!isMiniMax && (seconds < 3 || seconds > 60)) throw new Error('通用克隆录音需约 3–60 秒，请调整后重试。');
       const form = new FormData();

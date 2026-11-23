@@ -44,6 +44,29 @@ test('rejects unsupported media and audio bytes that do not match their MIME', a
   assert.equal(publishCalls, 0);
 });
 
+test('accepts Windows audio MIME aliases and missing MIME only with matching file signatures', async () => {
+  const published = [];
+  const port = { publish: async (input) => { published.push(input); return { url: 'https://relay.example/media' }; } };
+  const mp3 = Uint8Array.from([0x49, 0x44, 0x33, 0x04]);
+  const wav = Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]);
+  for (const mimeType of ['', 'application/octet-stream', 'audio/mp3', 'audio/x-mp3']) {
+    const result = await app.uploadCangyuanMedia({ kind: 'audio', fileName: '录音.MP3', mimeType, bytes: mp3 }, port);
+    assert.equal(result.mimeType, 'audio/mpeg');
+  }
+  for (const mimeType of ['', 'application/octet-stream', 'audio/wave', 'audio/vnd.wave', 'audio/x-wav']) {
+    const result = await app.uploadCangyuanMedia({ kind: 'audio', fileName: '录音.WAV', mimeType, bytes: wav }, port);
+    assert.equal(result.mimeType, 'audio/wav');
+  }
+  assert.equal(published.length, 9);
+  await assert.rejects(() => app.uploadCangyuanMedia({
+    kind: 'audio', fileName: 'renamed.mp3', mimeType: '', bytes: wav,
+  }, port), /音频格式不匹配/);
+  await assert.rejects(() => app.uploadCangyuanMedia({
+    kind: 'audio', fileName: 'renamed.mp3', mimeType: 'text/plain', bytes: mp3,
+  }, port), /音频仅支持/);
+  assert.equal(published.length, 9);
+});
+
 test('maps an invalid image rejected by the media adapter to a user input error', async () => {
   class PublicMediaError extends Error {
     constructor(message, code) { super(message); this.code = code; }

@@ -143,22 +143,20 @@ export default function CangyuanMusicOptionsFields({ profile, options, onChange,
   }
 
   if (profile.family === 'elevenlabs-sfx') {
-    const durationRange = profile.durationRange;
+    const durationOptions = profile.durationValues || [];
     const formatOptions = (profile.outputFormatSuggestions || []).map((value) => ({
       value,
       label: value === 'mp3_hq' ? 'MP3 高码率' : 'MP3（通用播放）',
     }));
-    const durationNote = profile.modelId === 'elevenlabs-sound-effects-v2'
-      ? '时长 0.5–22 秒，默认 5 秒。'
-      : '最长 30 秒，默认 5 秒。';
+    const durationNote = `支持 0.5 秒或 1–${profile.durationRange?.[1]} 的整数秒，默认 5 秒。`;
     return (
       <div className="cangyuan-music-options">
         <div className="cangyuan-music-fields-grid">
-          <label className="cangyuan-music-text-field">
-            <span>音效时长（秒）</span>
-            <input aria-label="音效时长" type="number" min={durationRange?.[0]} max={durationRange?.[1]} step={profile.durationInteger === false ? 'any' : '1'} value={options.duration ?? ''} onChange={(event) => update({ duration: event.target.value === '' ? undefined : Number(event.target.value) })} placeholder={`默认 ${profile.durationDefault ?? 5} 秒`} />
+          <div className="cangyuan-music-text-field">
+            <span>音效时长</span>
+            <SelectMenu value={options.duration === undefined ? '' : String(options.duration)} ariaLabel="音效时长" className="cangyuan-field-select" menuClassName="cangyuan-field-select-menu" options={[{ value: '', label: `默认（${profile.durationDefault ?? 5} 秒）` }, ...durationOptions.map((duration) => ({ value: String(duration), label: `${duration} 秒` }))]} onChange={(value) => update({ duration: value ? Number(value) : undefined })} />
             <small>{durationNote}</small>
-          </label>
+          </div>
           {profile.promptInfluenceRange && (
             <label className="cangyuan-music-text-field">
               <span>描述影响度</span>

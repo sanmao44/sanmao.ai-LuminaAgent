@@ -25,6 +25,7 @@ const load = createTsRequire(process.cwd(), {
   '@/components/ModelPicker': () => null,
   '@/components/SelectMenu': selectMenu,
   '@/components/canvas/CanvasAudioPlayer': ({ name }) => createElement('span', { 'data-audio-preview': true }, name),
+  '@/components/media-task-presentation': createTsRequire(process.cwd())('./components/media-task-presentation'),
   '@/components/cangyuan/CangyuanMusicOptionsFields': () => null,
   '@/components/audio/VoiceSampleButton': ({ model, voice, providerKey, optionAction = false }) => createElement('span', { 'data-voice-sample': true, 'data-sample-model': model, 'data-sample-voice': voice, 'data-sample-provider': providerKey }, optionAction ? '试听' : '播放样音'),
   '@/components/audio/SpeechAdvancedOptions': speechOptions,
@@ -231,6 +232,31 @@ test('canvas audio result pane keeps transcription and music history visible', (
   assert.match(markup, /设为当前音频/);
   assert.match(markup, /历史配音/);
   assert.match(markup, /下载音频/);
+});
+
+test('canvas history labels saved sound-effect outputs and translates explicit authorization failures', () => {
+  const markup = render({
+    id: 'provider-1:tts', providerId: 'provider-1', providerName: '兼容服务商', rawId: 'vendor-tts',
+    displayName: '兼容配音', kind: 'audio', enabled: true, published: true, capabilities: ['speech'],
+  }, {
+    kind: 'audio',
+    musicTasks: [
+      {
+        id: 'sfx-1', modelId: 'sfx-model', providerModel: 'elevenlabs-sound-effects-v2', modelName: '音效模型',
+        prompt: '科技UI点击', status: 'succeeded', outputs: [{ url: 'https://example.test/click.mp3', artifactType: 'audio' }],
+        createdAt: '2026-11-24T00:00:01.000Z',
+      },
+      {
+        id: 'sfx-2', modelId: 'sfx-model-v3', providerModel: 'elevenlabs-sound-effects-v3', modelName: '音效模型 v3',
+        prompt: '点击音效', status: 'failed', outputs: [], createdAt: '2026-11-24T00:00:02.000Z',
+        error: 'This API key has a model allowlist, and the requested model "elevenlabs-sound-effects-v3" is not in it.',
+      },
+    ],
+  });
+  assert.match(markup, /<b>音效 1<\/b>/);
+  assert.match(markup, /data-audio-preview="true">音效 1/);
+  assert.match(markup, /密钥未获准调用模型“elevenlabs-sound-effects-v3”/);
+  assert.doesNotMatch(markup, /This API key|音乐结果|<b>音乐 1<\/b>/);
 });
 
 test('canvas speech node keeps unknown provider voice entry and does not invent model-specific controls', () => {

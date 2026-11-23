@@ -6,6 +6,7 @@ import { formatCanvasAudioDuration } from "@/lib/canvas/media";
 import { CANVAS_Z_INDEX } from "@/lib/canvas/layers";
 import { canvasAudioMusicModels, canvasAudioMusicTaskStatusLabel, canvasAudioSoundEffectModels, canvasAudioSpeechModels, canvasAudioTranscriptionModels, buildCanvasMusicRequest, canvasMusicTaskSnapshot, canvasTranscriptionResult } from "@/lib/canvas/audio-tools";
 import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
+import { mediaTaskAudioKind, mediaTaskAudioOutputTitle, mediaTaskErrorMessage } from "@/components/media-task-presentation";
 import ModelPicker from "@/components/ModelPicker";
 import SelectMenu from "@/components/SelectMenu";
 import { getSpeechModelAdvancedOptions, getSpeechModelProfile, getSpeechModelResponseFormats, getSpeechModelSpeedRange, SPEECH_PLATFORM_TEXT_LIMIT, speechVoiceLabel, type SpeechOutputFormat } from "@/packages/contracts/audio-synthesis";
@@ -863,11 +864,11 @@ export default function CanvasAudioNodePanel({
               {musicHistory.map((musicTask) => <article key={musicTask.id}>
                 <p>{musicTask.prompt || (cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || "")) === "音效" ? "音效处理任务" : "音乐处理任务")}</p>
                 <small>{cangyuanMusicTaskKindName(getCangyuanMusicModelProfile(musicTask.providerModel || ""))} · {musicTask.modelName} · {canvasAudioMusicTaskStatusLabel(musicTask.status)} · {new Date(musicTask.createdAt).toLocaleString("zh-CN", { hour12: false })}</small>
-                {musicTask.error && <small className="canvas-audio-error">{musicTask.error}</small>}
+                {musicTask.error && <small className="canvas-audio-error">{mediaTaskErrorMessage(musicTask.error, musicTask.providerModel)}</small>}
                 {musicTask.outputs.map((output, index) => output.url ? <div className="canvas-audio-music-output" key={`${musicTask.id}-${index}`}>
-                  <b>{output.name || output.title || output.artifactType?.toUpperCase() || `结果 ${index + 1}`}</b>
+                  <b>{output.name || mediaTaskAudioOutputTitle(output, index, mediaTaskAudioKind(musicTask.providerModel))}</b>
                   {output.artifactType === "audio" || output.artifactType === "wav" || !output.artifactType
-                    ? <CanvasAudioPlayer src={output.url} name={output.name || output.title || "音乐结果"} compact />
+                    ? <CanvasAudioPlayer src={output.url} name={output.name || mediaTaskAudioOutputTitle(output, index, mediaTaskAudioKind(musicTask.providerModel))} compact />
                     : <small>此结果为 {output.artifactType.toUpperCase()} 文件，可下载保存。</small>}
                   <div className="canvas-audio-result-actions">
                     {(output.artifactType === "audio" || output.artifactType === "wav" || !output.artifactType) && <button type="button" className="canvas-audio-speech-copy" onClick={() => void useMusicOutput(output, `${musicTask.id}-${index}`)} disabled={Boolean(materializingMusicOutput)}>{materializingMusicOutput === `${musicTask.id}-${index}` ? "正在写入…" : "设为当前音频"}</button>}
@@ -880,7 +881,7 @@ export default function CanvasAudioNodePanel({
         </aside>}
       </div>
       <div className="canvas-audio-panel-actions">
-        {(activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError}</p>}
+        {(activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? musicError : transcriptionError) && <p className="canvas-audio-error" role="alert">{activeMode === "speech" ? speechError : activeMode === "music" || activeMode === "sound-effect" ? mediaTaskErrorMessage(musicError, activeMusicModel?.rawId) : transcriptionError}</p>}
         <div className="canvas-audio-panel-service" title={activeMode === "speech" ? speechServiceLabel : activeMode === "music" || activeMode === "sound-effect" ? activeMusicModel?.displayName || `暂无${musicTaskKindName}模型` : selectedTranscriptionModel?.displayName || "暂无转写模型"}>
           <span className="canvas-audio-panel-service-dot" aria-hidden="true" />
           <div>

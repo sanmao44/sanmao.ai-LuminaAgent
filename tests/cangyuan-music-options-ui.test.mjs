@@ -219,18 +219,22 @@ test('ElevenLabs sound effects show model-specific limits and only their applica
   const v2Markup = renderElevenLabsOptions('elevenlabs-sound-effects-v2', {
     duration: 0.5, loop: true, prompt_influence: 0.3, output_format: 'mp3',
   });
-  assert.match(v2Markup, /min="0.5" max="22" step="any"/);
-  assert.match(v2Markup, /时长 0.5–22 秒，默认 5 秒/);
+  assert.match(v2Markup, /aria-label="音效时长"/);
+  assert.match(v2Markup, /data-value="0.5">0.5 秒/);
+  assert.match(v2Markup, /data-value="22">22 秒/);
+  assert.doesNotMatch(v2Markup, /data-value="(?:0.7|23)"/);
+  assert.match(v2Markup, /支持 0.5 秒或 1–22 的整数秒，默认 5 秒/);
   assert.match(v2Markup, /描述影响度/);
   assert.match(v2Markup, /MP3 与高码率 MP3 不改变价格/);
   assert.match(v2Markup, /生成可循环音效/);
 
   const v3 = getCangyuanMusicModelProfile('elevenlabs-sound-effects-v3');
-  assert.deepEqual(v3.durationRange, [undefined, 30]);
+  assert.deepEqual(v3.durationRange, [0.5, 30]);
   const v3Markup = renderElevenLabsOptions('elevenlabs-sound-effects-v3', { duration: 30 });
-  assert.match(v3Markup, /max="30" step="1"/);
-  assert.match(v3Markup, /最长 30 秒，默认 5 秒/);
-  assert.doesNotMatch(v3Markup, /min="0.5"|歌词|只生成伴奏/);
+  assert.match(v3Markup, /data-value="0.5">0.5 秒/);
+  assert.match(v3Markup, /data-value="30">30 秒/);
+  assert.match(v3Markup, /支持 0.5 秒或 1–30 的整数秒，默认 5 秒/);
+  assert.doesNotMatch(v3Markup, /歌词|只生成伴奏/);
 });
 
 test('Suno alias remains unavailable while official documentation marks it pending', () => {

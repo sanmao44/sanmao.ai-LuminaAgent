@@ -18,7 +18,7 @@ import { speechOutputFormatLabel } from '@/components/audio/speech-format-option
 import { supportedSpeechModels } from '@/components/audio/model-options';
 import { GenerationLogAudioPlayer, GenerationLogAudioWorks } from '@/components/GenerationLogAudio';
 import MediaTaskAudioOutput, { type MediaTaskAudioOutputValue } from '@/components/MediaTaskAudioOutput';
-import { mediaTaskModeLabel, mediaTaskProviderStatusLabel } from '@/components/media-task-presentation';
+import { mediaTaskAudioKind, mediaTaskErrorMessage, mediaTaskModeLabel, mediaTaskProviderStatusLabel } from '@/components/media-task-presentation';
 import type { CangyuanThreeDScenario } from '@/components/cangyuan/three-d-presets';
 import type {
   CangyuanMediaCreateInput,
@@ -66,8 +66,7 @@ function taskSort(left: CangyuanMediaTask, right: CangyuanMediaTask) {
 }
 
 function isSoundEffectTask(task: CangyuanMediaTask) {
-  const profile = getCangyuanMusicModelProfile(task.providerModel);
-  return profile?.family === 'suno-sfx' || profile?.family === 'elevenlabs-sfx';
+  return mediaTaskAudioKind(task.providerModel) === 'sound-effect';
 }
 
 function cangyuanTaskModels(state: PublicState | null, capability: 'music-generate' | 'sound-effect' | '3d-generate') {
@@ -639,7 +638,7 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
         </div>
       </header>
 
-      {notice && <p className={`cangyuan-studio-notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.text}</p>}
+      {notice && <p className={`cangyuan-studio-notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.kind === 'error' ? mediaTaskErrorMessage(notice.text) : notice.text}</p>}
       {stateError && <div className="cangyuan-studio-error" role="alert"><span>{stateError}</span><button type="button" onClick={() => void loadPublicState()}>重试</button></div>}
       {loadingState && <div className="cangyuan-studio-loading" role="status">正在读取可用模型…</div>}
 
@@ -924,16 +923,17 @@ export default function CangyuanMediaStudio({ onOpenModels, onNotify }: Cangyuan
                         <div><strong>{task.modelName}</strong><small>{formatCreatedAt(task.createdAt)}</small></div>
                         <span className={`cangyuan-task-status ${isActiveTask(task) ? 'active' : task.status}`}>{taskStatusLabel(task)}</span>
                       </div>
-                      <p className="cangyuan-task-prompt">{task.input.prompt || (task.kind === '3d' ? mediaTaskModeLabel(task.input.mode) : '音乐生成任务')}</p>
+                      <p className="cangyuan-task-prompt">{task.input.prompt || (task.kind === '3d' ? mediaTaskModeLabel(task.input.mode) : isSoundEffectTask(task) ? '音效生成任务' : '音乐生成任务')}</p>
                       {task.providerTaskId && task.status === 'succeeded' && <div className="cangyuan-output-actions"><button type="button" onClick={() => void copyTaskId(task)}>复制任务编号</button></div>}
                       {isActiveTask(task) && <p className="cangyuan-task-progress">{mediaTaskProviderStatusLabel(task.providerStatus, task.status)}</p>}
-                      {task.error && <p className="cangyuan-task-error" role="alert">{task.error}</p>}
+                      {task.error && <p className="cangyuan-task-error" role="alert">{mediaTaskErrorMessage(task.error, task.providerModel)}</p>}
                       {task.status === 'succeeded' && task.outputs.length === 0 && <p className="cangyuan-task-error">任务完成，但服务商没有返回结果地址。</p>}
                       {task.outputs.map((output, index) => isCreativeAudioMode ? (
                         <MediaTaskAudioOutput
                           key={`${task.id}-${output.audioId || index}`}
                           output={output}
                           index={index}
+                          kind={mediaTaskAudioKind(task.providerModel)}
                           canContinue={mode === 'music' && Boolean(output.url && isPublicHttpsUrl(output.url) && output.artifactType !== 'midi' && output.artifactType !== 'wav' && output.artifactType !== 'text' && output.artifactType !== 'file')}
                           onContinue={(selectedOutput) => chooseContinuation(task, selectedOutput)}
                         />

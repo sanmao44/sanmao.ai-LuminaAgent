@@ -123,10 +123,22 @@ test('ElevenLabs music profiles enforce documented prompt, duration, seed, and i
   assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', duration: 0.49 }), /必须在 0\.5–22 秒/);
   assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', duration: 22.1 }), /必须在 0\.5–22 秒/);
   assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v2', { prompt: 'rain', prompt_influence: 1.01 }), /必须在 0–1 之间/);
-  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 30.5 }), /时长必须是整数秒/);
-  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 31 }), /不能大于 30/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 30.5 }), /必须在 0\.5–30 秒/);
+  assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', duration: 31 }), /必须在 0\.5–30 秒/);
   assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', loop: 'yes' }), /loop 必须是布尔值/);
   assert.throws(() => provider.buildCangyuanMusicPayload('elevenlabs-sound-effects-v3', { prompt: 'rain', instrumental: true }), /不支持这些音乐参数/);
+});
+
+test('ElevenLabs sound effects accept half a second and whole seconds only', () => {
+  for (const [model, maximum] of [['elevenlabs-sound-effects-v2', 22], ['elevenlabs-sound-effects-v3', 30]]) {
+    for (const duration of [0.5, ...Array.from({ length: maximum }, (_, index) => index + 1)]) {
+      assert.equal(provider.buildCangyuanMusicPayload(model, { prompt: 'UI click', duration }).duration, duration);
+    }
+    for (const duration of [0.7, 1.5, maximum - 0.5]) {
+      assert.throws(() => provider.buildCangyuanMusicPayload(model, { prompt: 'UI click', duration }), /音效时长仅支持 0\.5 秒或/);
+    }
+    assert.throws(() => provider.buildCangyuanMusicPayload(model, { prompt: 'UI click', duration: 0.4 }), /必须在 0\.5–/);
+  }
 });
 
 test('music payload rejects unprofiled models, unsupported fields, and values outside documentation bounds', () => {

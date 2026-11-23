@@ -18,6 +18,8 @@ export class CangyuanMediaUploadInputError extends Error {
 function normalizeMime(value: string) {
   const mime = String(value || '').split(';', 1)[0].trim().toLowerCase();
   if (mime === 'audio/x-wav') return 'audio/wav';
+  if (mime === 'audio/wave' || mime === 'audio/vnd.wave') return 'audio/wav';
+  if (mime === 'audio/mp3' || mime === 'audio/x-mp3') return 'audio/mpeg';
   if (mime === 'audio/x-m4a' || mime === 'audio/m4a') return 'audio/mp4';
   if (mime === 'audio/x-flac') return 'audio/flac';
   if (mime === 'audio/oga') return 'audio/ogg';
@@ -54,7 +56,17 @@ function hasVideoSignature(bytes: Uint8Array, mime: string) {
 }
 
 function validateInput(input: CangyuanMediaUploadInput) {
-  const mimeType = normalizeMime(input.mimeType);
+  let mimeType = normalizeMime(input.mimeType);
+  // Windows can omit a file MIME or report a generic binary type. The extension
+  // only selects the candidate format; the signature check below still verifies it.
+  if (input.kind === 'audio' && (!mimeType || mimeType === 'application/octet-stream')) {
+    const extension = input.fileName.toLowerCase().split('.').at(-1) || '';
+    const audioMimeByExtension: Readonly<Record<string, string>> = {
+      mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg',
+      flac: 'audio/flac', aac: 'audio/aac', m4a: 'audio/mp4',
+    };
+    mimeType = audioMimeByExtension[extension] || mimeType;
+  }
   const allowedMimeTypes = input.kind === 'image' ? IMAGE_MIME_TYPES : input.kind === 'audio' ? AUDIO_MIME_TYPES : VIDEO_MIME_TYPES;
   const maximumBytes = input.kind === 'image' ? CANGYUAN_IMAGE_UPLOAD_MAX_BYTES : input.kind === 'audio' ? CANGYUAN_AUDIO_UPLOAD_MAX_BYTES : CANGYUAN_VIDEO_UPLOAD_MAX_BYTES;
   const label = input.kind === 'image' ? '图片' : input.kind === 'audio' ? '音频' : '视频';

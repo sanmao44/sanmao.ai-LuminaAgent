@@ -5,6 +5,9 @@ import { createTsRequire } from './ts-require.mjs';
 
 const projectRoot = process.cwd();
 const application = createTsRequire(projectRoot)('./apps/api/audio-voice-registration-application');
+const { readVoiceRecordingDuration } = createTsRequire(projectRoot, {
+  './SpeechVoiceRegistration.css': {},
+})('./components/audio/SpeechVoiceRegistration');
 const registrationInput = {
   modelId: 'registry-model-id',
   registrationModel: 'voice-clone-tts',
@@ -12,6 +15,56 @@ const registrationInput = {
   url: 'https://relay.example.test/audio/temporary-token',
   consent: true,
 };
+
+async function withRecordingAudio(mode, run) {
+  const originalAudio = globalThis.Audio;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  const revoked = [];
+  let audio;
+  globalThis.Audio = class {
+    constructor() { audio = this; this.duration = NaN; this.onloadedmetadata = null; this.onerror = null; }
+    set src(value) {
+      this.source = value;
+      queueMicrotask(() => {
+        if (mode === 'error') this.onerror?.();
+        else { this.duration = 4.25; this.onloadedmetadata?.(); }
+      });
+    }
+    removeAttribute(name) { if (name === 'src') this.source = ''; }
+    load() { this.duration = NaN; }
+  };
+  URL.createObjectURL = () => 'blob:recording-probe';
+  URL.revokeObjectURL = (url) => revoked.push(url);
+  try {
+    await run(() => audio, revoked);
+  } finally {
+    globalThis.Audio = originalAudio;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  }
+}
+
+test('clone recording captures duration before releasing media metadata', async () => {
+  await withRecordingAudio('loaded', async (audio, revoked) => {
+    assert.equal(await readVoiceRecordingDuration(new File(['recording'], 'voice.mp3')), 4.25);
+    assert.ok(Number.isNaN(audio().duration), 'disposing the media element resets duration');
+    assert.equal(audio().source, '');
+    assert.equal(audio().onloadedmetadata, null);
+    assert.equal(audio().onerror, null);
+    assert.deepEqual(revoked, ['blob:recording-probe']);
+  });
+});
+
+test('invalid clone recording rejects and releases its temporary audio resource', async () => {
+  await withRecordingAudio('error', async (audio, revoked) => {
+    await assert.rejects(() => readVoiceRecordingDuration(new File(['invalid'], 'voice.mp3')), /无法读取录音时长/);
+    assert.equal(audio().source, '');
+    assert.equal(audio().onloadedmetadata, null);
+    assert.equal(audio().onerror, null);
+    assert.deepEqual(revoked, ['blob:recording-probe']);
+  });
+});
 
 test('speech voice registration validates consent, public URL, model and name before using the provider port', async () => {
   let portCalls = 0;
