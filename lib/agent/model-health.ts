@@ -98,6 +98,8 @@ export function noteAgentModelSuccess(runtime: RuntimeModel, latencyMs: number) 
 
 export function noteAgentModelFailure(runtime: RuntimeModel, error: unknown, latencyMs: number) {
   if (isAbortError(error)) return;
+  // Local capacity validation can skip a candidate before contacting its provider.
+  if ((error as { code?: unknown } | null)?.code === 'AGENT_CONTEXT_BUDGET_EXCEEDED') return;
   const current = health.get(keyFor(runtime)) || { modelName: runtime.model.displayName, providerName: runtime.provider.name, consecutiveFailures: 0 };
   current.modelName = runtime.model.displayName;
   current.providerName = runtime.provider.name;

@@ -86,18 +86,22 @@ const ProviderConnectionFields = providerConnectionFieldsModule.exports.default;
 
 const pageTree = ts.createSourceFile('page.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
-function pageHandler(name, bindings) {
-  let handler;
+function pageHandlers(names, bindings) {
+  const handlers = new Map();
   function visit(node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === name) handler = node;
-    if (!handler) ts.forEachChild(node, visit);
+    if (ts.isFunctionDeclaration(node) && names.includes(node.name?.text)) handlers.set(node.name.text, node);
+    ts.forEachChild(node, visit);
   }
   visit(pageTree);
-  if (!handler) throw new Error(`Missing page handler: ${name}`);
-  const compiled = ts.transpileModule(handler.getText(pageTree), {
+  for (const name of names) if (!handlers.has(name)) throw new Error(`Missing page handler: ${name}`);
+  const compiled = ts.transpileModule(names.map((name) => handlers.get(name).getText(pageTree)).join('\n'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  return vm.runInNewContext(`${compiled}\n${name};`, bindings);
+  return vm.runInNewContext(`${compiled}\n({ ${names.join(', ')} });`, bindings);
+}
+
+function pageHandler(name, bindings) {
+  return pageHandlers([name], bindings)[name];
 }
 
 function connectionTestHarness({ platform = 'openai', payload = {}, ok = true, status = 200, response } = {}) {
@@ -105,6 +109,7 @@ function connectionTestHarness({ platform = 'openai', payload = {}, ok = true, s
   const run = pageHandler('testProvider', {
     providerForm: { platform, baseUrl: 'https://example.test/v1', apiKey: 'fixture', videoTransport: '' },
     providerEditId: null,
+    providerConnectionRequestRef: { current: 0 },
     notify() {},
     setProviderTestBusy(value) { state.busy = value; },
     setProviderTestResult(value) { state.message = value; },
@@ -113,6 +118,63 @@ function connectionTestHarness({ platform = 'openai', payload = {}, ok = true, s
   });
   return { state, run };
 }
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+function providerEditorHarness() {
+  const getProviderPreset = (platform) => ({ value: platform, short: platform, type: 'openai-compatible', baseUrl: 'https://example.test/v1', needsBaseUrl: false });
+  const emptyProviderForm = pageHandler('emptyProviderForm', { getProviderPreset });
+  const state = {
+    form: { ...emptyProviderForm(), apiKey: 'fixture-a' }, editId: null, editorOpen: true,
+    busy: false, testBusy: false, message: '', succeeded: false, syncingId: null, section: 'providers',
+    notifications: [], appliedStates: [],
+  };
+  const requests = [];
+  const providerConnectionRequestRef = { current: 0 };
+  const providerSyncRequestRef = { current: 0 };
+  function render() {
+    return pageHandlers([
+      'invalidateProviderConnectionRequest', 'setProviderForm', 'closeProviderEditor', 'openAddProvider', 'openEditProvider',
+      'applyProviderPreset', 'testProvider', 'saveProvider', 'syncProvider', 'applyReturnedState',
+    ], {
+      providerConnectionRequestRef, providerSyncRequestRef,
+      providerForm: state.form, providerEditId: state.editId, state: { providers: [], models: [] },
+      emptyProviderForm, getProviderPreset, defaultResponsesPath: () => '/responses', normalizeResponsesPath: (_platform, path) => path,
+      setProviderFormState(update) { state.form = typeof update === 'function' ? update(state.form) : update; },
+      setProviderBusy(value) { state.busy = value; },
+      setProviderTestBusy(value) { state.testBusy = value; },
+      setProviderTestResult(value) { state.message = value; },
+      setProviderTestSucceeded(value) { state.succeeded = value; },
+      setProviderEditor(value) { state.editorOpen = value; },
+      setProviderEditId(value) { state.editId = value; },
+      setProviderSetupDismissed() {}, setJimengLogin() {},
+      setSyncingId(value) { state.syncingId = value; },
+      setSection(value) { state.section = value; },
+      setModelProviderFilter() {}, setModelSearch() {}, setModelKindFilter() {}, setModelQuickFilter() {},
+      setExpandedModelProviders() {}, setModelProviderGroupExpansion() {},
+      setState(value) { state.appliedStates.push(value); },
+      notify(value) { state.notifications.push(value); },
+      refreshState: async () => {},
+      fetch(url, init) {
+        const request = { ...deferred(), url, body: init.body ? JSON.parse(init.body) : undefined };
+        requests.push(request);
+        return request.promise;
+      },
+    });
+  }
+  function respond(index, payload, status = 200) {
+    requests[index].resolve(new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } }));
+  }
+  return { state, requests, render, respond };
+}
+
+const flushRequests = () => new Promise((resolve) => setImmediate(resolve));
+const submitEvent = { preventDefault() {} };
 
 test('connection failures attach Agnes credential guidance only to an upstream Agnes 401', async () => {
   for (const scenario of [
@@ -145,6 +207,186 @@ test('connection feedback retains its pending state and records success independ
   assert.equal(state.message, '即梦 CLI 已检测：fixture；已登录');
 });
 
+test('changing any provider draft field immediately invalidates its pending connection test', async () => {
+  const fields = Object.keys(providerEditorHarness().state.form);
+  for (const field of fields) {
+    const harness = providerEditorHarness();
+    const handlers = harness.render();
+    const operation = handlers.testProvider();
+    handlers.setProviderForm((old) => ({ ...old, [field]: `${old[field]}-changed` }));
+    assert.equal(harness.state.testBusy, false, field);
+    assert.equal(harness.state.message, '', field);
+    assert.equal(harness.state.succeeded, false, field);
+    harness.respond(0, { count: 1, message: 'obsolete success' });
+    assert.equal(await operation, false, field);
+    assert.equal(harness.state.message, '', field);
+    assert.equal(harness.state.succeeded, false, field);
+  }
+});
+
+const draftTransitions = {
+  edit: (handlers) => handlers.setProviderForm((old) => ({ ...old, apiKey: 'fixture-b' })),
+  close: (handlers) => handlers.closeProviderEditor(),
+  add: (handlers) => handlers.openAddProvider(),
+  editAnother: (handlers) => handlers.openEditProvider({ id: 'another-provider', name: 'Another', type: 'openai-compatible', baseUrl: 'https://another.test/v1' }),
+  preset: (handlers) => handlers.applyProviderPreset('openai'),
+};
+
+test('closing, opening or switching provider presets discards pending connection feedback', async () => {
+  for (const [name, transition] of Object.entries(draftTransitions)) {
+    const harness = providerEditorHarness();
+    const handlers = harness.render();
+    const operation = handlers.testProvider();
+    transition(handlers);
+    harness.respond(0, { error: 'obsolete failure' }, 503);
+    assert.equal(await operation, false, name);
+    assert.equal(harness.state.message, '', name);
+    assert.equal(harness.state.succeeded, false, name);
+    assert.equal(harness.state.testBusy, false, name);
+  }
+});
+
+test('out-of-order connection success, HTTP, network and JSON failures cannot overwrite newer feedback or busy state', async () => {
+  const outcomes = {
+    success: (harness) => harness.respond(0, { message: 'obsolete success' }),
+    http: (harness) => harness.respond(0, { error: 'obsolete failure' }, 503),
+    network: (harness) => harness.requests[0].reject(new Error('obsolete network failure')),
+    json: (harness) => harness.requests[0].resolve({ ok: true, json: async () => { throw new SyntaxError('obsolete JSON failure'); } }),
+  };
+  for (const [outcome, settle] of Object.entries(outcomes)) {
+    for (const newerFinishesFirst of [false, true]) {
+      const harness = providerEditorHarness();
+      const handlers = harness.render();
+      const oldOperation = handlers.testProvider();
+      draftTransitions.edit(handlers);
+      const newOperation = harness.render().testProvider();
+      if (newerFinishesFirst) {
+        harness.respond(1, { message: 'current success' });
+        assert.equal(await newOperation, true);
+      }
+      settle(harness);
+      assert.equal(await oldOperation, false, outcome);
+      assert.equal(harness.state.testBusy, !newerFinishesFirst, outcome);
+      assert.equal(harness.state.message, newerFinishesFirst ? 'current success' : '', outcome);
+      assert.equal(harness.state.succeeded, newerFinishesFirst, outcome);
+      if (!newerFinishesFirst) {
+        harness.respond(1, { message: 'current success' });
+        assert.equal(await newOperation, true);
+      }
+    }
+  }
+});
+
+test('saving submits exactly the tested snapshot for both new and existing providers', async () => {
+  for (const editId of [null, 'existing-provider']) {
+    const harness = providerEditorHarness();
+    harness.state.editId = editId;
+    const operation = harness.render().saveProvider(submitEvent);
+    harness.respond(0, { count: 1 });
+    await flushRequests();
+    const { providerId, ...testedForm } = harness.requests[0].body;
+    assert.equal(providerId, editId);
+    assert.deepEqual(harness.requests[1].body, testedForm);
+    assert.equal(harness.requests[1].url, editId ? `/api/providers/${editId}` : '/api/providers');
+    harness.respond(1, { id: 'new-provider', state: { providers: [], models: [] } });
+    await flushRequests();
+    harness.respond(2, { count: 0, state: { providers: [], models: [] } });
+    await operation;
+    assert.equal(harness.state.editorOpen, false);
+    assert.equal(harness.state.busy, false);
+    assert.equal(harness.state.section, 'models');
+  }
+});
+
+test('draft changes and editor transitions during the save test prevent submitting the old configuration', async () => {
+  for (const [name, transition] of Object.entries(draftTransitions)) {
+    const harness = providerEditorHarness();
+    const handlers = harness.render();
+    const operation = handlers.saveProvider(submitEvent);
+    transition(handlers);
+    const editorOpen = harness.state.editorOpen;
+    harness.respond(0, { count: 1 });
+    await operation;
+    assert.equal(harness.requests.length, 1, name);
+    assert.equal(harness.state.editorOpen, editorOpen, name);
+    assert.equal(harness.state.busy, false, name);
+    assert.equal(harness.state.message, '', name);
+  }
+});
+
+test('an obsolete save test cannot submit or finish a newer save operation', async () => {
+  const harness = providerEditorHarness();
+  const handlers = harness.render();
+  const oldOperation = handlers.saveProvider(submitEvent);
+  draftTransitions.edit(handlers);
+  const newOperation = harness.render().saveProvider(submitEvent);
+  harness.respond(0, { count: 1 });
+  await oldOperation;
+  assert.equal(harness.requests.length, 2);
+  assert.equal(harness.state.busy, true);
+  assert.equal(harness.state.testBusy, true);
+  harness.respond(1, { error: 'current test failed' }, 503);
+  await newOperation;
+  assert.equal(harness.state.busy, false);
+  assert.equal(harness.requests.length, 2);
+});
+
+test('late save responses retain real state but cannot close, notify or finish a newly opened editor', async () => {
+  for (const outcome of ['success', 'failure', 'delayed-body']) {
+    const harness = providerEditorHarness();
+    const handlers = harness.render();
+    const oldOperation = handlers.saveProvider(submitEvent);
+    harness.respond(0, { count: 1 });
+    await flushRequests();
+    const responseBody = deferred();
+    if (outcome === 'delayed-body') {
+      harness.requests[1].resolve({ ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: () => responseBody.promise });
+      await flushRequests();
+    }
+    handlers.closeProviderEditor();
+    handlers.openAddProvider();
+    harness.render().setProviderForm((old) => ({ ...old, apiKey: 'fixture-b' }));
+    const newOperation = harness.render().saveProvider(submitEvent);
+    const returned = { id: 'saved-provider', state: { providers: [{ id: 'saved-provider' }], models: [] } };
+    if (outcome === 'delayed-body') responseBody.resolve(JSON.stringify(returned));
+    else harness.respond(1, outcome === 'failure' ? { error: 'obsolete save failed' } : returned, outcome === 'failure' ? 500 : 200);
+    await oldOperation;
+    assert.equal(harness.state.appliedStates.length, outcome === 'failure' ? 0 : 1, outcome);
+    assert.equal(harness.state.editorOpen, true, outcome);
+    assert.equal(harness.state.busy, true, outcome);
+    assert.equal(harness.state.testBusy, true, outcome);
+    assert.equal(harness.state.message, '', outcome);
+    assert.deepEqual(harness.state.notifications, [], outcome);
+    assert.equal(harness.requests.length, 3, outcome);
+    harness.respond(2, { error: 'current test failed' }, 503);
+    await newOperation;
+  }
+});
+
+test('late model discovery from saving cannot navigate away from a newly opened editor', async () => {
+  const harness = providerEditorHarness();
+  const handlers = harness.render();
+  const oldOperation = handlers.saveProvider(submitEvent);
+  harness.respond(0, { count: 1 });
+  await flushRequests();
+  harness.respond(1, { id: 'saved-provider', state: { providers: [], models: [] } });
+  await flushRequests();
+  handlers.openAddProvider();
+  harness.render().setProviderForm((old) => ({ ...old, apiKey: 'fixture-b' }));
+  const newOperation = harness.render().saveProvider(submitEvent);
+  const notificationsBefore = [...harness.state.notifications];
+  harness.respond(2, { count: 1, state: { providers: [], models: [{ providerId: 'saved-provider', rawId: 'fixture' }] } });
+  await oldOperation;
+  assert.equal(harness.state.appliedStates.length, 2);
+  assert.equal(harness.state.editorOpen, true);
+  assert.equal(harness.state.section, 'providers');
+  assert.equal(harness.state.busy, true);
+  assert.equal(harness.state.testBusy, true);
+  assert.deepEqual(harness.state.notifications, notificationsBefore);
+  harness.respond(3, { error: 'current test failed' }, 503);
+  await newOperation;
+});
+
 test('connection result appearance follows the structured outcome instead of message prefixes', () => {
   const Result = providerConnectionFieldsModule.exports.ProviderConnectionResult;
   const success = renderToStaticMarkup(createElement(Result, { message: '即梦 CLI 已检测', succeeded: true }));
@@ -158,6 +400,7 @@ test('successful model discovery opens the new provider with restrictive filters
   const models = [{ providerId: 'new-provider', rawId: 'fixture-chat', enabled: false, published: false }];
   const run = pageHandler('syncProvider', {
     state: { models: [] },
+    providerSyncRequestRef: { current: 0 },
     fetch: async () => ({}),
     applyReturnedState: async () => ({ count: 1, state: { models } }),
     setSyncingId() {}, notify() {}, refreshState() {},

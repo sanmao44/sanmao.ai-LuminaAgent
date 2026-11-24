@@ -580,6 +580,33 @@ test('artifact capability executes through its runtime port and returns metadata
   assert.equal(state.generatedFiles.length, 1);
 });
 
+test('artifact validation failures preserve the specific reason in tool results', async () => {
+  const { executeArtifactCapability } = load('./packages/tool-runtime/artifact-capability');
+  const scenarios = [
+    { count: artifactLimits.ARTIFACT_MAX_PER_TURN, args: {}, error: /本轮最多生成/ },
+    { count: 0, args: {}, error: /没有可打包的文件/ },
+    { count: 0, args: { artifactIds: ['valid-id'] }, error: /指定的文件已过期或被清理/ },
+  ];
+  for (const scenario of scenarios) {
+    const state = { generatedFiles: [], generatedArtifactCount: scenario.count };
+    const result = await executeArtifactCapability({
+      state,
+      call: { id: 'invalid-archive', function: { name: 'archive_generate' } },
+      args: scenario.args,
+      signal: new AbortController().signal,
+      infrastructure: {
+        ...artifactInfrastructure,
+        isValidArtifactId: () => true,
+        collectArchiveEntries: async () => ({ entries: [], missing: ['valid-id'] }),
+      },
+    });
+    const payload = JSON.parse(String(result.content));
+    assert.equal(payload.ok, false);
+    assert.match(payload.error, scenario.error);
+    assert.equal(state.generatedFiles.length, 0);
+  }
+});
+
 test('skill capability executes search through the runtime port', async () => {
   const { executeSkillCapability } = load('./packages/tool-runtime/skill-capability');
   const state = { generatedFiles: [], generatedArtifactCount: 0, skillToolCalls: 0, skillInstalls: 0, usedSkills: [] };

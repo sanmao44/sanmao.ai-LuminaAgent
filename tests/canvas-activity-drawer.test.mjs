@@ -63,6 +63,11 @@ test("task log metadata keeps the important output details visually distinct", (
   assert.match(taskLogStyles, /\.canvas-task-log-meta-duration\{[^}]*color:var\(--warning\)/);
 });
 
+test("LLM task metadata and details expose native Search/Fetch request counts", () => {
+  assert.equal(component.match(/generationLogWebSearchRequestLabel\(log\)/g)?.length, 2);
+  assert.match(component, /联网：\{log\.webSearchStatus \|\| "未检索"\}/);
+});
+
 test("activity drawer owns its responsive event-row presentation", () => {
   assert.match(activityStyles, /\.canvas-activity-summary\{/);
   assert.match(activityStyles, /\.canvas-activity-list>button\.ok \.canvas-activity-dot\{[^}]*var\(--success\)/);

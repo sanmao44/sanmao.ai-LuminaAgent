@@ -7,7 +7,13 @@ const sourceUrl = new URL('../lib/native-web-search.ts', import.meta.url);
 const source = await readFile(sourceUrl, 'utf8');
 const detectionSourceUrl = new URL('../lib/native-search-detection.ts', import.meta.url);
 const detectionSource = await readFile(detectionSourceUrl, 'utf8');
-const bundledSource = `${detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${source.replace("import { inferNativeSearch } from './native-search-detection';", '')}\nexport { inferNativeSearch };`;
+const providerStubs = `
+const deepSeekToolSearch = (...args) => globalThis.__nativeDeepSeekToolSearch(...args);
+const deepSeekToolFetch = (...args) => globalThis.__nativeDeepSeekToolFetch(...args);
+`;
+const bundledSource = `${providerStubs}\n${detectionSource.replace('export function inferNativeSearch', 'function inferNativeSearch')}\n${source
+  .replace("import { inferNativeSearch } from './native-search-detection';", '')
+  .replace("import { deepSeekToolFetch, deepSeekToolSearch, type DeepSeekToolSearchResult } from './providers';", '')}\nexport { inferNativeSearch, deepSeekToolSearch, deepSeekToolFetch };`;
 const compiled = ts.transpileModule(bundledSource, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
@@ -37,7 +43,11 @@ const messages = [
 ];
 
 const originalFetch = globalThis.fetch;
-test.afterEach(() => { globalThis.fetch = originalFetch; });
+test.afterEach(() => {
+  globalThis.fetch = originalFetch;
+  delete globalThis.__nativeDeepSeekToolSearch;
+  delete globalThis.__nativeDeepSeekToolFetch;
+});
 
 test('detects native protocols from metadata and model ids', async () => {
   assert.deepEqual(nativeSearch.inferNativeSearch('gemini-2.5-pro', 'google-gemini', { tools: ['google_search'] }), {
@@ -46,7 +56,7 @@ test('detects native protocols from metadata and model ids', async () => {
     detection: 'metadata',
   });
   assert.equal(nativeSearch.inferNativeSearch('sonar-pro', 'custom').protocol, 'native-chat');
-  assert.equal(nativeSearch.inferNativeSearch('deepseek-v4-pro', 'deepseek').protocol, 'openai-responses');
+  assert.equal(nativeSearch.inferNativeSearch('deepseek-v4-pro', 'deepseek').protocol, 'deepseek-tools');
 });
 
 test('uses native search only when the normalized model exposes the capability', () => {
@@ -142,4 +152,134 @@ test('rejects a native answer without verifiable sources so the route can fall b
     nativeSearch.runNativeWebSearch(provider, model, messages, '需要核验的问题'),
     /没有返回可核验的来源/,
   );
+});
+
+test('uses DeepSeek Search then fetches at most three pages', async () => {
+  const searchInputs = [];
+  const fetchUrls = [];
+  globalThis.__nativeDeepSeekToolSearch = async (_provider, input) => {
+    searchInputs.push(input);
+    return { results: Array.from({ length: 5 }, (_, index) => ({ title: `结果 ${index + 1}`, url: `https://example.test/${index + 1}`, summary: `摘要 ${index + 1}` })) };
+  };
+  globalThis.__nativeDeepSeekToolFetch = async (_provider, url) => {
+    fetchUrls.push(url);
+    return { title: `页面 ${url.split('/').pop()}`, content: `正文 ${url}` };
+  };
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' },
+    { ...model, rawId: 'deepseek-v4-pro' },
+    messages,
+    'DeepSeek V4 最新发布',
+  );
+  assert.equal(searchInputs[0].query, 'DeepSeek V4 最新发布');
+  assert.equal(searchInputs[0].count, 10);
+  assert.equal(searchInputs[0].need_content, true);
+  assert.deepEqual(fetchUrls, ['https://example.test/1', 'https://example.test/2', 'https://example.test/3']);
+  assert.equal(result.fetchedCount, 3);
+  assert.equal(result.resultCount, 5);
+  assert.match(result.text, /网页正文：正文 https:\/\/example\.test\/1/);
+});
+
+test('uses Search content before issuing billable Fetch requests', async () => {
+  const fetchUrls = [];
+  globalThis.__nativeDeepSeekToolSearch = async () => ({ results: [
+    { title: '已有正文', url: 'https://example.test/with-content', summary: '摘要', content: 'Search 已返回正文' },
+    { title: '缺正文', url: 'https://example.test/missing-content', summary: '摘要' },
+    { title: '已有正文二', url: 'https://example.test/with-content-2', content: 'Search 正文二' },
+  ] });
+  globalThis.__nativeDeepSeekToolFetch = async (_provider, url) => {
+    fetchUrls.push(url);
+    return { title: '补抓页面', content: `Fetch 正文 ${url}` };
+  };
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    messages,
+    '需要正文的搜索',
+  );
+  assert.deepEqual(fetchUrls, ['https://example.test/missing-content']);
+  assert.equal(result.fetchedCount, 1);
+  assert.match(result.text, /Search 已返回正文/);
+  assert.match(result.text, /Fetch 正文 https:\/\/example\.test\/missing-content/);
+  assert.doesNotMatch(result.text, /Fetch 正文 https:\/\/example\.test\/with-content/);
+});
+
+test('reports partial Fetch failures without discarding Search results', async () => {
+  globalThis.__nativeDeepSeekToolSearch = async () => ({ results: [
+    { title: '缺正文', url: 'https://example.test/missing-content', summary: '摘要' },
+  ] });
+  globalThis.__nativeDeepSeekToolFetch = async () => { throw new Error('抓取失败'); };
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    messages,
+    '需要容错的搜索',
+  );
+  assert.equal(result.fetchedCount, 0);
+  assert.deepEqual(result.warnings, ['部分搜索结果网页抓取失败，已保留搜索摘要。']);
+  assert.match(result.text, /摘要/);
+});
+
+test('does not count empty Fetch bodies as successful billable requests', async () => {
+  globalThis.__nativeDeepSeekToolSearch = async () => ({ results: [
+    { title: '空正文', url: 'https://example.test/empty-content', summary: '保留摘要' },
+  ] });
+  globalThis.__nativeDeepSeekToolFetch = async () => ({ title: '空页面', content: '   ' });
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    messages,
+    '空正文计费边界',
+  );
+  assert.equal(result.fetchedCount, 0);
+  assert.deepEqual(result.warnings, ['部分搜索结果网页抓取失败或未返回正文，已保留搜索摘要。']);
+  assert.match(result.text, /保留摘要/);
+});
+
+test('preserves a billable Search response when normalized rows are empty', async () => {
+  globalThis.__nativeDeepSeekToolSearch = async () => ({ results: [], searchRequestCount: 1 });
+  globalThis.__nativeDeepSeekToolFetch = async () => { throw new Error('不应调用 Fetch'); };
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    messages,
+    '原始 Search 有返回但结果无效',
+  );
+  assert.equal(result.resultCount, 0);
+  assert.equal(result.searchRequestCount, 1);
+  assert.equal(result.fetchedCount, 0);
+});
+
+test('fetches a direct user URL without Search', async () => {
+  let searchCalls = 0;
+  const fetchUrls = [];
+  globalThis.__nativeDeepSeekToolSearch = async () => { searchCalls += 1; return { results: [] }; };
+  globalThis.__nativeDeepSeekToolFetch = async (_provider, url) => { fetchUrls.push(url); return { title: '直达页面', content: '直达正文' }; };
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    [{ role: 'user', content: '请读取 https://example.test/article。' }],
+    '请读取网页',
+  );
+  assert.equal(searchCalls, 0);
+  assert.deepEqual(fetchUrls, ['https://example.test/article']);
+  assert.equal(result.searchRequestCount, 0);
+  assert.equal(result.fetchedCount, 1);
+  assert.equal(result.citations[0].url, 'https://example.test/article');
+});
+
+test('does not count a direct URL Fetch with an empty body as successful', async () => {
+  globalThis.__nativeDeepSeekToolSearch = async () => { throw new Error('不应调用 Search'); };
+  globalThis.__nativeDeepSeekToolFetch = async () => ({ title: '空页面', content: '' });
+  const result = await nativeSearch.runNativeWebSearch(
+    { ...provider, platform: 'deepseek' },
+    { ...model, rawId: 'deepseek-flash' },
+    [{ role: 'user', content: '请读取 https://example.test/empty。' }],
+    '请读取网页',
+  );
+  assert.equal(result.text, '');
+  assert.deepEqual(result.citations, []);
+  assert.equal(result.resultCount, 0);
+  assert.equal(result.fetchedCount, 0);
+  assert.deepEqual(result.warnings, ['网页抓取未返回正文，未计入成功 Fetch。']);
 });

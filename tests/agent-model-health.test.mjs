@@ -35,3 +35,17 @@ test('successful recovery clears the circuit and keeps latency for the picker', 
   assert.equal(record.state, 'healthy');
   assert.equal(record.lastLatencyMs, 820);
 });
+
+test('local context budget skips do not penalize provider health or candidate order', () => {
+  const small = runtime('small');
+  const large = runtime('large', 'backup');
+  health.noteAgentModelFailure(small, Object.assign(new Error('necessary context exceeds budget'), { code: 'AGENT_CONTEXT_BUDGET_EXCEEDED' }), 0);
+  assert.deepEqual(health.orderAgentModelCandidates([small, large]), [small, large]);
+  assert.equal(health.isAgentModelCircuitOpen(small), false);
+  assert.deepEqual(health.getAgentModelHealthSnapshot(), []);
+
+  health.noteAgentModelSuccess(small, 200);
+  const before = health.getAgentModelHealthSnapshot();
+  health.noteAgentModelFailure(small, { code: 'AGENT_CONTEXT_BUDGET_EXCEEDED' }, 0);
+  assert.deepEqual(health.getAgentModelHealthSnapshot(), before);
+});

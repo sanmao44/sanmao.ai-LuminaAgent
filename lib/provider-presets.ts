@@ -75,8 +75,18 @@ const standardCompatibility = {
   authPrefix: 'Bearer ',
 };
 
-function defaultResponsesPath(platform: ProviderPlatform) {
-  return platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : standardCompatibility.responsesPath;
+export function defaultResponsesPath(_platform: ProviderPlatform) {
+  return standardCompatibility.responsesPath;
+}
+
+export function normalizeResponsesPath(platform: ProviderPlatform, value: string | undefined) {
+  const path = String(value || '').trim();
+  if (platform !== 'deepseek') return path || defaultResponsesPath(platform);
+  if (!path || /^\/?(?:beta\/responses|v1\/responses)\/?$/i.test(path)
+    || /^https?:\/\/api\.deepseek\.com\/(?:beta\/responses|v1\/responses)\/?$/i.test(path)) {
+    return defaultResponsesPath(platform);
+  }
+  return path;
 }
 
 export const providerPresets: ProviderPreset[] = [
@@ -212,7 +222,7 @@ export function resolveProviderConfiguration(
     imageEditPath: pick('imageEditPath', standardCompatibility.imageEditPath),
     imageUpscalePath: pick('imageUpscalePath', standardCompatibility.imageUpscalePath),
     imageUpscaleStatusPath: pick('imageUpscaleStatusPath', standardCompatibility.imageUpscaleStatusPath),
-    responsesPath: pick('responsesPath', defaultResponsesPath(preset.value)),
+    responsesPath: normalizeResponsesPath(preset.value, pick('responsesPath', defaultResponsesPath(preset.value))),
     authHeader: pick('authHeader', standardCompatibility.authHeader),
     authPrefix: pick('authPrefix', standardCompatibility.authPrefix),
     videoTransport,

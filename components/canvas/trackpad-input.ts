@@ -98,3 +98,31 @@ export function shouldCanvasInterceptModifiedWheel(
 ) {
   return modified && !overMediaViewer;
 }
+
+/** Own pinch zoom while the canvas is active, including its body portals. */
+export function bindCanvasPinchZoom(
+  ownerDocument: Document,
+  zoomAt: (clientX: number, clientY: number, factor: number) => void,
+) {
+  const handleWheel = (event: WheelEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!shouldCanvasInterceptModifiedWheel(
+      event.ctrlKey || event.metaKey,
+      Boolean(target?.closest(".media-viewer-stage")),
+    )) return;
+
+    // This must run before React's passive wheel handlers and before portal
+    // controls stop propagation. Ordinary scrolling remains with the control.
+    event.preventDefault();
+    // Modal workbenches (including 360° and video editing) keep their own
+    // gesture handlers without zooming the browser or the canvas behind them.
+    if (target?.closest(".canvas-modal-backdrop")) return;
+    event.stopPropagation();
+    zoomAt(event.clientX, event.clientY, trackpadPinchZoomFactor(event.deltaY));
+  };
+  ownerDocument.addEventListener("wheel", handleWheel, {
+    capture: true,
+    passive: false,
+  });
+  return () => ownerDocument.removeEventListener("wheel", handleWheel, true);
+}

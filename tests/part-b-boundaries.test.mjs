@@ -282,6 +282,84 @@ test('artifact follow-up stops after the generated file is returned', async () =
   assert.equal(canContinue, false);
 });
 
+test('failed HTML file delivery gets one repair using only the file tool', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  const { runToolLoop } = load('./packages/tool-runtime/tool-loop');
+  for (const repaired of [true, false]) {
+    const initialCall = { id: 'html-initial', function: { name: 'file_generate', arguments: '{"files":[]}' } };
+    const messages = [
+      { role: 'user', content: 'Generate an HTML file.' },
+      { role: 'assistant', content: null, tool_calls: [initialCall] },
+      { role: 'tool', tool_call_id: initialCall.id, content: JSON.stringify({ ok: false, error: '没有收到有效的文件内容' }) },
+    ];
+    let modelCalls = 0;
+    const executed = [];
+    const result = await runCapabilityFollowups({
+      messages,
+      contextMaxChars: 4000,
+      signal: new AbortController().signal,
+      boundAgentContext: (items) => items,
+      boundToolResult: (content) => content,
+      toolRuntime: {
+        runLoop: runToolLoop,
+        async executeCalls(calls) {
+          executed.push(...calls);
+          return {
+            results: calls.map((call) => ({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(repaired
+              ? { ok: true, count: 1, files: [{ name: 'page.html', size: 23 }] }
+              : { ok: false, error: '没有收到有效的文件内容' }) })),
+            deferredCalls: [],
+            stalled: false,
+          };
+        },
+      },
+      callModel: async ({ messages: current, tools }) => {
+        modelCalls += 1;
+        assert.match(current.at(-1).content, /没有收到有效的文件内容/);
+        assert.deepEqual(tools.map((tool) => tool.function.name), ['file_generate']);
+        return { tool_calls: [{ id: 'html-repair', function: { name: 'file_generate', arguments: '{"files":[{"filename":"page.html","content":"<html>fixed</html>"}]}' } }] };
+      },
+      skillTools: [],
+      artifactTools: [{ function: { name: 'file_generate' } }, { function: { name: 'presentation_generate' } }],
+      skillToolCalls: 0,
+      artifactRequested: true,
+      initialToolCalls: [initialCall],
+      hasGenerated: false,
+      hasGeneratedFiles: false,
+      hasWebSearch: false,
+    });
+    assert.equal(modelCalls, 1, 'file repair must not start another model round');
+    assert.equal(executed.length, 1);
+    assert.equal(result.trace.length, 1);
+    assert.equal(result.trace[0].continued, !repaired);
+    assert.equal(messages.at(-1).tool_call_id, 'html-repair');
+  }
+});
+
+test('a delivered HTML file does not enter file parameter repair', async () => {
+  const { runCapabilityFollowups } = load('./apps/api/agent-execution');
+  await runCapabilityFollowups({
+    messages: [{ role: 'user', content: 'Generate an HTML file.' }],
+    contextMaxChars: 4000,
+    signal: new AbortController().signal,
+    toolRuntime: {
+      async runLoop() { assert.fail('a delivered file must not be regenerated'); },
+      async executeCalls() { assert.fail('a delivered file must not be regenerated'); },
+    },
+    boundAgentContext: (items) => items,
+    boundToolResult: (content) => content,
+    callModel: async () => { assert.fail('a delivered file needs no repair request'); },
+    skillTools: [],
+    artifactTools: [{ function: { name: 'file_generate' } }],
+    skillToolCalls: 0,
+    artifactRequested: true,
+    initialToolCalls: [{ id: 'html-delivered', function: { name: 'file_generate' } }],
+    hasGenerated: false,
+    hasGeneratedFiles: true,
+    hasWebSearch: false,
+  });
+});
+
 test('Skill follow-up rejects a tool that was not offered without executing it', async () => {
   const { runCapabilityFollowups } = load('./apps/api/agent-execution');
   const executed = [];

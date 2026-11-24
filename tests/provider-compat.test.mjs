@@ -263,6 +263,695 @@ test('chat, stream and Responses requests all receive provider-ready media', asy
     || body.input?.[0]?.content[0].image_url.url === 'https://cdn.example/reference.png'));
 });
 
+test('DeepSeek Responses uses the official endpoint, model aliases, image input and top-level function tools', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({
+      id: 'resp-1',
+      model: 'deepseek-flash',
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: '看到了。' }] }],
+      usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const result = await providers.chatCompletion(provider, 'deepseek-v4-flash', {
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: '描述图片' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+      ] }],
+      tools: [{ type: 'function', function: { name: 'lookup', description: '查找', parameters: { type: 'object', properties: {} } } }],
+      tool_choice: 'auto',
+    });
+    assert.equal(result.choices[0].message.content, '看到了。');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://api.deepseek.com/responses');
+  assert.equal(calls[0].headers.Authorization, 'Bearer test-key');
+  assert.equal(calls[0].body.model, 'deepseek-flash');
+  assert.deepEqual(calls[0].body.input[0].content[1], { type: 'input_image', image_url: 'data:image/png;base64,AAA' });
+  assert.deepEqual(calls[0].body.tools, [{ type: 'function', name: 'lookup', description: '查找', parameters: { type: 'object', properties: {} } }]);
+  assert.equal(calls[0].body.reasoning, undefined);
+});
+
+test('DeepSeek Responses preserves developer, input_file and server-side tool items', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({
+      model: 'deepseek-v4-pro',
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: '完成' }] }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/beta', apiKey: 'test-key' };
+  try {
+    await providers.responsesCompletion(provider, 'deepseek-v4-pro', [
+      { role: 'developer', content: '开发者约束' },
+      { role: 'user', content: [
+        { type: 'input_file', file_id: 'file-api-123' },
+      ] },
+      { type: 'web_search_call', id: 'ws-1', status: 'completed' },
+    ], {
+      tools: [{ type: 'web_search' }],
+      tool_choice: 'auto',
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(requests[0].url, 'https://api.deepseek.com/responses');
+  assert.equal(requests[0].body.input[0].role, 'developer');
+  assert.deepEqual(requests[0].body.input[1].content, [
+    { type: 'input_file', file_id: 'file-api-123' },
+  ]);
+  assert.deepEqual(requests[0].body.input[2], { type: 'web_search_call', id: 'ws-1', status: 'completed' });
+  assert.deepEqual(requests[0].body.tools, [{ type: 'web_search' }]);
+});
+
+test('DeepSeek Responses ignores unknown tools, validates Web Tools constraints and forwards user identifiers', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ status: 'completed', output: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    await providers.responsesCompletion(provider, 'deepseek-flash', '问题', {
+      tools: [{ type: 'vendor_extension' }],
+      user: '用户-1',
+    });
+    await assert.rejects(providers.responsesCompletion(provider, 'deepseek-flash', '问题', {
+      tools: [{ type: 'deepseek_web_search' }],
+      topLogprobs: 1,
+    }), /Web Tools 不支持 top_logprobs/);
+    await assert.rejects(providers.responsesCompletion(provider, 'deepseek-flash', '问题', {
+      user: '用户'.repeat(171),
+    }), /512 UTF-8 字节/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(calls[0].tools, undefined);
+  assert.equal(calls[0].user, '用户-1');
+  assert.equal(calls.length, 1);
+});
+
+test('DeepSeek Responses rejects an input ending in assistant or reasoning items', () => {
+  assert.throws(() => providers.serializeDeepSeekResponsesInput([
+    { role: 'user', content: '继续' },
+    { role: 'assistant', content: '上轮回答' },
+  ]), /不支持以 assistant 消息或 reasoning item 结尾/);
+  assert.throws(() => providers.serializeDeepSeekResponsesInput([
+    { role: 'user', content: '继续' },
+    { type: 'reasoning', content: [{ type: 'reasoning_text', text: '推理' }] },
+  ]), /不支持以 assistant 消息或 reasoning item 结尾/);
+});
+
+test('DeepSeek v4-pro rejects image input while flash accepts it', () => {
+  assert.throws(
+    () => providers.serializeDeepSeekResponsesInput([
+      { role: 'user', content: [{ type: 'input_image', file_id: 'file-api-image' }] },
+    ], 'deepseek-v4-pro'),
+    /deepseek-v4-pro 不支持 input_image/,
+  );
+});
+
+test('DeepSeek Responses validates file roles and tool-output content according to the API contract', () => {
+  assert.deepEqual(providers.serializeDeepSeekResponsesInput([
+    { role: 'user', content: [{ type: 'input_file', file_id: 'file-user-1' }] },
+  ]), [{ role: 'user', content: [{ type: 'input_file', file_id: 'file-user-1' }] }]);
+  for (const role of ['system', 'developer', 'assistant']) {
+    assert.throws(
+      () => providers.serializeDeepSeekResponsesInput([{ role, content: [{ type: 'input_file', file_id: 'file-invalid' }] }]),
+      /仅支持 user 消息/,
+    );
+  }
+  assert.throws(
+    () => providers.serializeDeepSeekResponsesInput([
+      { role: 'tool', tool_call_id: 'call-1', content: [{ type: 'input_file', file_id: 'file-invalid' }] },
+    ]),
+    /工具输出不支持 input_file/,
+  );
+});
+
+test('DeepSeek Responses maps native web-tool options and enforces incompatible tool combinations', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ status: 'completed', output: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    await providers.responsesCompletion(provider, 'deepseek-flash', '联网查询', {
+      tools: [{ type: 'deepseek_web_search' }, { type: 'deepseek_read_url' }],
+      tool_choice: 'required',
+      reasoningEffort: 'max',
+      maxOutputTokens: 4096,
+      text: { format: { type: 'text' } },
+      safetyCheck: { level: 'high' },
+      title: { enabled: true },
+    });
+    await providers.responsesCompletion(provider, 'deepseek-flash', '联网查询', {
+      tools: [{ type: 'deepseek_web_search' }, { type: 'function', name: 'lookup', parameters: { type: 'object' } }],
+    });
+    await assert.rejects(providers.responsesCompletion(provider, 'deepseek-flash', '联网查询', {
+      tools: [{ type: 'deepseek_web_search' }, { type: 'custom', name: 'apply_patch' }],
+    }), /不能与 web_search、custom、namespace 或 tool_search 组合/);
+    await assert.rejects(providers.responsesCompletion(provider, 'deepseek-flash', '联网查询', {
+      tools: [{ type: 'deepseek_web_search' }, { type: 'deepseek_web_search' }],
+    }), /只能声明一次/);
+    await providers.responsesCompletion(provider, 'deepseek-flash', '联网查询', {
+      tools: [{ type: 'web_search' }],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(calls[0].tools, [{ type: 'deepseek_web_search' }, { type: 'deepseek_read_url' }]);
+  assert.equal(calls[0].tool_choice, 'auto');
+  assert.equal(calls[0].reasoning.effort, 'max');
+  assert.equal(calls[0].max_output_tokens, 4096);
+  assert.deepEqual(calls[0].text, { format: { type: 'text' } });
+  assert.deepEqual(calls[0].safety_check, { level: 'high' });
+  assert.deepEqual(calls[0].title, { enabled: true });
+  assert.deepEqual(calls[1].tools, [
+    { type: 'deepseek_web_search' },
+    { type: 'function', name: 'lookup', parameters: { type: 'object' } },
+  ]);
+  assert.equal(calls[2].tools, undefined);
+});
+
+test('DeepSeek Responses converts custom tool calls into the existing tool callback contract', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    status: 'completed',
+    output: [{ type: 'custom_tool_call', id: 'item-apply', call_id: 'call-apply', name: 'apply_patch', input: '*** Begin Patch' }],
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const result = await providers.chatCompletion(provider, 'deepseek-v4-pro', { messages: [{ role: 'user', content: '编辑文件' }] });
+    assert.deepEqual(result.choices[0].message.tool_calls, [{
+      id: 'call-apply',
+      type: 'function',
+      function: { name: 'apply_patch', arguments: '*** Begin Patch' },
+    }]);
+    assert.equal(result.choices[0].finish_reason, 'tool_calls');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses preserves reasoning and function-call replay items', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({
+      model: 'deepseek-flash',
+      status: 'completed',
+      output: [
+        { type: 'reasoning', content: [{ type: 'reasoning_text', text: '先查工具。' }] },
+        { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"q":"x"}' },
+      ],
+      usage: { input_tokens: 10, output_tokens: 3, total_tokens: 13, output_tokens_details: { reasoning_tokens: 2 } },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const first = await providers.chatCompletion(provider, 'deepseek-flash', {
+      messages: [{ role: 'user', content: '查一下' }],
+      tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }],
+    });
+    assert.equal(first.choices[0].finish_reason, 'tool_calls');
+    assert.equal(first.choices[0].message.reasoning_content, '先查工具。');
+    await providers.chatCompletion(provider, 'deepseek-flash', {
+      messages: [
+        { role: 'user', content: '查一下' },
+        first.choices[0].message,
+        { role: 'tool', tool_call_id: 'call-1', content: '{"ok":true}' },
+      ],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(requests[1].input.slice(-3), [
+    { type: 'reasoning', content: [{ type: 'reasoning_text', text: '先查工具。' }] },
+    { type: 'function_call', call_id: 'call-1', name: 'lookup', arguments: '{"q":"x"}' },
+    { type: 'function_call_output', call_id: 'call-1', output: '{"ok":true}' },
+  ]);
+  assert.equal(requests[0].reasoning, undefined);
+});
+
+test('DeepSeek Responses replays server tool history including URL-reading signatures', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ status: 'completed', output: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  const serverToolCall = {
+    type: 'web_search_call',
+    id: 'srvtoolu_rl_1',
+    status: 'completed',
+    kind: 'read_link',
+    action: { type: 'read_link', url: 'https://example.test/page' },
+    page: { url: 'https://example.test/page', title: '页面' },
+    signature: 'signed-page-context',
+  };
+  try {
+    await providers.chatCompletion(provider, 'deepseek-flash', {
+      messages: [
+        { role: 'user', content: '请读网页' },
+        { role: 'assistant', content: '页面摘要', server_tool_calls: [serverToolCall] },
+        { role: 'user', content: '继续' },
+      ],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(calls[0].input[1], { role: 'assistant', content: [{ type: 'output_text', text: '页面摘要' }] });
+  assert.deepEqual(calls[0].input[2], serverToolCall);
+  assert.deepEqual(calls[0].input[3], { role: 'user', content: [{ type: 'input_text', text: '继续' }] });
+});
+
+test('DeepSeek Chat server tool groups replay as unchanged Responses output items', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ status: 'completed', output: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  const grouped = [{
+    index: 0,
+    reasoning_content: '',
+    calls: [{
+      index: 0,
+      id: 'srvtoolu_rl_2',
+      type: 'deepseek_read_url',
+      kind: 'read_link',
+      action: { type: 'read_link', url: 'https://example.test/page' },
+      status: 'completed',
+      page: { url: 'https://example.test/page', title: '页面', published_at: null },
+      signature: 'signed-page-context',
+    }],
+  }];
+  try {
+    await providers.chatCompletion(provider, 'deepseek-flash', {
+      messages: [
+        { role: 'user', content: '请读网页' },
+        { role: 'assistant', content: '页面摘要', server_tool_calls: grouped },
+        { role: 'user', content: '继续' },
+      ],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(calls[0].input[2], {
+    type: 'web_search_call',
+    id: 'srvtoolu_rl_2',
+    status: 'completed',
+    kind: 'read_link',
+    action: { type: 'read_link', url: 'https://example.test/page' },
+    page: { url: 'https://example.test/page', title: '页面', published_at: null },
+    signature: 'signed-page-context',
+  });
+});
+
+test('DeepSeek Responses replays apply_patch as a custom_tool_call', async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({
+      model: 'deepseek-v4-pro',
+      status: 'completed',
+      output: [{ type: 'custom_tool_call', call_id: 'call-patch', name: 'apply_patch', input: '*** Begin Patch' }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const first = await providers.chatCompletion(provider, 'deepseek-v4-pro', {
+      messages: [{ role: 'user', content: '编辑文件' }],
+      tools: [{ type: 'custom', name: 'apply_patch' }],
+    });
+    await providers.chatCompletion(provider, 'deepseek-v4-pro', {
+      messages: [
+        { role: 'user', content: '编辑文件' },
+        first.choices[0].message,
+        { role: 'tool', tool_call_id: 'call-patch', content: '已应用' },
+      ],
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.deepEqual(requests[1].input.slice(-2), [
+    { type: 'custom_tool_call', call_id: 'call-patch', name: 'apply_patch', input: '*** Begin Patch' },
+    { type: 'custom_tool_call_output', call_id: 'call-patch', output: '已应用' },
+  ]);
+});
+
+test('chat payload limit errors preserve the upstream limit, error code and request id', async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), body: JSON.parse(init.body) });
+    return new Response(JSON.stringify({ error: { message: 'Request body exceeds 4 MiB', code: 'request_too_large' } }), {
+      status: 413,
+      headers: { 'content-type': 'application/json', 'x-request-id': 'req-payload-limit' },
+    });
+  };
+  try {
+    await assert.rejects(providers.chatCompletion({
+      id: 'custom', name: 'Custom', type: 'openai-compatible', platform: 'custom',
+      baseUrl: 'https://chat.example.test/v1', apiKey: 'test-key',
+    }, 'test-chat', { messages: [{ role: 'user', content: '请生成 HTML 文件' }] }), (error) => {
+      assert.equal(error.providerStatus, 413);
+      assert.equal(error.providerFailureKind, 'http');
+      assert.equal(error.providerErrorCode, 'request_too_large');
+      assert.equal(error.providerRequestId, 'req-payload-limit');
+      assert.match(error.message, /请求内容超过服务商限制/);
+      assert.match(error.message, /Request body exceeds 4 MiB/);
+      assert.match(error.message, /request id: req-payload-limit/);
+      assert.doesNotMatch(error.message, /图片/);
+      return true;
+    });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://chat.example.test/v1/chat/completions');
+  assert.deepEqual(requests[0].body.messages, [{ role: 'user', content: '请生成 HTML 文件' }]);
+});
+
+test('DeepSeek Responses normalizes effort aliases and preserves provider error code/request id', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ error: { code: 'context_length_exceeded', message: 'too long', request_id: 'req-42' } }), { status: 400, headers: { 'content-type': 'application/json', 'x-request-id': 'req-42' } });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    await assert.rejects(
+      providers.responsesCompletion(provider, 'deepseek-v4-pro', '思考', {
+        reasoningEffort: 'medium',
+        temperature: 0.4,
+        topP: 0.8,
+        topLogprobs: 5,
+      }),
+      (error) => error?.providerErrorCode === 'context_length_exceeded' && /request id: req-42/.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(calls[0].reasoning.effort, 'high');
+  assert.equal(calls[0].temperature, 0.4);
+  assert.equal(calls[0].top_p, 0.8);
+  assert.equal(calls[0].top_logprobs, 5);
+});
+
+test('DeepSeek Responses failed responses preserve terminal error code and request id', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    id: 'resp-failed',
+    status: 'failed',
+    error: { code: 'content_filter', message: 'blocked' },
+  }), { status: 200, headers: { 'content-type': 'application/json', 'x-request-id': 'req-failed' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    await assert.rejects(
+      providers.chatCompletion(provider, 'deepseek-flash', { messages: [{ role: 'user', content: '你好' }] }),
+      (error) => error?.providerErrorCode === 'content_filter' && /request id: req-failed/.test(error.message),
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses preserves billable usage on failed non-streaming responses', () => {
+  assert.throws(() => providers.normalizeDeepSeekResponsesResponse({
+    status: 'failed',
+    error: { code: 'server_error', message: 'partial generation failed' },
+    usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10, server_tool_use: { tool_search: 1 } },
+  }, 'deepseek-flash'), (error) => {
+    assert.equal(error.providerErrorCode, 'server_error');
+    assert.equal(error.providerUsage.prompt_tokens, 7);
+    assert.equal(error.providerUsage.completion_tokens, 3);
+    assert.deepEqual(error.providerUsage.server_tool_use, { tool_search: 1 });
+    return true;
+  });
+});
+
+test('DeepSeek Responses preserves server tool calls, annotations, title and server tool usage', () => {
+  const result = providers.normalizeDeepSeekResponsesResponse({
+    model: 'deepseek-flash',
+    status: 'completed',
+    title: '联网任务',
+    output: [
+      {
+        type: 'web_search_call',
+        id: 'ws-1',
+        status: 'completed',
+        kind: 'search',
+        action: { query: 'DeepSeek' },
+        page: { title: '官方文档', content: '正文' },
+        signature: 'sig-1',
+        error: null,
+      },
+      {
+        type: 'tool_search_call',
+        id: 'ts-1',
+        status: 'completed',
+        kind: 'fetch',
+        action: { url: 'https://example.test' },
+        page: { title: '页面', content: '内容' },
+        signature: 'sig-2',
+      },
+      {
+        type: 'message',
+        content: [{
+          type: 'output_text',
+          text: '答案',
+          annotations: [{ type: 'url_citation', title: '官方文档', url: 'https://example.test/docs' }],
+        }],
+      },
+    ],
+    usage: {
+      input_tokens: 2,
+      output_tokens: 3,
+      total_tokens: 5,
+      server_tool_use: { tool_search: 1, tool_fetch: 1, tool_image_search: 0 },
+    },
+  }, 'deepseek-flash');
+  assert.equal(result.choices[0].message.content, '答案');
+  assert.equal(result.choices[0].message.title, '联网任务');
+  assert.equal(result.choices[0].message.server_tool_calls.length, 1);
+  assert.equal(result.choices[0].message.server_tool_calls[0].calls.length, 2);
+  assert.equal(result.choices[0].message.server_tool_calls[0].calls[0].page.content, '正文');
+  assert.equal(result.choices[0].message.server_tool_calls[0].calls[0].type, 'deepseek_web_search');
+  assert.equal(result.choices[0].message.server_tool_calls[0].calls[1].type, 'deepseek_read_url');
+  assert.deepEqual(result.choices[0].message.annotations, [{ type: 'url_citation', title: '官方文档', url: 'https://example.test/docs' }]);
+  assert.deepEqual(result.server_tool_calls, result.choices[0].message.server_tool_calls);
+  assert.deepEqual(result.annotations, result.choices[0].message.annotations);
+  assert.deepEqual(result.usage.server_tool_use, { tool_search: 1, tool_fetch: 1, tool_image_search: 0 });
+});
+
+test('DeepSeek Responses failed stream rejects with the upstream error code and request id', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"暂时失败","request_id":"req-stream"}}}\n\n'));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req-stream' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const response = await providers.chatCompletionStream(provider, 'deepseek-flash', { messages: [{ role: 'user', content: '你好' }] });
+    await assert.rejects(response.text(), (error) => error?.providerErrorCode === 'server_error' && /request id: req-stream/.test(error.message));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses failed streams emit usage before propagating the provider error', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('event: response.failed\ndata: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"生成中断"},"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}}\n\n'));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const response = await providers.chatCompletionStream(provider, 'deepseek-flash', { messages: [{ role: 'user', content: '你好' }] });
+    const reader = response.body.getReader();
+    const first = await reader.read();
+    const firstFrame = new TextDecoder().decode(first.value);
+    assert.match(firstFrame, /"prompt_tokens":8/);
+    assert.match(firstFrame, /"completion_tokens":2/);
+    await assert.rejects(reader.read(), (error) => error?.providerErrorCode === 'server_error');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek v4-pro streaming rejects image input before opening the Responses stream', async () => {
+  const previousFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => {
+    called = true;
+    throw new Error('fetch should not be called');
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    await assert.rejects(providers.chatCompletionStream(provider, 'deepseek-v4-pro', {
+      messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }] }],
+    }), /deepseek-v4-pro 不支持图像输入/);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses streaming bridges text, tool arguments and terminal usage', async () => {
+  const previousFetch = globalThis.fetch;
+  const events = [
+    'event: response.reasoning_text.delta\ndata: {"type":"response.reasoning_text.delta","delta":"先想一步"}\n\n',
+    'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"你好"}\n\n',
+    'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"item-1","name":"lookup"}}\n\n',
+    'event: response.function_call_arguments.delta\ndata: {"type":"response.function_call_arguments.delta","output_index":1,"item_id":"item-1","delta":"{\\"q\\":"}\n\n',
+    'event: response.function_call_arguments.done\ndata: {"type":"response.function_call_arguments.done","output_index":1,"item_id":"item-1","arguments":"{\\"q\\":\\"x\\"}"}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"model":"deepseek-flash","status":"completed","output":[{"type":"function_call","id":"item-1","call_id":"call-1","name":"lookup","arguments":"{\\"q\\":\\"x\\"}"}],"usage":{"input_tokens":2,"output_tokens":4,"total_tokens":6}}}\n\n',
+  ];
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(new TextEncoder().encode(event));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const response = await providers.chatCompletionStream(provider, 'deepseek-flash', { messages: [{ role: 'user', content: '你好' }] });
+    const text = await response.text();
+    assert.match(text, /"reasoning_content":"先想一步"/);
+    assert.match(text, /你好/);
+    assert.match(text, /"name":"lookup"/);
+    assert.match(text, /"total_tokens":6/);
+    assert.match(text, /data: \[DONE\]/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses streaming preserves server tool metadata on the terminal chunk', async () => {
+  const previousFetch = globalThis.fetch;
+  const events = [
+    'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"web_search_call","id":"ws-1","status":"in_progress"}}\n\n',
+    'event: response.output_text.annotation.added\ndata: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","title":"官方文档","url":"https://example.test/docs"}}\n\n',
+    'event: response.output_item.done\ndata: {"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws-1","status":"completed","kind":"search","action":{"query":"DeepSeek"},"page":{"title":"官方文档","content":"正文"},"signature":"sig-1","error":null}}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"model":"deepseek-flash","status":"completed","title":"联网任务","output":[{"type":"web_search_call","id":"ws-1","status":"completed","kind":"search","action":{"query":"DeepSeek"},"page":{"title":"官方文档","content":"正文"},"signature":"sig-1","error":null},{"type":"message","content":[{"type":"output_text","text":"答案"}]}],"usage":{"input_tokens":2,"output_tokens":4,"total_tokens":6,"server_tool_use":{"tool_search":1,"tool_fetch":1,"tool_image_search":0}}}}\n\n',
+  ];
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(new TextEncoder().encode(event));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const response = await providers.chatCompletionStream(provider, 'deepseek-flash', { messages: [{ role: 'user', content: '搜索' }] });
+    const streamText = await response.text();
+    const chunks = streamText.split(/\r?\n\r?\n/).filter((frame) => frame.startsWith('data: ')).map((frame) => frame.slice(6)).filter((value) => value !== '[DONE]').map((value) => JSON.parse(value));
+    const terminal = chunks.at(-1);
+    assert.equal(terminal.choices[0].finish_reason, 'stop');
+    assert.equal(terminal.choices[0].delta.server_tool_calls[0].calls[0].page.content, '正文');
+    assert.equal(terminal.choices[0].delta.server_tool_calls[0].calls[0].signature, 'sig-1');
+    assert.equal(terminal.choices[0].delta.server_tool_calls[0].calls[0].type, 'deepseek_web_search');
+    assert.deepEqual(terminal.choices[0].delta.annotations, [{ type: 'url_citation', title: '官方文档', url: 'https://example.test/docs' }]);
+    assert.equal(terminal.choices[0].delta.title, '联网任务');
+    assert.deepEqual(terminal.usage.server_tool_use, { tool_search: 1, tool_fetch: 1, tool_image_search: 0 });
+    assert.deepEqual(chunks.slice(0, 3).map((entry) => entry.choices[0].server_tool_event.type), [
+      'step_reasoning_done',
+      'call_started',
+      'call_completed',
+    ]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Responses streaming bridges custom tool callbacks without duplicating input', async () => {
+  const previousFetch = globalThis.fetch;
+  const events = [
+    'event: response.output_item.added\ndata: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"item-patch","call_id":"call-patch","name":"apply_patch"}}\n\n',
+    'event: response.custom_tool_call_input.delta\ndata: {"type":"response.custom_tool_call_input.delta","output_index":0,"item_id":"item-patch","delta":"*** Begin Patch"}\n\n',
+    'event: response.custom_tool_call_input.done\ndata: {"type":"response.custom_tool_call_input.done","output_index":0,"item_id":"item-patch","input":"*** Begin Patch"}\n\n',
+    'event: response.completed\ndata: {"type":"response.completed","response":{"model":"deepseek-v4-pro","status":"completed","output":[{"type":"custom_tool_call","id":"item-patch","call_id":"call-patch","name":"apply_patch","input":"*** Begin Patch"}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3,"server_tool_use":{"web_search_requests":1}}}}\n\n',
+  ];
+  globalThis.fetch = async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const event of events) controller.enqueue(new TextEncoder().encode(event));
+      controller.close();
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const response = await providers.chatCompletionStream(provider, 'deepseek-v4-pro', { messages: [{ role: 'user', content: '编辑文件' }] });
+    const text = await response.text();
+    assert.match(text, /"name":"apply_patch"/);
+    assert.match(text, /"arguments":"\*\*\* Begin Patch"/);
+    assert.match(text, /"web_search_requests":1/);
+    assert.match(text, /"finish_reason":"tool_calls"/);
+    assert.match(text, /data: \[DONE\]/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('DeepSeek Search and Fetch use dedicated endpoints, auth and validated bodies', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) });
+    if (String(url).endsWith('/tools/search')) return new Response(JSON.stringify({ results: [{ title: '来源', url: 'https://example.test', summary: '摘要' }] }), { status: 200 });
+    return new Response(JSON.stringify({ title: '页面', content: '正文' }), { status: 200 });
+  };
+  const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
+  try {
+    const search = await providers.deepSeekToolSearch(provider, { query: 'DeepSeek V4', count: 5, ori_question: '原问题', localization: '1.2.3.4', need_content: true });
+    const fetched = await providers.deepSeekToolFetch(provider, 'https://example.test/page');
+    assert.equal(search.results[0].title, '来源');
+    assert.equal(fetched.content, '正文');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+  assert.equal(calls[0].url, 'https://api.deepseek.com/v1/tools/search');
+  assert.equal(calls[1].url, 'https://api.deepseek.com/v1/tools/fetch');
+  assert.equal(calls[0].headers.Authorization, 'Bearer test-key');
+  assert.deepEqual(calls[0].body, { query: 'DeepSeek V4', count: 5, ori_question: '原问题', localization: '1.2.3.4', need_content: true });
+  assert.deepEqual(calls[1].body, { url: 'https://example.test/page' });
+  await assert.rejects(providers.deepSeekToolSearch(provider, { query: '' }), /1 至 128/);
+  await assert.rejects(providers.deepSeekToolFetch(provider, 'ftp://example.test/page'), /HTTP 或 HTTPS/);
+});
+
+test('DeepSeek Responses validates custom tool output pairing', () => {
+  assert.throws(() => providers.serializeDeepSeekResponsesInput([
+    { type: 'custom_tool_call_output', call_id: 'missing', output: '结果' },
+  ]), /custom_tool_call_output 缺少对应的 custom_tool_call/);
+  assert.throws(() => providers.serializeDeepSeekResponsesInput([
+    { type: 'custom_tool_call', call_id: 'duplicate', name: 'apply_patch', input: 'a' },
+    { type: 'custom_tool_call', call_id: 'duplicate', name: 'apply_patch', input: 'b' },
+  ]), /工具调用 call_id 重复/);
+});
+
 test('stream transport releases the header timeout after response headers arrive', async () => {
   const previousFetch = globalThis.fetch;
   let requestSignal;
@@ -301,7 +990,7 @@ test('OpenAI-compatible chat keeps inline data URLs without a relay conversion',
     });
   };
   const provider = {
-    id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek',
+    id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'custom',
     baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key',
   };
   const inline = 'data:image/png;base64,iVBORw0KGgoAAAAAAAAAAAAA';

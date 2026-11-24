@@ -69,6 +69,10 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     if (options.signal?.aborted) { stopReason = 'signal'; break; }
     if (now() >= deadline) { stopReason = 'deadline'; break; }
     const stepStartedAt = now();
+    if (options.contextMaxChars) {
+      const bounded = options.boundAgentContext?.(options.messages, options.contextMaxChars) || options.messages;
+      options.messages.splice(0, options.messages.length, ...bounded);
+    }
     const reply = await options.callModel({ step, messages: options.messages });
     if (options.signal?.aborted) { stopReason = 'signal'; break; }
     const rawCalls = Array.isArray(reply?.tool_calls) ? reply.tool_calls as ToolLoopCall[] : [];
@@ -98,10 +102,6 @@ export async function runToolLoop(options: RunToolLoopOptions): Promise<ToolLoop
     const results = (await options.runCalls(ordered, { step })).map((result) => ({ ...result, ...(typeof result.content === 'string' ? { content: boundResult(result.content) } : {}) }));
     const reasoning = typeof reply?.reasoning_content === 'string' && reply.reasoning_content ? { reasoning_content: reply.reasoning_content } : {};
     options.messages.push({ role: 'assistant', content: reply?.content ?? null, tool_calls: calls, ...reasoning }, ...results);
-    if (options.contextMaxChars) {
-      const bounded = options.boundAgentContext?.(options.messages, options.contextMaxChars) || options.messages;
-      options.messages.splice(0, options.messages.length, ...bounded);
-    }
     toolCallCount += calls.length;
     const continueLoop = options.shouldContinue ? options.shouldContinue({ step: step + 1, toolCallCount, elapsedMs: now() - startedAt }) : true;
     trace.push({ step, calls: ordered.map(callName), durationMs: now() - stepStartedAt, continued: continueLoop });

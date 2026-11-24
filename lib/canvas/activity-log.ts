@@ -189,6 +189,14 @@ export function generationLogKindLabel(log: GenerationLog) {
   return kind === "llm" ? "LLM" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "图片";
 }
 
+/** Keep the optional native Search/Fetch count compact in Canvas task metadata. */
+export function generationLogWebSearchRequestLabel(log: Pick<GenerationLog, "webSearchRequestCount">) {
+  const count = log.webSearchRequestCount;
+  return typeof count === "number" && Number.isFinite(count) && count > 0
+    ? ` · 搜索/抓取 ${Math.round(count)} 次`
+    : "";
+}
+
 export function generationLogStatusLabel(status: GenerationLog["status"]) {
   return status === "pending" ? "进行中" : status === "success" ? "成功" : "失败";
 }

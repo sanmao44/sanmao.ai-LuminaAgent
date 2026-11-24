@@ -1,4 +1,5 @@
 import type { ChatMessage } from './providers';
+import { deepSeekToolFetch, deepSeekToolSearch, type DeepSeekToolSearchResult } from './providers';
 import type { NativeSearchOverride, NativeSearchProtocol, ProviderPlatform, RegistryModel } from './types';
 import { inferNativeSearch } from './native-search-detection';
 
@@ -26,10 +27,13 @@ export type NativeSearchResult = {
   text: string;
   citations: NativeSearchCitation[];
   resultCount: number;
+  searchRequestCount?: number;
+  fetchedCount?: number;
+  warnings?: string[];
   searchedAt: string;
 };
 
-const NATIVE_PROTOCOLS = new Set<NativeSearchProtocol>(['openai-responses', 'gemini-grounding', 'native-chat']);
+const NATIVE_PROTOCOLS = new Set<NativeSearchProtocol>(['openai-responses', 'deepseek-tools', 'gemini-grounding', 'native-chat']);
 
 function textFromValue(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -90,10 +94,13 @@ function cleanCitations(value: unknown, text = '') {
 
 export function resolveNativeSearchProtocol(provider: NativeSearchProvider, model: NativeSearchModel): NativeSearchProtocol | null {
   if (!model.capabilities.includes('web-search')) return null;
+  if (provider.platform === 'deepseek') return 'deepseek-tools';
   if (model.nativeSearchProtocol && NATIVE_PROTOCOLS.has(model.nativeSearchProtocol)) return model.nativeSearchProtocol;
   const inferred = inferNativeSearch(model.rawId, provider.platform);
   if (inferred.protocol) return inferred.protocol;
-  return model.capabilities.includes('web-search') ? (provider.platform === 'google-gemini' ? 'gemini-grounding' : 'openai-responses') : null;
+  return model.capabilities.includes('web-search')
+    ? provider.platform === 'google-gemini' ? 'gemini-grounding' : 'openai-responses'
+    : null;
 }
 
 export function nativeSearchIsEnabled(model: NativeSearchModel) {
@@ -199,7 +206,7 @@ function openAiText(data: any) {
 }
 
 async function openAiResponsesSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], signal?: AbortSignal) {
-  const url = endpoint(provider, provider.responsesPath, provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses');
+  const url = endpoint(provider, provider.responsesPath, '/responses');
   const headers = { ...authHeaders(provider), 'Content-Type': 'application/json' };
   const base = { model: model.rawId, input: messages.map((message) => ({ role: message.role, content: textFromValue(message.content) })), stream: false };
   let data: any;
@@ -215,6 +222,124 @@ async function openAiResponsesSearch(provider: NativeSearchProvider, model: Nati
   const citations = cleanCitations(data, text);
   if (!citations.length) throw new Error('原生 Responses 搜索没有返回可核验的来源');
   return { text, citations };
+}
+
+function latestUserText(messages: ChatMessage[]) {
+  const latest = [...messages].reverse().find((message) => message.role === 'user');
+  return latest ? textFromValue(latest.content).trim() : '';
+}
+
+function directUserUrl(value: string) {
+  const candidate = value.match(/https?:\/\/[^\s<>"'\])}]+/i)?.[0]?.replace(/[),.;!?，。！？、；：]+$/u, '') || '';
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    return ['http:', 'https:'].includes(parsed.protocol) && parsed.hostname && !parsed.username && !parsed.password ? candidate : '';
+  } catch { return ''; }
+}
+
+function deepSeekSearchQuery(query: string) {
+  const value = Array.from(query.trim()).slice(0, 128).join('');
+  return value || '网页搜索';
+}
+
+function searchRowsText(rows: Array<{ result: DeepSeekToolSearchResult; page?: string }>) {
+  return rows.map(({ result, page }, index) => [
+    `${index + 1}. ${result.title}`,
+    result.summary || result.snippet ? `摘要：${result.summary || result.snippet}` : '',
+    page ? `网页正文：${page.slice(0, 12000)}` : result.content ? `正文片段：${result.content.slice(0, 12000)}` : '',
+    `来源：${result.url}`,
+  ].filter(Boolean).join('\n')).join('\n\n');
+}
+
+async function deepSeekToolsSearch(provider: NativeSearchProvider, messages: ChatMessage[], query: string, signal?: AbortSignal) {
+  const userText = latestUserText(messages);
+  const url = directUserUrl(userText) || directUserUrl(query);
+  if (url) {
+    const page = await deepSeekToolFetch(provider, url, signal);
+    const hasContent = Boolean(page.content.trim());
+    if (!hasContent) {
+      return {
+        text: '',
+        citations: [],
+        resultCount: 0,
+        searchRequestCount: 0,
+        fetchedCount: 0,
+        warnings: ['网页抓取未返回正文，未计入成功 Fetch。'],
+      };
+    }
+    return {
+      text: `${page.title || url}\n${hasContent ? `网页正文：${page.content.slice(0, 24000)}` : '网页抓取未返回正文。'}\n来源：${url}`,
+      citations: [{ title: page.title || url, url }],
+      resultCount: 1,
+      searchRequestCount: 0,
+      fetchedCount: hasContent ? 1 : 0,
+      warnings: hasContent ? [] : ['网页抓取未返回正文，未计入成功 Fetch。'],
+    };
+  }
+
+  const searchQuery = deepSeekSearchQuery(query || userText);
+  const originalQuestion = Array.from(userText || query).slice(0, 128).join('') || null;
+  const response = await deepSeekToolSearch(provider, {
+    query: searchQuery,
+    count: 10,
+    ori_question: originalQuestion,
+    localization: '',
+    need_content: true,
+  }, signal);
+  const rows = response.results.slice(0, 10);
+  // Search billing is based on the upstream HTTP response: a successful
+  // response with a non-empty raw `results` array is billable even when every
+  // row is later discarded by adapter validation. Preserve that signal rather
+  // than deriving it from the normalized/citation rows.
+  if (!rows.length) return {
+    text: '',
+    citations: [],
+    resultCount: 0,
+    searchRequestCount: response.searchRequestCount || 0,
+    fetchedCount: 0,
+    warnings: [] as string[],
+  };
+
+  const fetchRows = rows
+    .slice(0, 3)
+    .map((result, index) => ({ result, index }))
+    .filter(({ result }) => !String(result.content || '').trim());
+  let emptyFetchCount = 0;
+  const fetchedPages = await Promise.all(fetchRows.map(async ({ result, index }) => {
+    try {
+      const fetched = await deepSeekToolFetch(provider, result.url, signal);
+      if (!fetched.content.trim()) {
+        emptyFetchCount += 1;
+        return null;
+      }
+      return { index, page: { title: fetched.title, content: fetched.content } };
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason || error;
+      return null;
+    }
+  }));
+  const fetchedByIndex = new Map(fetchedPages.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)).map((entry) => [entry.index, entry.page]));
+  const warnings = fetchedPages.some((page) => !page)
+    ? [emptyFetchCount ? '部分搜索结果网页抓取失败或未返回正文，已保留搜索摘要。' : '部分搜索结果网页抓取失败，已保留搜索摘要。']
+    : [];
+  const normalized = rows.map((result, index) => ({
+    result,
+    ...(fetchedByIndex.get(index) ? { page: fetchedByIndex.get(index)!.content } : {}),
+  }));
+  const citations = uniqueCitations(rows.map((result) => ({
+    title: result.title,
+    url: result.url,
+    ...(result.summary || result.snippet ? { snippet: String(result.summary || result.snippet).slice(0, 700) } : {}),
+  })));
+  return {
+    text: searchRowsText(normalized),
+    citations,
+    resultCount: citations.length,
+    searchRequestCount: response.searchRequestCount || 0,
+    fetchedCount: fetchedPages.filter(Boolean).length,
+    warnings,
+  };
 }
 
 async function geminiSearch(provider: NativeSearchProvider, model: NativeSearchModel, messages: ChatMessage[], signal?: AbortSignal) {
@@ -256,11 +381,18 @@ export async function runNativeWebSearch(provider: NativeSearchProvider, model: 
   throwIfAborted(signal);
   const protocol = resolveNativeSearchProtocol(provider, model);
   if (!protocol) throw new Error('当前模型没有可用的原生搜索协议');
-  const result = protocol === 'gemini-grounding'
-    ? await geminiSearch(provider, model, messages, signal)
-    : protocol === 'native-chat'
-      ? await nativeChatSearch(provider, model, messages, signal)
-      : await openAiResponsesSearch(provider, model, messages, signal);
+  const result = protocol === 'deepseek-tools'
+    ? await deepSeekToolsSearch(provider, messages, query, signal)
+    : protocol === 'gemini-grounding'
+      ? await geminiSearch(provider, model, messages, signal)
+      : protocol === 'native-chat'
+        ? await nativeChatSearch(provider, model, messages, signal)
+        : await openAiResponsesSearch(provider, model, messages, signal);
+  const fetchedCount = 'fetchedCount' in result && typeof result.fetchedCount === 'number' ? result.fetchedCount : undefined;
+  const searchRequestCount = 'searchRequestCount' in result && typeof result.searchRequestCount === 'number' ? result.searchRequestCount : undefined;
+  const warnings = 'warnings' in result && Array.isArray(result.warnings)
+    ? result.warnings.filter((warning): warning is string => typeof warning === 'string')
+    : [];
   return {
     source: 'native',
     protocol,
@@ -270,6 +402,9 @@ export async function runNativeWebSearch(provider: NativeSearchProvider, model: 
     text: result.text,
     citations: result.citations,
     resultCount: result.citations.length,
+    ...(searchRequestCount !== undefined ? { searchRequestCount } : {}),
+    ...(fetchedCount !== undefined ? { fetchedCount } : {}),
+    ...(warnings.length ? { warnings } : {}),
     searchedAt: new Date().toISOString(),
   };
 }

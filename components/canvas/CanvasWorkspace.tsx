@@ -494,11 +494,10 @@ import {
   isEditableTarget,
 } from "@/lib/canvas/interaction-targets";
 import {
-  shouldCanvasInterceptModifiedWheel,
+  bindCanvasPinchZoom,
   handleCanvasTrackpadPanWheel,
   panCanvasCameraByWheel,
   startCanvasMiddleButtonPan,
-  trackpadPinchZoomFactor,
 } from "@/components/canvas/trackpad-input";
 import {
   CANVAS_ALIGNMENT_OPTIONS,
@@ -3963,24 +3962,15 @@ export default function SuperCanvas() {
     [stagePoint, updateDoc],
   );
   useEffect(() => {
+    if (!ready) return;
     const stage = stageRef.current;
     if (!stage) return;
-    const handleModifiedWheel = (event: WheelEvent) => {
+    const unbindPinchZoom = bindCanvasPinchZoom(stage.ownerDocument, zoomAt);
+    const handlePanWheel = (event: WheelEvent) => {
       const overMediaViewer =
         event.target instanceof Element &&
         Boolean(event.target.closest(".media-viewer-stage"));
-      if (overMediaViewer) return;
-      const modified = event.ctrlKey || event.metaKey;
-      if (modified) {
-        if (!shouldCanvasInterceptModifiedWheel(modified, overMediaViewer)) return;
-        // Ctrl+wheel is reserved by browsers for page zoom. Capture it with a
-        // non-passive listener so pinch zoom stays inside the canvas.
-        event.preventDefault();
-        event.stopPropagation();
-        if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
-        zoomAt(event.clientX, event.clientY, trackpadPinchZoomFactor(event.deltaY));
-        return;
-      }
+      if (overMediaViewer || event.ctrlKey || event.metaKey) return;
       if (isCanvasWheelIsolatedTargetWithOptions(event.target, true)) return;
       handleCanvasTrackpadPanWheel(event, (deltaX, deltaY) => {
         updateDoc((value) => ({
@@ -3989,13 +3979,15 @@ export default function SuperCanvas() {
         }));
       });
     };
-    stage.addEventListener("wheel", handleModifiedWheel, {
+    stage.addEventListener("wheel", handlePanWheel, {
       capture: true,
       passive: false,
     });
-    return () =>
-      stage.removeEventListener("wheel", handleModifiedWheel, true);
-  }, [updateDoc, zoomAt]);
+    return () => {
+      unbindPinchZoom();
+      stage.removeEventListener("wheel", handlePanWheel, true);
+    };
+  }, [ready, updateDoc, zoomAt]);
   useEffect(() => {
     return () => {
       if (zoomFrameRef.current !== null)

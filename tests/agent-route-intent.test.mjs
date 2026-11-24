@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createTsRequire } from './ts-require.mjs';
 
 const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.url)));
 const realSkills = requireTs('./skills');
 const realBrowserGuidance = requireTs('./mcp/browser-guidance');
+const realApproval = requireTs('./agent/approval');
+const { createProviderCoordinator } = requireTs('../packages/model-runtime/provider-coordinator');
+const { createAgentModelInvoker } = requireTs('../packages/model-runtime/agent-invoker');
 function harness(options = {}) {
   const calls = [];
   const searchCalls = [];
@@ -26,7 +32,8 @@ function harness(options = {}) {
   const presentationCalls = [];
   const transcriptionCalls = [];
   const savedSubtitleArtifacts = [];
-  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat' };
+  const generationLogFinishes = [];
+  const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat', ...(options.contextWindow ? { contextWindow: options.contextWindow } : {}) };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
   const runtime = { model, provider };
@@ -129,7 +136,7 @@ function harness(options = {}) {
             getRuntimeImageModelForCapability: storeApi.getRuntimeImageModelForCapability,
             getRuntimeModel: async (id, kind) => kind === 'image' ? storeApi.getRuntimeModel(id, kind) : options.noChatModel ? null : storeApi.getRuntimeModel(id, kind),
             getRuntimeIntentClassifierModel: options.intentClassifierRuntime ? async () => options.intentClassifierRuntime : async () => null,
-            getRuntimeModelCandidates: async () => options.noChatModel ? [] : [runtime],
+            getRuntimeModelCandidates: async () => options.noChatModel ? [] : options.chatRuntimeCandidates || [runtime],
             filterModelsByActiveProviders: (models) => models,
             getProviderPreset: () => ({ label: 'Test' }),
           },
@@ -241,19 +248,26 @@ function harness(options = {}) {
       },
       createAgentApplicationComposition: (options) => {
         const providerApi = mocks['@/lib/providers'];
+        const invoke = options.invokeProvider || ((runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal));
+        const invoker = createAgentModelInvoker({
+          coordinator: createProviderCoordinator({
+            ...options,
+            health: { order: options.orderCandidates, onSuccess: options.onModelHealthSuccess, onFailure: options.onModelHealthFailure },
+          }),
+          defaultSignal: options.signal,
+          invoke,
+          onCurrent: options.onCurrent,
+        });
         return {
           observer: { emit() {} },
           infrastructure: options.infrastructure,
-          invokeChatModel: async (payload) => {
-            const response = await providerApi.chatCompletion(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal);
-            options.onCurrent?.(options.candidates[0]);
-            return response;
-          },
-          invokeChatModelStream: async (payload) => providerApi.chatCompletionStream(options.candidates[0].provider, options.candidates[0].model.rawId, payload, options.signal),
-          invokeSpecificChatModel: async (runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal),
+          invokeChatModel: invoker.invoke,
+          invokeChatModelStream: async (payload, signal) => invoker.invokeWith(payload,
+            (runtime, callSignal) => (options.invokeProviderStream || ((runtime, payload, signal) => providerApi.chatCompletionStream(runtime.provider, runtime.model.rawId, payload, signal)))(runtime, payload, callSignal), signal),
+          invokeSpecificChatModel: invoker.invokeSpecific,
           invokeCandidateChatModels: async (candidates, payload, signal, timeoutMs) => {
             candidateCalls.push({ modelIds: candidates.map((candidate) => candidate.model.id), payload, timeoutMs });
-            return providerApi.chatCompletion(candidates[0].provider, candidates[0].model.rawId, payload, signal);
+            return invoker.invokeCandidates(candidates, payload, signal, timeoutMs);
           },
         };
       },
@@ -263,12 +277,17 @@ function harness(options = {}) {
       applicationStream: (body) => ({ kind: 'stream', body }),
     },
     '@/lib/providers': {
+      is65535ClaudeModelProvider: () => false,
       chatCompletion: async (_provider, _model, payload) => {
         calls.push(payload);
         modelCalls.push({ model: _model, payload });
         return reply(options.reply?.(payload, calls.length, _model) || { content: '已经完成。' });
       },
-      chatCompletionStream: async () => { throw new Error('unexpected direct stream'); },
+      chatCompletionStream: async (_provider, _model, payload) => {
+        if (!options.streamReply) throw new Error('unexpected direct stream');
+        modelCalls.push({ model: _model, payload, stream: true });
+        return options.streamReply(payload, _model);
+      },
       describeProviderFailure: options.describeProviderFailure || (() => 'provider failure'),
       generateImage: async (_provider, _model, args) => {
         images.push({ mode: 'generate', ...args });
@@ -301,7 +320,7 @@ function harness(options = {}) {
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
-    '@/lib/generation-log': { startGenerationLog: async () => options.mediaLogId || 'test', finishGenerationLog: noOp, appendGenerationLog: noOp },
+    '@/lib/generation-log': { startGenerationLog: async () => options.mediaLogId || 'test', finishGenerationLog: async (id, patch) => { generationLogFinishes.push({ id, ...patch }); }, appendGenerationLog: noOp },
     '@/lib/generation-persistence': { persistGenerationResult: async ({ images: result }) => ({ images: result }) },
     '@/lib/agent/progress': { beginAgentRun: async (runId) => runId ? { runId: String(runId) } : null, finishAgentRun: noOp, reportAgentProgress: noOp, agentToolProgress: () => null },
     '@/lib/reference-images': { referenceRecordsForLog: () => [] },
@@ -342,6 +361,7 @@ function harness(options = {}) {
       toolApprovalPolicy: () => 'ask',
       assessToolApproval: () => ({ required: false, blocked: false }),
       appendPageContext: (current, source, text) => `${current || ''}\n${source}: ${text}`.trim(),
+      ...options.approvalOverrides,
     },
     '@/lib/skills': {
       ...realSkills,
@@ -363,6 +383,7 @@ function harness(options = {}) {
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
 	    calls, searchCalls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
+    generationLogFinishes,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
         method: 'POST',
@@ -950,7 +971,8 @@ test('desktop Agent corrects mismatched quoted input and verifies the corrected 
 
   assert.deepEqual(agent.mcpCalls.map((entry) => entry.toolName), ['App', 'Snapshot', 'Type', 'Screenshot', 'Type', 'Screenshot']);
   assert.deepEqual(agent.mcpCalls.filter((entry) => entry.toolName === 'Type').map((entry) => entry.args.text), ['WRONG_TOKEN', 'EXPECTED_TOKEN']);
-  const correctionPrompt = agent.calls[4].messages.map((message) => String(message.content || '')).join('\n');
+  // The correction belongs to the next request, after the rejected completion.
+  const correctionPrompt = agent.calls[5].messages.map((message) => String(message.content || '')).join('\n');
   assert.match(correctionPrompt, /输入内容与用户指定原文不一致/);
   assert.match(correctionPrompt, /EXPECTED_TOKEN/);
   assert.match(result.message, /exact requested text is now present/);
@@ -1988,6 +2010,41 @@ test('HTML delivery fails as a retryable request when the model describes a temp
   assert.equal(agent.modelCalls.length, 2, 'the application requests a tool-backed file generation retry before returning failure');
 });
 
+for (const failure of [
+  Object.assign(new Error('HTTP 400: invalid tool schema (request id: req-schema)'), { providerStatus: 400, providerFailureKind: 'http' }),
+  Object.assign(new Error('请求内容超过服务商限制：body too large (request id: req-size)'), { providerStatus: 413, providerFailureKind: 'http' }),
+  Object.assign(new Error('HTTP 429: rate limit exceeded (request id: req-rate)'), { providerStatus: 429, providerFailureKind: 'http' }),
+  Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' }),
+]) {
+  test(`HTML delivery preserves the original provider failure: ${failure.message}`, async () => {
+    const described = [];
+    const agent = harness({
+      describeProviderFailure: (error) => { described.push(error); return error.message; },
+      reply: () => { throw failure; },
+    });
+    const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+    assert.equal(data.error, failure.message);
+    assert.equal(agent.modelCalls.length, 1, 'do not repeat a failed tool request as a plain chat request');
+    assert.ok(described.every((error) => error === failure), 'preserve the original error metadata');
+    assert.equal(data.files?.length || 0, 0);
+  });
+}
+
+test('HTML delivery preserves a provider failure during the tool-call retry', async () => {
+  const failure = Object.assign(new Error('HTTP 429: retry rate limit (request id: req-retry)'), { providerStatus: 429, providerFailureKind: 'http' });
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (_payload, count) => {
+      if (count > 1) throw failure;
+      return { content: '我会生成 HTML 文件。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(data.error, failure.message);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files?.length || 0, 0);
+});
+
 test('HTML delivery returns a downloadable chat file after file_generate succeeds', async () => {
   const content = '<!doctype html><html><body><svg aria-label="鹅骑自行车"></svg></body></html>';
   const agent = harness({
@@ -2002,6 +2059,87 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(data.files[0].mimeType, 'text/html;charset=utf-8');
   assert.equal(data.files[0].content, content);
   assert.match(data.message, /1 个文件/);
+});
+
+test('HTML delivery repairs invalid file content once using the actual tool error', async () => {
+  const content = '<!doctype html><html><body>修复后的页面</body></html>';
+  const agent = harness({ reply: (payload, count) => {
+    if (count === 2) {
+      const result = payload.messages.findLast((message) => message.role === 'tool');
+      assert.match(result.content, /没有收到有效的文件内容/);
+      assert.ok(payload.tools.some((tool) => tool.function.name === 'file_generate'));
+    }
+    return { tool_calls: [{ id: `repair-${count}`, function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'page.html', content: count === 1 ? '' : content }] }) } }] };
+  } });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files.length, 1);
+  assert.equal(data.files[0].content, content);
+  assert.match(data.message, /已完成 1 个文件/);
+  assert.doesNotMatch(data.message, /错误|不能据此断定|未完成/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+  assert.equal(agent.generationLogFinishes.at(-1).error, undefined);
+});
+
+test('HTML delivery reports the actual file error when its one repair also fails', async () => {
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (_payload, count) => ({ tool_calls: [{ id: `invalid-${count}`, function: { name: 'file_generate', arguments: '{"files":[{"filename":"page.html","content":""}]}' } }] }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.match(data.error, /没有收到有效的文件内容/);
+  assert.doesNotMatch(data.error, /切换.*模型|未能发起工具调用/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+  assert.match(agent.generationLogFinishes.at(-1).error, /没有收到有效的文件内容/);
+});
+
+test('HTML delivery keeps a failed target visible when repair creates a different file', async () => {
+  const agent = harness({ reply: (_payload, count) => ({
+    tool_calls: [{ id: `different-target-${count}`, function: { name: 'file_generate', arguments: JSON.stringify({
+      files: [{ filename: count === 1 ? 'requested.html' : 'other.html', content: count === 1 ? '' : '<html>other</html>' }],
+    }) } }],
+  }) });
+  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 文件' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files[0].name, 'other.html');
+  assert.match(data.message, /没有收到有效的文件内容/);
+  assert.doesNotMatch(data.message, /已完成 1 个文件/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+});
+
+test('a large successfully generated HTML file is delivered without another context-limited call', async () => {
+  const content = '<!doctype html><html><body>' + 'x'.repeat(100_000) + '</body></html>';
+  const agent = harness({
+    reply: () => ({ tool_calls: [{ id: 'large-html', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'large.html', content }] }) } }] }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(data.error, undefined);
+  assert.equal(data.files[0].content, content);
+  assert.equal(agent.modelCalls.length, 1);
+});
+
+test('complex delivery trims old multibyte history and reserves tools before calling the model', async () => {
+  const latest = '画只鹅骑自行车的svg动画，html交付，带交互控件！';
+  const agent = harness({
+    contextWindow: 12_000,
+    reply: (payload) => {
+      const messageBytes = Buffer.byteLength(JSON.stringify(payload.messages));
+      const toolBytes = Buffer.byteLength(JSON.stringify(payload.tools || []));
+      assert.ok(messageBytes + toolBytes < (12_000 - 4096) * 3);
+      assert.ok(payload.messages.some((message) => message.role === 'user' && message.content === latest));
+      assert.ok(!payload.messages.some((message) => message.content === '旧上下文'.repeat(10_000)));
+      return { tool_calls: [{ id: 'trimmed-html', function: { name: 'file_generate', arguments: '{"files":[{"filename":"page.html","content":"<html>ok</html>"}]}' } }] };
+    },
+    describeProviderFailure: (error) => error.message,
+  });
+  const data = await agent.post([
+    { role: 'user', content: '旧上下文'.repeat(10_000) },
+    { role: 'assistant', content: '已了解。' },
+    { role: 'user', content: latest },
+  ]);
+  assert.equal(data.error, undefined);
+  assert.equal(data.files.length, 1);
 });
 
 test('an accepted image plan is resolved semantically within this conversation', async () => {
@@ -2497,3 +2635,177 @@ test('unresolved image references ask a question instead of generating a guessed
   assert.equal(agent.images.length, 0);
   assert.match(data.message, /哪张图片/);
 });
+
+function contextFallbackCandidates() {
+  return [32_768, 8_192].map((contextWindow, index) => ({
+    provider: { id: `context-provider-${index}`, name: `Context provider ${index}`, platform: 'openai', enabled: true },
+    model: { id: index ? 'small-context' : 'large-context', rawId: index ? 'small-context' : 'large-context', displayName: index ? 'Small context' : 'Large context', kind: 'chat', capabilities: [], contextWindow },
+  }));
+}
+
+const fallbackContextMessages = () => [
+  { role: 'user', content: 'Earlier discussion: ' + 'x'.repeat(30_000) },
+  { role: 'assistant', content: '这是前文中的方案。' },
+  { role: 'user', content: '请继续分析上面的方案，解释其中的取舍。' },
+];
+
+test('automatic fallback recalculates history budget for the selected smaller model', async () => {
+  const agent = harness({
+    chatRuntimeCandidates: contextFallbackCandidates(),
+    reply: (_payload, _count, model) => {
+      if (model === 'large-context') throw new Error('primary unavailable');
+      return { content: '回退后回答正常。' };
+    },
+  });
+  const data = await agent.post(fallbackContextMessages(), { model: 'auto' });
+  assert.equal(data.message, '回退后回答正常。');
+  assert.equal(data.modelId, 'small-context');
+  assert.deepEqual(agent.modelCalls.map((call) => call.model), ['large-context', 'small-context']);
+  assert.ok(agent.modelCalls[0].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+  assert.ok(!agent.modelCalls[1].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+  assert.equal(agent.modelCalls[1].payload.messages.at(-1).content, fallbackContextMessages().at(-1).content);
+});
+
+test('streamed automatic fallback also uses the smaller model budget', async () => {
+  const agent = harness({
+    chatRuntimeCandidates: contextFallbackCandidates(),
+    streamReply: (_payload, model) => {
+      if (model === 'large-context') throw new Error('primary unavailable');
+      return new Response('data: {"choices":[{"delta":{"content":"回退后回答正常。"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+    },
+  });
+  const result = await agent.postRaw(new Request('http://localhost/api/agent', {
+    method: 'POST',
+    body: JSON.stringify({ model: 'auto', stream: true, webMode: 'off', messages: fallbackContextMessages() }),
+  }));
+  assert.equal(result.kind, 'stream');
+  assert.match(await new Response(result.body).text(), /回退后回答正常/);
+  assert.deepEqual(agent.modelCalls.map((call) => call.model), ['large-context', 'small-context']);
+  assert.ok(agent.modelCalls[0].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+  assert.ok(!agent.modelCalls[1].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+  assert.equal(agent.modelCalls[1].payload.messages.at(-1).content, fallbackContextMessages().at(-1).content);
+});
+
+test('a smaller fallback cannot truncate the required current request to fit', async () => {
+  const instruction = '请解释这份方案：' + 'x'.repeat(18_000);
+  const agent = harness({
+    chatRuntimeCandidates: contextFallbackCandidates(),
+    describeProviderFailure: (error) => error.message,
+    reply: (_payload, _count, model) => {
+      if (model === 'large-context') throw new Error('primary unavailable');
+      return { content: 'should not reach the smaller provider' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: instruction }], { model: 'auto' });
+  assert.match(data.error, /必要内容超过模型请求预算/);
+  assert.deepEqual(agent.modelCalls.map((call) => call.model), ['large-context']);
+  assert.equal(agent.modelCalls[0].payload.messages.at(-1).content, instruction);
+});
+
+test('an oversized current turn for the first model can reach a larger automatic fallback intact', async () => {
+  const instruction = '请解释这份方案：' + 'x'.repeat(18_000);
+  const agent = harness({ chatRuntimeCandidates: contextFallbackCandidates().reverse() });
+  const data = await agent.post([{ role: 'user', content: instruction }], { model: 'auto' });
+  assert.equal(data.message, '已经完成。');
+  assert.equal(data.modelId, 'large-context');
+  assert.deepEqual(agent.modelCalls.map((call) => call.model), ['large-context']);
+  assert.equal(agent.modelCalls[0].payload.messages.at(-1).content, instruction);
+});
+
+test('a larger fallback can still use history omitted from the first smaller model request', async () => {
+  const agent = harness({
+    chatRuntimeCandidates: contextFallbackCandidates().reverse(),
+    reply: (_payload, _count, model) => {
+      if (model === 'small-context') throw new Error('primary unavailable');
+      return { content: '已结合完整可用前文回答。' };
+    },
+  });
+  const data = await agent.post(fallbackContextMessages(), { model: 'auto' });
+  assert.equal(data.message, '已结合完整可用前文回答。');
+  assert.deepEqual(agent.modelCalls.map((call) => call.model), ['small-context', 'large-context']);
+  assert.ok(!agent.modelCalls[0].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+  assert.ok(agent.modelCalls[1].payload.messages.some((message) => message.content.includes('Earlier discussion:')));
+});
+
+function approvalSnapshotAgent(dataDir, { contextWindow, toolBody = 'The confirmed issue body.' } = {}) {
+  const writes = [];
+  const tools = ['list_repositories', 'create_issue'].map((name) => ({
+    id: `mcp:github:${name}`, name: `github__${name}`, source: 'mcp', description: name,
+    schema: { type: 'object', properties: { body: { type: 'string' } } }, tags: ['mcp'], risk: name === 'create_issue' ? 'external_side_effect' : 'read', gating: () => true,
+    mcp: { serverId: 'github', serverName: 'GitHub', toolName: name, readOnly: name !== 'create_issue', blocked: false },
+  }));
+  const calls = [
+    { id: 'snapshot-read', type: 'function', function: { name: tools[0].name, arguments: '{}' } },
+    { id: 'snapshot-write', type: 'function', function: { name: tools[1].name, arguments: JSON.stringify({ body: toolBody }) } },
+  ];
+  const agent = harness({
+    ...(contextWindow ? { contextWindow } : {}),
+    mcpServers: [{ id: 'github', name: 'GitHub', enabled: true, allowWrite: true, catalogId: 'github' }],
+    mcpTools: tools,
+    callMcpTool: async () => ({ isError: false, text: 'Existing repositories verified.' }),
+    describeProviderFailure: (error) => error.message,
+    reply: () => ({ content: null, reasoning_content: 'Keep this reasoning for the approved tool call.', tool_calls: calls }),
+    approvalOverrides: {
+      ...realApproval,
+      toolApprovalPolicy: () => 'ask',
+      createApproval: (record) => {
+        const saved = realApproval.createApproval(record, { dataDir });
+        writes.push(saved);
+        return saved;
+      },
+    },
+  });
+  return { agent, writes, calls };
+}
+
+for (const contextWindow of [undefined, 262144]) {
+  test(`approval snapshots discard optional history above the storage cap with ${contextWindow || 'default'} model context`, async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-approval-snapshot-'));
+    try {
+      const { agent, writes, calls } = approvalSnapshotAgent(dataDir, { contextWindow });
+      const latest = '继续按上面的方案，在我的 GitHub 仓库 owner/repo 创建一个 issue，先检查仓库再准备创建。';
+      const data = await agent.post([
+        { role: 'user', content: 'Earlier discussion: ' + 'x'.repeat(560000) },
+        { role: 'assistant', content: '前面的方案已经确认。' },
+        { role: 'user', content: latest },
+      ]);
+      assert.equal(data.needsApproval, true);
+      assert.equal(writes.length, 1);
+      const record = realApproval.readApproval(data.approval.id, { dataDir });
+      assert.ok(record);
+      assert.ok(JSON.stringify(record).length < realApproval.APPROVAL_MAX_STORED_CHARS);
+      assert.ok(record.messages.some((message) => message.role === 'system'));
+      assert.ok(record.messages.some((message) => message.content === latest));
+      assert.ok(!record.messages.some((message) => String(message.content).includes('Earlier discussion:')));
+      assert.deepEqual(record.assistant.tool_calls, calls);
+      assert.equal(record.assistant.reasoning_content, 'Keep this reasoning for the approved tool call.');
+      assert.deepEqual(record.executed.map((message) => message.tool_call_id), ['snapshot-read']);
+      assert.equal(record.pending[0].callId, 'snapshot-write');
+      assert.deepEqual(record.pending[0].args, JSON.parse(calls[1].function.arguments));
+      assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['list_repositories']);
+      assert.equal(agent.modelCalls.length, 1);
+      if (contextWindow) {
+        assert.ok(agent.modelCalls[0].payload.messages.some((message) => String(message.content).includes('Earlier discussion:')), 'the larger model still receives history before the separate approval storage cap is applied');
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const [contextWindow, bodyLength] of [[undefined, 100000], [262144, 300000]]) {
+  test(`approval snapshot fails explicitly when required tool JSON cannot fit the ${contextWindow ? 'storage' : 'model'} budget`, async () => {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'sanmao-approval-snapshot-'));
+    try {
+      const { agent, writes } = approvalSnapshotAgent(dataDir, { contextWindow, toolBody: 'b'.repeat(bodyLength) });
+      const data = await agent.post([{ role: 'user', content: '请在我的 GitHub 仓库 owner/repo 创建一个 issue。' }]);
+      assert.equal(writes.length, 0);
+      assert.match(String(data.error), /必要内容超过模型请求预算/);
+      assert.match(String(data.error), /待确认的操作没有执行/);
+      assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['list_repositories']);
+      assert.equal(agent.modelCalls.length, 1);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+}

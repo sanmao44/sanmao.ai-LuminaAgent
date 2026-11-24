@@ -70,8 +70,7 @@ test('续跑只继续下发只读工具，写工具一次确认只换来一次�
   // 模型在续跑里点名写工具时，结果里只会得到一句拒绝，而不是真的执行。
   assert.match(resume, /executeMcpTool\(/);
   assert.match(resume, /executeTabbitTool\(/);
-  // 续跑仍然保留一次「不带工具」的收尾，只读补读失败也能把话说清楚。
-  assert.match(resume, /const reply = await chatCompletion\(runtime\.provider, runtime\.model\.rawId, \{ messages, tool_choice: 'none' \}/);
+  // 无工具收尾及补读失败恢复由 agent-resume-context-budget.test.mjs 执行行为验证。
   assert.match(resume, /retry: meta\.readOnly/);
   assert.match(resume, /MCP_TOOL_MAX_CALLS_PER_TURN/);
 });

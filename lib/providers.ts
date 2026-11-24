@@ -60,7 +60,7 @@ export type DiscoveredModel = {
   name?: string;
   capabilities?: ModelCapability[];
   classification?: AudioModelClassification;
-  nativeSearchProtocol?: 'openai-responses' | 'gemini-grounding' | 'native-chat';
+  nativeSearchProtocol?: 'openai-responses' | 'deepseek-tools' | 'gemini-grounding' | 'native-chat';
   nativeSearchDetection?: 'metadata' | 'model-id' | 'provider' | 'manual';
   billing?: 'free' | 'paid' | 'temporary-free';
   enabledByDefault?: boolean;
@@ -243,7 +243,10 @@ type ProviderResponseMeta = {
 };
 
 type ProviderFailure = Error & ModelProviderFailure & {
+  code?: string;
+  providerErrorCode?: string;
   providerRequestId?: string;
+  providerUsage?: Record<string, unknown>;
   providerUrl?: string;
   providerMethod?: string;
   providerPossiblyAccepted?: boolean;
@@ -425,24 +428,30 @@ async function parseResponse(response: Response, allowSvgOutput = false) {
 }
 
 function providerResponseError(status: number, data: any, text: string, requestId = '') {
-  if (status === 413) {
-    const error = new Error('请求内容过大：参考图片总大小超过服务商限制，请减少图片数量或重新上传后重试。');
-    return decorateProviderFailure(error, { providerResponse: true, providerFailureKind: 'http', status, providerStatus: status, providerRequestId: requestId });
-  }
   const detail = data?.error?.message || data?.error || data?.message || text || `HTTP ${status}`;
   const detailText = typeof detail === 'string' ? detail.slice(0, 900) : JSON.stringify(detail).slice(0, 900);
   const prefix = status === 401
     ? 'API Key 无效、已过期或未被服务商接受'
     : status === 403
-      ? 'API Key 没有访问该接口的权限'
-      : `服务商接口返回 HTTP ${status}`;
-  const suffix = requestId ? `（request id: ${requestId}）` : '';
-  const error = new Error(`${prefix}：${detailText}${suffix}`);
+      ? '服务商拒绝了请求'
+      : status === 402
+        ? '服务商账户余额或 API 额度不足'
+        : status === 408
+          ? '服务商读取请求超时'
+          : status === 413
+            ? '请求内容超过服务商限制'
+            : status === 429
+              ? '请求触发服务商限流'
+              : `服务商接口返回 HTTP ${status}`;
+  const providerErrorCode = String(data?.error?.code || data?.error?.type || data?.code || '').trim();
+  const suffix = [providerErrorCode && `错误码 ${providerErrorCode}`, requestId && `request id: ${requestId}`].filter(Boolean).join('；');
+  const error = new Error(`${prefix}：${detailText}${suffix ? `（${suffix}）` : ''}`);
   return decorateProviderFailure(error, {
     providerResponse: true,
     providerFailureKind: 'http',
     status,
     providerStatus: status,
+    ...(providerErrorCode ? { providerErrorCode, code: providerErrorCode } : {}),
     providerRequestId: requestId,
     ...(status >= 500 ? { providerPossiblyAccepted: true } : {}),
   });
@@ -581,7 +590,10 @@ async function fetchModelResponse(url: string, init: RequestInit, timeout = 2000
 }
 
 /** 供其它服务端模块（如克隆出片的配音调用）复用同一套鉴权头。 */
-export function authHeaders(provider: RuntimeProvider, video = false) {
+export function authHeaders(
+  provider: Pick<RuntimeProvider, 'apiKey'> & Partial<Pick<RuntimeProvider, 'authHeader' | 'authPrefix' | 'videoApiKey'>>,
+  video = false,
+) {
   const header = provider.authHeader?.trim() || 'Authorization';
   const prefix = provider.authPrefix ?? 'Bearer ';
   const key = video ? provider.videoApiKey || provider.apiKey : provider.apiKey;
@@ -2355,6 +2367,46 @@ export type ChatMessage = {
   content: string | ChatContentPart[] | null;
   tool_call_id?: string;
   tool_calls?: any[];
+  server_tool_calls?: unknown[];
+  reasoning_content?: string;
+};
+
+export type DeepSeekSafetyCheck = { level: 'low' | 'high' };
+export type DeepSeekResponseTitle = { enabled: boolean };
+
+type DeepSeekInputImagePart = {
+  type: 'input_image';
+  image_url?: string;
+  file_id?: string;
+  detail?: 'low' | 'high' | 'original' | 'auto';
+};
+
+type DeepSeekInputFilePart = {
+  type: 'input_file';
+  file_id: string;
+};
+
+type DeepSeekResponsesMessage = Omit<ChatMessage, 'role' | 'content'> & {
+  role: ChatMessage['role'] | 'developer';
+  content: string | Array<ChatContentPart | DeepSeekInputImagePart | DeepSeekInputFilePart> | null;
+};
+
+type DeepSeekResponsesInput = string | readonly (DeepSeekResponsesMessage | Record<string, unknown>)[];
+
+export type DeepSeekResponsesOptions = {
+  tools?: readonly unknown[];
+  tool_choice?: unknown;
+  stream?: boolean;
+  instructions?: string;
+  reasoningEffort?: DeepSeekReasoningEffort;
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topLogprobs?: number;
+  text?: Record<string, unknown>;
+  safetyCheck?: DeepSeekSafetyCheck;
+  title?: DeepSeekResponseTitle;
+  user?: string;
 };
 
 export type IntentClassificationPayload = {
@@ -2383,6 +2435,1029 @@ type IntentSystemOneQuestions = Record<string, {
   instructions: string;
   criteria: Record<string, string>;
 }>;
+
+type DeepSeekApiProvider = Pick<RuntimeProvider, 'baseUrl' | 'apiKey'>
+  & Partial<Pick<RuntimeProvider, 'platform' | 'responsesPath' | 'authHeader' | 'authPrefix'>>;
+
+export type DeepSeekToolSearchInput = {
+  query: string;
+  count?: number;
+  ori_question?: string | null;
+  localization?: string;
+  need_content?: boolean;
+};
+
+export type DeepSeekToolSearchResult = {
+  rerank_score?: number;
+  title: string;
+  url: string;
+  snippet?: string;
+  summary?: string;
+  content?: string;
+  site_name?: string | null;
+  site_icon?: string | null;
+  date?: string | null;
+  authority?: number;
+};
+
+export type DeepSeekToolSearchResponse = {
+  results: DeepSeekToolSearchResult[];
+  /** HTTP 200 with a non-empty upstream results array is billable. */
+  searchRequestCount: 0 | 1;
+};
+
+export type DeepSeekToolFetchResult = { title: string; content: string };
+
+function deepSeekApiRoot(provider: Pick<DeepSeekApiProvider, 'baseUrl'>) {
+  let url: URL;
+  try { url = new URL(provider.baseUrl); }
+  catch { throw new Error('DeepSeek API 地址无效'); }
+  if (!/^https?:$/.test(url.protocol) || !url.hostname) throw new Error('DeepSeek API 地址必须使用 HTTP 或 HTTPS');
+  url.pathname = url.pathname.replace(/\/(?:v1|beta)\/?$/i, '').replace(/\/+$/, '');
+  url.search = '';
+  url.hash = '';
+  return `${url.origin}${url.pathname}`.replace(/\/$/, '');
+}
+
+function deepSeekResponsesEndpoint(provider: DeepSeekApiProvider) {
+  const configured = String(provider.responsesPath || '/responses').trim();
+  if (/^https?:\/\//i.test(configured)) {
+    const url = new URL(configured);
+    if (url.hostname === 'api.deepseek.com' && /^\/(?:beta\/responses|v1\/responses)\/?$/i.test(url.pathname)) {
+      url.pathname = '/responses';
+      url.search = '';
+      url.hash = '';
+    }
+    return url.toString().replace(/\/$/, '');
+  }
+  const path = /^\/?(?:beta\/responses|v1\/responses)\/?$/i.test(configured) ? '/responses' : configured;
+  return `${deepSeekApiRoot(provider)}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function deepSeekToolEndpoint(provider: DeepSeekApiProvider, tool: 'search' | 'fetch') {
+  return `${deepSeekApiRoot(provider)}/v1/tools/${tool}`;
+}
+
+function deepSeekField(value: unknown) {
+  return typeof value === 'string' ? value : '';
+}
+
+function deepSeekSearchResult(value: unknown): DeepSeekToolSearchResult | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const title = deepSeekField(row.title).trim();
+  const url = deepSeekField(row.url).trim();
+  if (!title || !/^https?:\/\//i.test(url)) return null;
+  const score = Number(row.rerank_score);
+  const authority = Number(row.authority);
+  return {
+    title,
+    url,
+    ...(Number.isFinite(score) ? { rerank_score: score } : {}),
+    ...(typeof row.snippet === 'string' ? { snippet: row.snippet } : {}),
+    ...(typeof row.summary === 'string' ? { summary: row.summary } : {}),
+    ...(typeof row.content === 'string' ? { content: row.content } : {}),
+    ...(typeof row.site_name === 'string' || row.site_name === null ? { site_name: row.site_name } : {}),
+    ...(typeof row.site_icon === 'string' || row.site_icon === null ? { site_icon: row.site_icon } : {}),
+    ...(typeof row.date === 'string' || row.date === null ? { date: row.date } : {}),
+    ...(Number.isFinite(authority) ? { authority } : {}),
+  };
+}
+
+function requireDeepSeekToolProvider(provider: DeepSeekApiProvider) {
+  if (provider.platform !== 'deepseek') throw new Error('DeepSeek Search/Fetch 端点仅适用于 DeepSeek 官方服务商配置');
+}
+
+export async function deepSeekToolSearch(provider: DeepSeekApiProvider, input: DeepSeekToolSearchInput, signal?: AbortSignal) {
+  requireDeepSeekToolProvider(provider);
+  if (!input || typeof input !== 'object') throw new Error('DeepSeek 搜索参数必须为对象');
+  if (typeof input.query !== 'string') throw new Error('DeepSeek 搜索 query 必须为字符串');
+  const query = input.query.trim();
+  const queryLength = Array.from(query).length;
+  if (!queryLength || queryLength > 128) throw new Error('DeepSeek 搜索 query 必须为 1 至 128 个字符');
+  const count = input.count ?? 10;
+  if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error('DeepSeek 搜索 count 必须为 1 至 50');
+  if (input.ori_question !== undefined && input.ori_question !== null) {
+    if (typeof input.ori_question !== 'string') throw new Error('DeepSeek 搜索 ori_question 必须为字符串或 null');
+    const originalQuestionLength = Array.from(input.ori_question).length;
+    if (!originalQuestionLength || originalQuestionLength > 128) throw new Error('DeepSeek 搜索 ori_question 必须为 1 至 128 个字符或 null');
+  }
+  if (input.localization !== undefined && typeof input.localization !== 'string') throw new Error('DeepSeek 搜索 localization 必须为字符串');
+  if (input.need_content !== undefined && typeof input.need_content !== 'boolean') throw new Error('DeepSeek 搜索 need_content 必须为布尔值');
+  const body: DeepSeekToolSearchInput = {
+    query,
+    count,
+    ...(input.ori_question !== undefined ? { ori_question: input.ori_question } : {}),
+    localization: input.localization ?? '',
+    need_content: input.need_content ?? false,
+  };
+  const data = await fetchJson(deepSeekToolEndpoint(provider, 'search'), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  }, 30000, signal);
+  const rawResults = Array.isArray(data?.results) ? data.results : null;
+  if (!rawResults) throw providerResponseError(502, { error: { message: 'DeepSeek Search 响应缺少 results 数组' } }, 'Invalid Search response');
+  const results = rawResults.map(deepSeekSearchResult).filter(Boolean) as DeepSeekToolSearchResult[];
+  return { results, searchRequestCount: rawResults.length > 0 ? 1 : 0 } satisfies DeepSeekToolSearchResponse;
+}
+
+export async function deepSeekToolFetch(provider: DeepSeekApiProvider, value: string, signal?: AbortSignal): Promise<DeepSeekToolFetchResult> {
+  requireDeepSeekToolProvider(provider);
+  if (typeof value !== 'string') throw new Error('DeepSeek Fetch URL 必须为字符串');
+  const urlValue = value.trim();
+  if (!urlValue || Array.from(urlValue).length > 8192) throw new Error('DeepSeek Fetch URL 必须为 1 至 8192 个字符');
+  let url: URL;
+  try { url = new URL(urlValue); }
+  catch { throw new Error('DeepSeek Fetch 只接受有效的 HTTP 或 HTTPS 网页地址'); }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password) {
+    throw new Error('DeepSeek Fetch 只接受不含用户信息的 HTTP 或 HTTPS 网页地址');
+  }
+  const data = await fetchJson(deepSeekToolEndpoint(provider, 'fetch'), {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ url: urlValue }),
+  }, 45000, signal);
+  if (typeof data?.title !== 'string' || typeof data?.content !== 'string') {
+    throw providerResponseError(502, { error: { message: 'DeepSeek Fetch 响应缺少 title 或 content 字段' } }, 'Invalid Fetch response');
+  }
+  return { title: data.title, content: data.content };
+}
+
+export type DeepSeekReasoningEffort = 'none' | 'low' | 'high' | 'max' | 'minimal' | 'medium' | 'xhigh';
+
+export function normalizeDeepSeekReasoningEffort(value: DeepSeekReasoningEffort | undefined) {
+  if (value === undefined) return undefined;
+  if (value === 'minimal') return 'low';
+  if (value === 'medium' || value === 'xhigh') return 'high';
+  if (value === 'none' || value === 'low' || value === 'high' || value === 'max') return value;
+  throw new Error('DeepSeek reasoning.effort 仅支持 none、low、high 或 max');
+}
+
+function deepSeekResponsesModel(rawModelId: string) {
+  const id = String(rawModelId || '').trim().toLowerCase().split('/').pop();
+  if (id === 'deepseek-flash' || id === 'deepseek-v4-flash' || id === 'deepseek-v4.1-flash') return 'deepseek-flash';
+  if (id === 'deepseek-v4-pro') return 'deepseek-v4-pro';
+  return null;
+}
+
+function responseMessageContent(
+  content: DeepSeekResponsesMessage['content'],
+  role: 'user' | 'system' | 'developer' | 'assistant' = 'user',
+  allowImages = true,
+) {
+  if (content == null) return [];
+  const textType = role === 'assistant' ? 'output_text' : 'input_text';
+  if (typeof content === 'string') return [{ type: textType, text: content }];
+  const parts: Array<Record<string, unknown>> = [];
+  for (const rawPart of content) {
+    if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) throw new Error('DeepSeek Responses API 输入内容块格式无效');
+    const part = rawPart as Record<string, unknown>;
+    if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') {
+      const text = typeof part.text === 'string' ? part.text : '';
+      parts.push({ type: textType, text });
+      continue;
+    }
+    if (part.type === 'input_file') {
+      if (role !== 'user') throw new Error('DeepSeek Responses API 仅支持 user 消息中的 input_file');
+      const fileId = deepSeekField(part.file_id).trim();
+      if (!fileId) throw new Error('DeepSeek Responses API 的 input_file 必须提供 file_id');
+      parts.push({ type: 'input_file', file_id: fileId });
+      continue;
+    }
+    if (part.type === 'input_image' || part.type === 'image_url') {
+      if (role === 'assistant') throw new Error('DeepSeek Responses API 不支持 assistant 消息中的 input_image；请不要把图片放回 assistant 历史消息');
+      if (!allowImages) throw new Error('DeepSeek Responses API 的 deepseek-v4-pro 不支持 input_image；图生文请使用 deepseek-flash');
+      const image = part.type === 'image_url' && part.image_url && typeof part.image_url === 'object'
+        ? part.image_url as Record<string, unknown>
+        : part;
+      const imageUrl = deepSeekField(image.image_url || image.url).trim();
+      const fileId = deepSeekField(image.file_id).trim();
+      if (imageUrl && fileId) throw new Error('DeepSeek Responses API 的 input_image 不能同时提供 image_url 与 file_id');
+      if (!imageUrl && !fileId) throw new Error('DeepSeek Responses API 的 input_image 必须提供 image_url 或 file_id');
+      const detail = image.detail === undefined ? undefined : String(image.detail);
+      if (detail !== undefined && !['low', 'high', 'original', 'auto'].includes(detail)) {
+        throw new Error('DeepSeek Responses API 的 input_image detail 无效');
+      }
+      parts.push({
+        type: 'input_image',
+        ...(imageUrl ? { image_url: imageUrl } : { file_id: fileId }),
+        ...(imageUrl && detail ? { detail } : {}),
+      });
+      continue;
+    }
+    throw new Error('DeepSeek Responses API 不支持 video_url 输入；请使用支持视频输入的 Chat Completions 模型');
+  }
+  return parts;
+}
+
+function responseReasoningContent(value: string) {
+  return [{ type: 'reasoning_text', text: value }];
+}
+
+function responseToolOutput(content: DeepSeekResponsesMessage['content'], allowImages = true) {
+  if (typeof content === 'string' || content == null) return typeof content === 'string' ? content : '';
+  return content.map((rawPart) => {
+    if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) throw new Error('DeepSeek Responses API 工具输出内容块格式无效');
+    const part = rawPart as Record<string, unknown>;
+    if (part.type === 'text' || part.type === 'input_text' || part.type === 'output_text') return { type: 'input_text', text: typeof part.text === 'string' ? part.text : '' };
+    if (part.type === 'input_file') {
+      throw new Error('DeepSeek Responses API 的工具输出不支持 input_file');
+    }
+    if (part.type === 'input_image' || part.type === 'image_url') {
+      if (!allowImages) throw new Error('DeepSeek Responses API 的 deepseek-v4-pro 不支持工具输出中的 input_image；图生文请使用 deepseek-flash');
+      const image = part.type === 'image_url' && part.image_url && typeof part.image_url === 'object'
+        ? part.image_url as Record<string, unknown>
+        : part;
+      const imageUrl = deepSeekField(image.image_url || image.url).trim();
+      const fileId = deepSeekField(image.file_id).trim();
+      if (imageUrl && fileId) throw new Error('DeepSeek Responses API 的 input_image 不能同时提供 image_url 与 file_id');
+      if (!imageUrl && !fileId) throw new Error('DeepSeek Responses API 的 input_image 必须提供 image_url 或 file_id');
+      const detail = image.detail === undefined ? undefined : String(image.detail);
+      if (detail !== undefined && !['low', 'high', 'original', 'auto'].includes(detail)) {
+        throw new Error('DeepSeek Responses API 的 input_image detail 无效');
+      }
+      return { type: 'input_image', ...(imageUrl ? { image_url: imageUrl } : { file_id: fileId }), ...(imageUrl && detail ? { detail } : {}) };
+    }
+    throw new Error('DeepSeek Responses API 不支持 video_url 工具输出');
+  });
+}
+
+function responseToolArguments(value: unknown) {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value ?? {}); } catch { return '{}'; }
+}
+
+function deepSeekServerToolDeclaredType(item: Record<string, unknown>, rawModelId = '') {
+  const declared = deepSeekField(item.name || item.tool_name || item.type).trim();
+  if (declared === 'deepseek_read_url' || ['read_link', 'fetch'].includes(deepSeekField(item.kind))) return 'deepseek_read_url';
+  if (declared === 'web_search') return 'web_search';
+  return rawModelId === 'deepseek-v4-pro' ? 'web_search' : 'deepseek_web_search';
+}
+
+function deepSeekServerToolCall(item: Record<string, unknown>, index: number, rawModelId = '') {
+  const call: Record<string, unknown> = {
+    index,
+    ...(deepSeekField(item.id || item.call_id) ? { id: deepSeekField(item.id || item.call_id) } : {}),
+    type: deepSeekServerToolDeclaredType(item, rawModelId),
+    ...(item.kind !== undefined ? { kind: item.kind } : {}),
+    ...(item.action && typeof item.action === 'object' && !Array.isArray(item.action) ? { action: item.action } : {}),
+    ...(item.status !== undefined ? { status: item.status } : {}),
+    ...(item.sources !== undefined ? { sources: item.sources } : {}),
+    ...(item.page !== undefined ? { page: item.page } : {}),
+    ...(item.signature !== undefined ? { signature: item.signature } : {}),
+    ...(item.error !== undefined && item.error !== null ? { error: item.error } : {}),
+  };
+  return call;
+}
+
+function deepSeekServerToolSteps(output: readonly unknown[], rawModelId = '') {
+  const steps: Array<{ index: number; reasoning_content?: string; calls: Array<Record<string, unknown>> }> = [];
+  let stepIndex = 0;
+  let stepReasoning = '';
+  let stepHasCall = false;
+  const ensureStep = () => {
+    const existing = steps.find((step) => step.index === stepIndex);
+    if (existing) return existing;
+    const created: { index: number; reasoning_content?: string; calls: Array<Record<string, unknown>> } = { index: stepIndex, calls: [] };
+    steps.push(created);
+    return created;
+  };
+  for (const rawItem of output) {
+    if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) continue;
+    const item = rawItem as Record<string, unknown>;
+    if (item.type === 'reasoning') {
+      if (stepHasCall) {
+        stepIndex += 1;
+        stepReasoning = '';
+        stepHasCall = false;
+      }
+      if (Array.isArray(item.content)) {
+        for (const rawPart of item.content) {
+          if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) continue;
+          const part = rawPart as Record<string, unknown>;
+          if (part.type === 'reasoning_text' && typeof part.text === 'string') stepReasoning += part.text;
+        }
+      }
+      continue;
+    }
+    if (item.type !== 'web_search_call' && item.type !== 'tool_search_call') continue;
+    const step = ensureStep();
+    if (stepReasoning && step.reasoning_content === undefined) step.reasoning_content = stepReasoning;
+    step.calls.push(deepSeekServerToolCall(item, step.calls.length, rawModelId));
+    stepHasCall = true;
+  }
+  return steps.filter((step) => step.calls.length > 0);
+}
+
+function deepSeekResponsesServerToolItems(values: readonly unknown[]) {
+  const items: Array<Record<string, unknown>> = [];
+  for (const rawValue of values) {
+    if (!rawValue || typeof rawValue !== 'object' || Array.isArray(rawValue)) continue;
+    const value = rawValue as Record<string, unknown>;
+    if (value.type === 'web_search_call' || value.type === 'tool_search_call') {
+      items.push(value);
+      continue;
+    }
+    if (!Array.isArray(value.calls)) continue;
+    for (const rawCall of value.calls) {
+      if (!rawCall || typeof rawCall !== 'object' || Array.isArray(rawCall)) continue;
+      const call = rawCall as Record<string, unknown>;
+      const item: Record<string, unknown> = {
+        type: 'web_search_call',
+        ...(deepSeekField(call.id || call.call_id) ? { id: deepSeekField(call.id || call.call_id) } : {}),
+        ...(call.status !== undefined ? { status: call.status } : {}),
+        ...(call.kind !== undefined ? { kind: call.kind } : {}),
+        ...(call.action !== undefined ? { action: call.action } : {}),
+        ...(call.sources !== undefined ? { sources: call.sources } : {}),
+        ...(call.page !== undefined ? { page: call.page } : {}),
+        ...(call.signature !== undefined ? { signature: call.signature } : {}),
+        ...(call.error !== undefined ? { error: call.error } : {}),
+      };
+      items.push(item);
+    }
+  }
+  return items;
+}
+
+function responseToolChoice(value: unknown, toolNames: ReadonlySet<string>, hasServerWebTools: boolean) {
+  if (value === 'required' && hasServerWebTools) return 'auto';
+  if (value === 'auto' || value === 'none' || value === 'required') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const choice = value as Record<string, unknown>;
+    const nested = choice.function && typeof choice.function === 'object' ? choice.function as Record<string, unknown> : null;
+    if (choice.type !== undefined && choice.type !== 'function') throw new Error('DeepSeek Responses tool_choice 仅支持 function 类型');
+    const name = deepSeekField(choice.name || nested?.name).trim();
+    if (name && toolNames.has(name)) return { type: 'function', name };
+  }
+  throw new Error('DeepSeek Responses tool_choice 格式无效');
+}
+
+function responseTools(values: readonly unknown[] | undefined, model: string) {
+  if (!values?.length) return undefined;
+  const functionNames = new Set<string>();
+  const normalized = values.map<Record<string, unknown> | null>((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('DeepSeek Responses tools 必须是工具对象数组');
+    const tool = value as Record<string, unknown>;
+    const fn = tool.function && typeof tool.function === 'object' ? tool.function as Record<string, unknown> : null;
+    if (tool.type === 'function') {
+      const definition = fn || tool;
+      const name = deepSeekField(definition.name).trim();
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(name)) throw new Error('DeepSeek Responses function 工具名称必须为 1 至 128 位字母、数字、下划线或连字符');
+      if (functionNames.has(name)) throw new Error(`DeepSeek Responses function 工具名称重复：${name}`);
+      functionNames.add(name);
+      if (definition.parameters !== undefined && (!definition.parameters || typeof definition.parameters !== 'object' || Array.isArray(definition.parameters))) {
+        throw new Error(`DeepSeek Responses function ${name} 的 parameters 必须是 JSON Schema 对象`);
+      }
+      if (definition.strict !== undefined && typeof definition.strict !== 'boolean') throw new Error(`DeepSeek Responses function ${name} 的 strict 必须为布尔值`);
+      return {
+        type: 'function',
+        name,
+        ...(typeof definition.description === 'string' ? { description: definition.description } : {}),
+        ...(definition.parameters !== undefined ? { parameters: definition.parameters } : {}),
+        ...(definition.strict !== undefined ? { strict: definition.strict } : {}),
+      };
+    }
+    if (tool.type === 'custom') {
+      if (tool.name !== 'apply_patch') throw new Error('DeepSeek Responses 仅支持名称为 apply_patch 的 custom 工具');
+      return { type: 'custom', name: 'apply_patch', ...(typeof tool.description === 'string' ? { description: tool.description } : {}), ...(tool.input_format && typeof tool.input_format === 'object' && !Array.isArray(tool.input_format) ? { input_format: tool.input_format } : {}) };
+    }
+    if (tool.type === 'web_search') {
+      // The legacy web_search declaration is ignored by deepseek-flash; the
+      // model's documented server tools are deepseek_web_search/read_url.
+      return model === 'deepseek-flash' ? null : { type: 'web_search' };
+    }
+    if (tool.type === 'deepseek_web_search' || tool.type === 'deepseek_read_url') return { type: tool.type };
+    if (tool.type === 'namespace' || tool.type === 'tool_search') return { type: tool.type };
+    // DeepSeek ignores unknown tool types. Preserve only the documented tool
+    // objects so an unrelated provider extension cannot leak upstream.
+    return null;
+  }).filter((tool): tool is Record<string, unknown> => Boolean(tool));
+  const types = normalized.map((tool) => String((tool as Record<string, unknown>).type));
+  const serverWebToolTypes = new Set(['web_search', 'deepseek_web_search', 'deepseek_read_url']);
+  const hasDeepSeekWebTools = types.some((type) => type === 'deepseek_web_search' || type === 'deepseek_read_url');
+  const hasServerWebTools = types.some((type) => serverWebToolTypes.has(type));
+  for (const type of serverWebToolTypes) {
+    if (types.filter((candidate) => candidate === type).length > 1) {
+      throw new Error(`DeepSeek Responses ${type} 工具只能声明一次`);
+    }
+  }
+  const incompatibleWithWebTools = new Set(['custom', 'namespace', 'tool_search']);
+  if (hasServerWebTools && types.some((type) => incompatibleWithWebTools.has(type))) {
+    throw new Error('DeepSeek Responses Web Tools 不能与 web_search、custom、namespace 或 tool_search 组合');
+  }
+  if (types.includes('namespace') || types.includes('tool_search')) {
+    throw new Error('DeepSeek Responses 不支持 namespace 或 tool_search 工具');
+  }
+  if (hasDeepSeekWebTools && model !== 'deepseek-flash') throw new Error('DeepSeek Responses 的 deepseek_web_search/deepseek_read_url 仅支持 deepseek-flash');
+  if (types.includes('web_search') && model !== 'deepseek-v4-pro') throw new Error('DeepSeek Responses 的 web_search 仅支持 deepseek-v4-pro');
+  return normalized.length ? normalized : undefined;
+}
+
+export function serializeDeepSeekResponsesInput(messages: readonly unknown[], rawModelId = 'deepseek-flash') {
+  const model = deepSeekResponsesModel(rawModelId) || rawModelId;
+  const allowImages = model === 'deepseek-flash';
+  const input: Array<Record<string, unknown>> = [];
+  const customCallIds = new Set<string>();
+  const seenCallIds = new Set<string>();
+  for (const rawMessage of messages) {
+    if (!rawMessage || typeof rawMessage !== 'object' || Array.isArray(rawMessage)) throw new Error('DeepSeek Responses API 输入 item 格式无效');
+    const message = rawMessage as Record<string, unknown>;
+    const rawRole = deepSeekField(message.role);
+    if (!rawRole) {
+      const itemType = deepSeekField(message.type);
+      if (['function_call', 'function_call_output', 'reasoning', 'custom_tool_call', 'custom_tool_call_output', 'web_search_call', 'tool_search_call'].includes(itemType)) {
+        const callId = deepSeekField(message.call_id || message.id).trim();
+        if (callId && (itemType === 'function_call' || itemType === 'custom_tool_call')) {
+          if (seenCallIds.has(callId)) throw new Error(`DeepSeek Responses 工具调用 call_id 重复：${callId}`);
+          seenCallIds.add(callId);
+        }
+        if (itemType === 'custom_tool_call' && callId) customCallIds.add(callId);
+        if (itemType === 'custom_tool_call_output' && (!callId || !customCallIds.has(callId))) {
+          throw new Error(`DeepSeek Responses custom_tool_call_output 缺少对应的 custom_tool_call：${callId || '未知 call_id'}`);
+        }
+        input.push(message);
+        continue;
+      }
+      throw new Error(`DeepSeek Responses API 不支持输入 item 类型：${itemType || '未知'}`);
+    }
+    if (rawRole === 'tool') {
+      const callId = deepSeekField(message.tool_call_id).trim();
+      if (callId) {
+        const output = responseToolOutput(message.content as DeepSeekResponsesMessage['content'], allowImages);
+        input.push(customCallIds.has(callId)
+          ? { type: 'custom_tool_call_output', call_id: callId, output }
+          : { type: 'function_call_output', call_id: callId, output });
+      }
+      continue;
+    }
+    if (rawRole === 'assistant' && Array.isArray(message.tool_calls)) {
+      const reasoning = deepSeekField(message.reasoning_content);
+      if (reasoning) input.push({ type: 'reasoning', content: responseReasoningContent(reasoning) });
+      if (message.content) input.push({ role: 'assistant', content: responseMessageContent(message.content as DeepSeekResponsesMessage['content'], 'assistant', allowImages) });
+      if (Array.isArray(message.server_tool_calls)) {
+        input.push(...deepSeekResponsesServerToolItems(message.server_tool_calls));
+      }
+      for (const rawCall of message.tool_calls) {
+        const call = rawCall && typeof rawCall === 'object' && !Array.isArray(rawCall) ? rawCall as Record<string, unknown> : {};
+        const fn = call.function && typeof call.function === 'object' && !Array.isArray(call.function) ? call.function as Record<string, unknown> : undefined;
+        const callId = deepSeekField(call.id || call.call_id);
+        const name = deepSeekField(fn?.name);
+        if (!callId || !name) continue;
+        const isCustomCall = call.type === 'custom' || name === 'apply_patch';
+        if (isCustomCall) {
+          if (seenCallIds.has(callId)) throw new Error(`DeepSeek Responses 工具调用 call_id 重复：${callId}`);
+          seenCallIds.add(callId);
+          customCallIds.add(callId);
+          input.push({ type: 'custom_tool_call', call_id: callId, name, input: responseToolArguments(fn?.arguments) });
+        } else {
+          if (seenCallIds.has(callId)) throw new Error(`DeepSeek Responses 工具调用 call_id 重复：${callId}`);
+          seenCallIds.add(callId);
+          input.push({ type: 'function_call', call_id: callId, name, arguments: responseToolArguments(fn?.arguments) });
+        }
+      }
+      continue;
+    }
+    if (!['system', 'developer', 'user', 'assistant'].includes(rawRole)) throw new Error(`DeepSeek Responses API 不支持消息 role：${rawRole}`);
+    const reasoning = deepSeekField(message.reasoning_content);
+    if (rawRole === 'assistant' && reasoning) input.push({ type: 'reasoning', content: responseReasoningContent(reasoning) });
+    input.push({ role: rawRole, content: responseMessageContent(message.content as DeepSeekResponsesMessage['content'], rawRole as 'user' | 'system' | 'developer' | 'assistant', allowImages) });
+    if (rawRole === 'assistant' && Array.isArray(message.server_tool_calls)) {
+      input.push(...deepSeekResponsesServerToolItems(message.server_tool_calls));
+    }
+  }
+  const lastItem = input.at(-1);
+  if (lastItem?.type === 'reasoning' || (lastItem?.role === 'assistant' && (lastItem.type === undefined || lastItem.type === 'message'))) {
+    throw new Error('DeepSeek Responses API 不支持以 assistant 消息或 reasoning item 结尾的 input');
+  }
+  return input;
+}
+
+function deepSeekResponsesRequest(
+  rawModelId: string,
+  input: DeepSeekResponsesInput,
+  options: DeepSeekResponsesOptions,
+) {
+  const model = deepSeekResponsesModel(rawModelId);
+  if (!model) throw new Error(`DeepSeek Responses API 不支持模型 ${rawModelId}；当前只支持 deepseek-flash 与 deepseek-v4-pro`);
+  if (options.maxOutputTokens !== undefined && (!Number.isInteger(options.maxOutputTokens) || options.maxOutputTokens < 1 || options.maxOutputTokens > 393216)) {
+    throw new Error('DeepSeek max_output_tokens 必须为 1 至 393216 的整数');
+  }
+  if (options.temperature !== undefined && (!Number.isFinite(options.temperature) || options.temperature < 0 || options.temperature > 2)) {
+    throw new Error('DeepSeek temperature 必须为 0 至 2 的数字');
+  }
+  if (options.topP !== undefined && (!Number.isFinite(options.topP) || options.topP < 0 || options.topP > 1)) {
+    throw new Error('DeepSeek top_p 必须为 0 至 1 的数字');
+  }
+  if (options.topLogprobs !== undefined && (!Number.isInteger(options.topLogprobs) || options.topLogprobs < 0 || options.topLogprobs > 20)) {
+    throw new Error('DeepSeek top_logprobs 必须为 0 至 20 的整数');
+  }
+  const effort = normalizeDeepSeekReasoningEffort(options.reasoningEffort);
+  if ((typeof input === 'string' ? !input.trim() : input.length === 0) && !options.instructions?.trim()) {
+    throw new Error('DeepSeek Responses API 必须提供非空 input 或 instructions');
+  }
+  if (options.safetyCheck !== undefined) {
+    if (!options.safetyCheck || typeof options.safetyCheck !== 'object' || Array.isArray(options.safetyCheck) || !['low', 'high'].includes(options.safetyCheck.level)) {
+      throw new Error('DeepSeek safety_check 必须为 { level: "low" | "high" }');
+    }
+  }
+  if (options.title !== undefined) {
+    if (!options.title || typeof options.title !== 'object' || Array.isArray(options.title) || typeof options.title.enabled !== 'boolean') {
+      throw new Error('DeepSeek title 必须为 { enabled: boolean }');
+    }
+  }
+  if (options.text !== undefined && (!options.text || typeof options.text !== 'object' || Array.isArray(options.text))) {
+    throw new Error('DeepSeek Responses text 必须为对象');
+  }
+  const format = options.text?.format;
+  if (format !== undefined) {
+    if (!format || typeof format !== 'object' || Array.isArray(format)) throw new Error('DeepSeek Responses text.format 必须为对象');
+    const formatType = deepSeekField((format as Record<string, unknown>).type);
+    if (!['text', 'json_object', 'json_schema'].includes(formatType)) throw new Error('DeepSeek Responses text.format.type 不受支持');
+    if (formatType === 'json_schema') {
+      if (typeof (format as Record<string, unknown>).name !== 'string' || !(format as Record<string, unknown>).name) throw new Error('DeepSeek Responses json_schema 必须提供 name');
+      if (!(format as Record<string, unknown>).schema || typeof (format as Record<string, unknown>).schema !== 'object' || Array.isArray((format as Record<string, unknown>).schema)) throw new Error('DeepSeek Responses json_schema 必须提供 schema 对象');
+    }
+  }
+  const tools = responseTools(options.tools, model);
+  const toolNames = new Set((tools || []).filter((tool) => (tool as Record<string, unknown>).type === 'function').map((tool) => deepSeekField((tool as Record<string, unknown>).name)));
+  const hasServerWebTools = Boolean(tools?.some((tool) => ['web_search', 'deepseek_web_search', 'deepseek_read_url'].includes(String((tool as Record<string, unknown>).type))));
+  const hasDeepSeekWebTools = Boolean(tools?.some((tool) => ['deepseek_web_search', 'deepseek_read_url'].includes(String((tool as Record<string, unknown>).type))));
+  if (hasDeepSeekWebTools && format && deepSeekField((format as Record<string, unknown>).type) !== 'text') {
+    throw new Error('DeepSeek Responses 联网工具只支持 text 输出格式');
+  }
+  if (hasDeepSeekWebTools && options.topLogprobs !== undefined) {
+    throw new Error('DeepSeek Responses Web Tools 不支持 top_logprobs');
+  }
+  if (options.user !== undefined && (typeof options.user !== 'string' || new TextEncoder().encode(options.user).byteLength > 512)) {
+    throw new Error('DeepSeek Responses user 必须为不超过 512 UTF-8 字节的字符串');
+  }
+  const toolChoice = options.tool_choice === undefined ? undefined : responseToolChoice(options.tool_choice, toolNames, hasServerWebTools);
+  const serializedInput = typeof input === 'string' ? input : serializeDeepSeekResponsesInput(input, model);
+  const body: Record<string, unknown> = {
+    model,
+    input: serializedInput,
+    max_output_tokens: options.maxOutputTokens ?? 65536,
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.topP !== undefined ? { top_p: options.topP } : {}),
+    ...(options.topLogprobs !== undefined ? { top_logprobs: options.topLogprobs } : {}),
+    ...(options.instructions ? { instructions: options.instructions } : {}),
+    ...(effort ? { reasoning: { effort } } : {}),
+    ...(tools ? { tools } : {}),
+    ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    ...(options.text ? { text: options.text } : {}),
+    ...(options.safetyCheck !== undefined ? { safety_check: options.safetyCheck } : {}),
+    ...(options.title !== undefined ? { title: options.title } : {}),
+    ...(options.user !== undefined ? { user: options.user } : {}),
+    ...(options.stream ? { stream: true } : {}),
+  };
+  return body;
+}
+
+function responsesUsage(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const usage = value as Record<string, unknown>;
+  const input = Number(usage.input_tokens);
+  const output = Number(usage.output_tokens);
+  const total = Number(usage.total_tokens);
+  const hasInput = Number.isFinite(input) && input >= 0;
+  const hasOutput = Number.isFinite(output) && output >= 0;
+  return {
+    ...usage,
+    ...(hasInput ? { prompt_tokens: input, input_tokens: input } : {}),
+    ...(hasOutput ? { completion_tokens: output, output_tokens: output } : {}),
+    ...(Number.isFinite(total) && total >= 0 ? { total_tokens: total } : hasInput && hasOutput ? { total_tokens: input + output } : {}),
+  };
+}
+
+function deepSeekResponseMetadata(output: readonly unknown[], response: Record<string, unknown> = {}) {
+  const serverToolCalls: Array<Record<string, unknown>> = [];
+  const serverToolCallKeys = new Set<string>();
+  const annotations: unknown[] = [];
+  const annotationKeys = new Set<string>();
+  const addServerToolCall = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const item = value as Record<string, unknown>;
+    if (item.type !== 'web_search_call' && item.type !== 'tool_search_call') return;
+    const key = deepSeekField(item.id || item.call_id) || `${item.type}:${serverToolCalls.length}`;
+    if (serverToolCallKeys.has(key)) return;
+    serverToolCallKeys.add(key);
+    serverToolCalls.push(item);
+  };
+  const addAnnotation = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    let key = '';
+    try { key = JSON.stringify(value); } catch { key = `${annotations.length}`; }
+    if (annotationKeys.has(key)) return;
+    annotationKeys.add(key);
+    annotations.push(value);
+  };
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const item = value as Record<string, unknown>;
+    addServerToolCall(item);
+    if (Array.isArray(item.annotations)) item.annotations.forEach(addAnnotation);
+    if (Array.isArray(item.content)) item.content.forEach(visit);
+  };
+  output.forEach(visit);
+  if (Array.isArray(response.annotations)) response.annotations.forEach(addAnnotation);
+  return {
+    ...(serverToolCalls.length ? { server_tool_calls: serverToolCalls } : {}),
+    ...(annotations.length ? { annotations } : {}),
+  };
+}
+
+export function normalizeDeepSeekResponsesResponse(data: unknown, rawModelId: string) {
+  const response = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
+  const status = String(response.status || '').toLowerCase();
+  const responseError = response.error && typeof response.error === 'object' && !Array.isArray(response.error)
+    ? response.error as Record<string, unknown>
+    : null;
+  if (status === 'failed' || status === 'cancelled' || response.type === 'error') {
+    const failure = responseError || { message: response.error || response.message || `Response ${status || 'failed'}` };
+    const metadata = (data && typeof data === 'object' ? (data as Record<PropertyKey, unknown>)[providerResponseMeta] : undefined) as ProviderResponseMeta | undefined;
+    const requestId = deepSeekField(failure.request_id || response.request_id || metadata?.requestId);
+    const error = providerResponseError(status === 'cancelled' ? 499 : 502, { error: failure }, JSON.stringify(failure), requestId);
+    const usage = responsesUsage(response.usage);
+    if (usage) Object.assign(error, { providerUsage: usage });
+    throw error;
+  }
+  const output = Array.isArray(response.output) ? response.output : [];
+  const text: string[] = [];
+  const reasoning: string[] = [];
+  const toolCalls: Array<Record<string, unknown>> = [];
+  for (const rawItem of output) {
+    if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) continue;
+    const item = rawItem as Record<string, unknown>;
+    if (item.type === 'function_call' || item.type === 'custom_tool_call') {
+      const callId = deepSeekField(item.call_id || item.id);
+      const name = deepSeekField(item.name);
+      const argumentsValue = item.type === 'custom_tool_call' ? item.input : item.arguments;
+      if (callId && name) toolCalls.push({ id: callId, type: 'function', function: { name, arguments: responseToolArguments(argumentsValue) } });
+      continue;
+    }
+    if (item.type === 'reasoning' && Array.isArray(item.content)) {
+      for (const rawPart of item.content) {
+        if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) continue;
+        const part = rawPart as Record<string, unknown>;
+        if (part.type === 'reasoning_text' && typeof part.text === 'string') reasoning.push(part.text);
+      }
+      continue;
+    }
+    if (item.type !== 'message' || !Array.isArray(item.content)) continue;
+    for (const rawPart of item.content) {
+      if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) continue;
+      const part = rawPart as Record<string, unknown>;
+      if ((part.type === 'output_text' || part.type === 'refusal') && typeof part.text === 'string') text.push(part.text);
+    }
+  }
+  if (!text.length && typeof response.output_text === 'string') text.push(response.output_text);
+  const usage = responsesUsage(response.usage);
+  const metadata = deepSeekResponseMetadata(output, response);
+  const serverToolCalls = metadata.server_tool_calls ? deepSeekServerToolSteps(output, rawModelId) : undefined;
+  const annotations = metadata.annotations;
+  const incompleteDetails = response.incomplete_details && typeof response.incomplete_details === 'object'
+    ? response.incomplete_details as Record<string, unknown>
+    : {};
+  const normalizedStatus = status === 'incomplete'
+    ? incompleteDetails.reason === 'content_filter' ? 'content_filter' : 'length'
+    : toolCalls.length ? 'tool_calls' : 'stop';
+  return {
+    ...response,
+    model: deepSeekField(response.model) || rawModelId,
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: text.join('') || null,
+        ...(reasoning.length ? { reasoning_content: reasoning.join('') } : {}),
+        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+        ...(serverToolCalls ? { server_tool_calls: serverToolCalls } : {}),
+        ...(annotations ? { annotations } : {}),
+        ...(response.title !== undefined ? { title: response.title } : {}),
+      },
+      finish_reason: normalizedStatus,
+    }],
+    ...(usage ? { usage } : {}),
+    ...(serverToolCalls ? { server_tool_calls: serverToolCalls } : {}),
+    ...(annotations ? { annotations } : {}),
+  };
+}
+
+function normalizeDeepSeekChatStream(response: Response, rawModelId: string) {
+  if (!response.body) throw new Error('DeepSeek Responses 流没有响应正文');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const toolIndices = new Map<number, number>();
+  const toolItemIds = new Map<string, number>();
+  const toolArgumentBuffers = new Map<number, string>();
+  const emittedCalls = new Set<string>();
+  const serverToolOutputItems = new Map<number, Record<string, unknown>>();
+  const startedServerToolCalls = new Set<number>();
+  const completedServerToolCalls = new Set<number>();
+  const serverToolCallIndices = new Map<number, number>();
+  let serverToolStep = 0;
+  let serverToolStepCallIndex = 0;
+  let serverToolStepClosed = false;
+  let emittedServerToolStepReasoning = false;
+  const serverToolCalls: Array<Record<string, unknown>> = [];
+  const serverToolCallKeys = new Set<string>();
+  const annotations: unknown[] = [];
+  const annotationKeys = new Set<string>();
+  let streamTitle: unknown;
+  let emittedText = false;
+  let emittedReasoning = false;
+  let toolCount = 0;
+  let model = rawModelId;
+  let terminal = false;
+  let buffer = '';
+  const responseRequestId = requestIdFrom(null, '', response.headers);
+  const mergeMetadata = (metadata: { server_tool_calls?: unknown[]; annotations?: unknown[] }) => {
+    for (const rawCall of metadata.server_tool_calls || []) {
+      if (!rawCall || typeof rawCall !== 'object' || Array.isArray(rawCall)) continue;
+      const call = rawCall as Record<string, unknown>;
+      const key = deepSeekField(call.id || call.call_id) || `${call.type}:${serverToolCalls.length}`;
+      if (serverToolCallKeys.has(key)) {
+        const index = serverToolCalls.findIndex((existing) => (deepSeekField(existing.id || existing.call_id) || '') === key);
+        if (index >= 0) serverToolCalls[index] = { ...serverToolCalls[index], ...call };
+        continue;
+      }
+      serverToolCallKeys.add(key);
+      serverToolCalls.push(call);
+    }
+    for (const annotation of metadata.annotations || []) {
+      if (!annotation || typeof annotation !== 'object') continue;
+      let key = '';
+      try { key = JSON.stringify(annotation); } catch { key = `${annotations.length}`; }
+      if (annotationKeys.has(key)) continue;
+      annotationKeys.add(key);
+      annotations.push(annotation);
+    }
+  };
+  const collectMetadata = (value: unknown) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const item = value as Record<string, unknown>;
+      if (item.title !== undefined && streamTitle === undefined) streamTitle = item.title;
+    }
+    mergeMetadata(deepSeekResponseMetadata([value]));
+  };
+  const chunk = (delta: Record<string, unknown>, finishReason: string | null = null, usage?: Record<string, unknown>, metadata?: Record<string, unknown>, serverToolEvent?: Record<string, unknown>) => ({
+    model,
+    choices: [{ index: 0, delta, ...(serverToolEvent ? { server_tool_event: serverToolEvent } : {}), finish_reason: finishReason }],
+    ...(usage ? { usage } : {}),
+    ...(metadata || {}),
+  });
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (value: unknown) => controller.enqueue(encoder.encode(`data: ${value === '[DONE]' ? '[DONE]' : JSON.stringify(value)}\n\n`));
+      const consumeFrame = (frame: string) => {
+        const lines = frame.split(/\r?\n/);
+        const eventType = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+        const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+        if (!data || data === '[DONE]') return;
+        let payload: Record<string, unknown>;
+        try { payload = JSON.parse(data) as Record<string, unknown>; }
+        catch { throw new Error('DeepSeek Responses 流返回了无效 JSON 事件'); }
+        const type = deepSeekField(payload.type) || eventType || '';
+        const rawResponse = payload.response && typeof payload.response === 'object' ? payload.response as Record<string, unknown> : {};
+        model = deepSeekField(rawResponse.model) || model;
+        if (type === 'response.output_text.delta' && typeof payload.delta === 'string') {
+          if (payload.delta) {
+            emittedText = true;
+            send(chunk({ content: payload.delta }));
+          }
+          return;
+        }
+        if (type === 'response.reasoning_text.delta' && typeof payload.delta === 'string') {
+          if (payload.delta) {
+            emittedReasoning = true;
+            send(chunk({ reasoning_content: payload.delta }));
+          }
+          return;
+        }
+        if (type === 'response.output_item.added') {
+          const outputIndex = Number(payload.output_index);
+          const item = payload.item && typeof payload.item === 'object' ? payload.item as Record<string, unknown> : {};
+          collectMetadata(item);
+          if ((item.type === 'web_search_call' || item.type === 'tool_search_call') && Number.isInteger(outputIndex)) {
+            if (serverToolStepClosed) {
+              serverToolStep += 1;
+              serverToolStepCallIndex = 0;
+              serverToolStepClosed = false;
+              emittedServerToolStepReasoning = false;
+            }
+            serverToolOutputItems.set(outputIndex, item);
+            if (!emittedServerToolStepReasoning) {
+              send(chunk({}, null, undefined, undefined, { type: 'step_reasoning_done', step: serverToolStep }));
+              emittedServerToolStepReasoning = true;
+            }
+            if (!startedServerToolCalls.has(outputIndex)) {
+              startedServerToolCalls.add(outputIndex);
+              const callIndex = serverToolStepCallIndex++;
+              serverToolCallIndices.set(outputIndex, callIndex);
+              const call = {
+                ...item,
+                index: callIndex,
+                type: item.kind === 'read_link' || item.kind === 'open_page'
+                  ? 'deepseek_read_url'
+                  : model === 'deepseek-v4-pro' ? 'web_search' : 'deepseek_web_search',
+              };
+              send(chunk({}, null, undefined, undefined, { type: 'call_started', step: serverToolStep, call }));
+            }
+            return;
+          }
+          if (!['function_call', 'custom_tool_call'].includes(String(item.type)) || !Number.isInteger(outputIndex)) return;
+          if (toolIndices.has(outputIndex)) return;
+          const index = toolCount++;
+          toolIndices.set(outputIndex, index);
+          const itemId = deepSeekField(item.id);
+          if (itemId) toolItemIds.set(itemId, index);
+          const callId = deepSeekField(item.call_id || item.id);
+          if (callId) emittedCalls.add(callId);
+          toolArgumentBuffers.set(index, '');
+          send(chunk({ tool_calls: [{ index, ...(callId ? { id: callId, type: 'function' } : {}), function: { name: deepSeekField(item.name), arguments: '' } }] }));
+          return;
+        }
+        if (type === 'response.output_text.annotation.added') {
+          mergeMetadata({ annotations: payload.annotation ? [payload.annotation] : [] });
+          return;
+        }
+        if (type === 'response.output_item.done') {
+          const item = payload.item && typeof payload.item === 'object' ? payload.item as Record<string, unknown> : {};
+          collectMetadata(item);
+          const outputIndex = Number(payload.output_index);
+          if ((item.type === 'web_search_call' || item.type === 'tool_search_call') && Number.isInteger(outputIndex)) {
+            const finalItem = { ...(serverToolOutputItems.get(outputIndex) || {}), ...item };
+            serverToolOutputItems.set(outputIndex, finalItem);
+            if (!completedServerToolCalls.has(outputIndex)) {
+              completedServerToolCalls.add(outputIndex);
+              serverToolStepClosed = true;
+              const { signature: _signature, ...callWithoutSignature } = finalItem;
+              const call = {
+                ...callWithoutSignature,
+                index: serverToolCallIndices.get(outputIndex) || 0,
+                type: item.kind === 'read_link' || item.kind === 'open_page'
+                  ? 'deepseek_read_url'
+                  : model === 'deepseek-v4-pro' ? 'web_search' : 'deepseek_web_search',
+              };
+              send(chunk({}, null, undefined, undefined, { type: 'call_completed', step: serverToolStep, call }));
+            }
+          }
+          return;
+        }
+        if (type === 'response.function_call_arguments.delta' && typeof payload.delta === 'string') {
+          const outputIndex = Number(payload.output_index);
+          const index = toolIndices.get(outputIndex) ?? toolItemIds.get(deepSeekField(payload.item_id));
+          if (index !== undefined && payload.delta) {
+            toolArgumentBuffers.set(index, `${toolArgumentBuffers.get(index) || ''}${payload.delta}`);
+            send(chunk({ tool_calls: [{ index, function: { arguments: payload.delta } }] }));
+          }
+          return;
+        }
+        if (type === 'response.function_call_arguments.done' && typeof payload.arguments === 'string') {
+          const outputIndex = Number(payload.output_index);
+          const index = toolIndices.get(outputIndex) ?? toolItemIds.get(deepSeekField(payload.item_id));
+          if (index !== undefined && payload.arguments) {
+            const emitted = toolArgumentBuffers.get(index) || '';
+            // The `done` event repeats the complete argument string after the
+            // delta events. Emit it only when no delta was delivered, avoiding
+            // duplicated JSON in the downstream Chat Completions accumulator.
+            if (!emitted) {
+              toolArgumentBuffers.set(index, payload.arguments);
+              send(chunk({ tool_calls: [{ index, function: { arguments: payload.arguments } }] }));
+            }
+          }
+          return;
+        }
+        if (type === 'response.custom_tool_call_input.delta' && typeof payload.delta === 'string') {
+          const outputIndex = Number(payload.output_index);
+          const index = toolIndices.get(outputIndex) ?? toolItemIds.get(deepSeekField(payload.item_id));
+          if (index !== undefined && payload.delta) {
+            toolArgumentBuffers.set(index, `${toolArgumentBuffers.get(index) || ''}${payload.delta}`);
+            send(chunk({ tool_calls: [{ index, function: { arguments: payload.delta } }] }));
+          }
+          return;
+        }
+        if (type === 'response.custom_tool_call_input.done' && typeof payload.input === 'string') {
+          const outputIndex = Number(payload.output_index);
+          const index = toolIndices.get(outputIndex) ?? toolItemIds.get(deepSeekField(payload.item_id));
+          if (index !== undefined && payload.input) {
+            const emitted = toolArgumentBuffers.get(index) || '';
+            if (!emitted) {
+              toolArgumentBuffers.set(index, payload.input);
+              send(chunk({ tool_calls: [{ index, function: { arguments: payload.input } }] }));
+            }
+          }
+          return;
+        }
+        if (type === 'response.failed') {
+          const rawError = rawResponse.error || payload.error;
+          const failure = rawError && typeof rawError === 'object' && !Array.isArray(rawError) ? rawError as Record<string, unknown> : { message: rawError };
+          const requestId = deepSeekField(failure.request_id || rawResponse.request_id || responseRequestId);
+          const error = providerResponseError(502, { error: failure }, JSON.stringify(failure), requestId);
+          const usage = responsesUsage(rawResponse.usage || payload.usage);
+          if (usage) {
+            Object.assign(error, { providerUsage: usage });
+            send(chunk({}, null, usage));
+          }
+          throw error;
+        }
+        if (type !== 'response.completed' && type !== 'response.incomplete') return;
+        const output = Array.isArray(rawResponse.output) ? rawResponse.output : [];
+        const terminalMetadata = deepSeekResponseMetadata(output, rawResponse);
+        mergeMetadata(terminalMetadata);
+        const terminalServerToolCalls = terminalMetadata.server_tool_calls
+          ? deepSeekServerToolSteps(output, rawModelId)
+          : [];
+        if (rawResponse.title !== undefined) streamTitle = rawResponse.title;
+        if (!emittedText) {
+          const fallbackText = output.flatMap((rawItem) => {
+            if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return [];
+            const item = rawItem as Record<string, unknown>;
+            if (item.type !== 'message' || !Array.isArray(item.content)) return [];
+            return item.content.flatMap((rawPart) => {
+              if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) return [];
+              const part = rawPart as Record<string, unknown>;
+              return (part.type === 'output_text' || part.type === 'refusal') && typeof part.text === 'string' ? [part.text] : [];
+            });
+          }).join('');
+          if (fallbackText) send(chunk({ content: fallbackText }));
+        }
+        if (!emittedReasoning) {
+          const fallbackReasoning = output.flatMap((rawItem) => {
+            if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) return [];
+            const item = rawItem as Record<string, unknown>;
+            if (item.type !== 'reasoning' || !Array.isArray(item.content)) return [];
+            return item.content.flatMap((rawPart) => {
+              if (!rawPart || typeof rawPart !== 'object' || Array.isArray(rawPart)) return [];
+              const part = rawPart as Record<string, unknown>;
+              return part.type === 'reasoning_text' && typeof part.text === 'string' ? [part.text] : [];
+            });
+          }).join('');
+          if (fallbackReasoning) send(chunk({ reasoning_content: fallbackReasoning }));
+        }
+        for (const [rawIndex, rawItem] of output.entries()) {
+          if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) continue;
+          const item = rawItem as Record<string, unknown>;
+          if (item.type !== 'function_call' && item.type !== 'custom_tool_call') continue;
+          const outputIndex = Number(item.output_index ?? rawIndex);
+          const itemId = deepSeekField(item.id);
+          const callId = deepSeekField(item.call_id || item.id);
+          const knownIndex = (Number.isInteger(outputIndex) ? toolIndices.get(outputIndex) : undefined) ?? (itemId ? toolItemIds.get(itemId) : undefined);
+          const argumentsValue = item.type === 'custom_tool_call' ? item.input : item.arguments;
+          const finalArguments = responseToolArguments(argumentsValue);
+          if (knownIndex !== undefined) {
+            if (!toolArgumentBuffers.get(knownIndex) && finalArguments) {
+              toolArgumentBuffers.set(knownIndex, finalArguments);
+              send(chunk({ tool_calls: [{ index: knownIndex, function: { arguments: finalArguments } }] }));
+            }
+            continue;
+          }
+          if (callId && emittedCalls.has(callId)) continue;
+          const index = toolCount++;
+          if (callId) emittedCalls.add(callId);
+          send(chunk({ tool_calls: [{ index, ...(callId ? { id: callId, type: 'function' } : {}), function: { name: deepSeekField(item.name), arguments: finalArguments } }] }));
+        }
+        const incompleteDetails = rawResponse.incomplete_details && typeof rawResponse.incomplete_details === 'object'
+          ? rawResponse.incomplete_details as Record<string, unknown>
+          : {};
+        const finishReason = type === 'response.incomplete'
+          ? incompleteDetails.reason === 'content_filter' ? 'content_filter' : 'length'
+          : toolCount ? 'tool_calls' : 'stop';
+        send(chunk({
+          ...(terminalServerToolCalls.length ? { server_tool_calls: terminalServerToolCalls } : {}),
+          ...(annotations.length ? { annotations } : {}),
+          ...(streamTitle !== undefined ? { title: streamTitle } : {}),
+        }, finishReason, responsesUsage(rawResponse.usage)));
+        send('[DONE]');
+        terminal = true;
+        controller.close();
+      };
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          buffer += decoder.decode(part.value, { stream: true });
+          const frames = buffer.split(/\r?\n\r?\n/);
+          buffer = frames.pop() || '';
+          for (const frame of frames) {
+            consumeFrame(frame);
+            if (terminal) return;
+          }
+        }
+        buffer += decoder.decode();
+        if (buffer.trim()) consumeFrame(buffer);
+        if (!terminal) throw new Error('DeepSeek Responses 流在终止事件前意外结束');
+      } catch (error) {
+        try { await reader.cancel(error); } catch { /* stream is already closed */ }
+        controller.error(error);
+      }
+    },
+    async cancel(reason) { await reader.cancel(reason); },
+  });
+  return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform' } });
+}
 
 function agnesUsage(usage: any) {
   if (!usage || typeof usage !== 'object') return undefined;
@@ -2465,7 +3540,47 @@ async function agnesChatRequest(provider: RuntimeProvider, rawModelId: string, p
   return { protocol, body, endpoint: agnesTextEndpoint(provider, protocol) };
 }
 
-export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
+function supportsDeepSeekResponsesInput(provider: RuntimeProvider, rawModelId: string, messages: ChatMessage[]) {
+  return provider.platform === 'deepseek'
+    && Boolean(deepSeekResponsesModel(rawModelId))
+    && !messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'video_url'));
+}
+
+function deepSeekMessagesContainImage(messages: readonly DeepSeekResponsesMessage[]) {
+  return messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === 'image_url' || part.type === 'input_image'));
+}
+
+async function requestDeepSeekResponses(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  input: DeepSeekResponsesInput,
+  options: DeepSeekResponsesOptions,
+  signal?: AbortSignal,
+) {
+  const body = deepSeekResponsesRequest(rawModelId, input, options);
+  const request = {
+    method: 'POST',
+    headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: options.stream ? 'text/event-stream, application/json' : 'application/json' },
+    body: JSON.stringify(body),
+  } satisfies RequestInit;
+  const endpoint = deepSeekResponsesEndpoint(provider);
+  if (options.stream) return fetchStreamingResponse(endpoint, request, 180000, signal);
+  const data = await fetchJson(endpoint, request, 180000, signal);
+  normalizeDeepSeekResponsesResponse(data, rawModelId);
+  return data;
+}
+
+async function prepareDeepSeekResponsesInput(input: DeepSeekResponsesInput): Promise<DeepSeekResponsesInput> {
+  if (typeof input === 'string') return input;
+  const prepared = await Promise.all(input.map(async (item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.role !== 'string') return item;
+    const [message] = await prepareProviderChatMessages([item as ChatMessage], preparePublicMediaUrl, { prepareDataUrls: false });
+    return message as DeepSeekResponsesMessage;
+  }));
+  return prepared;
+}
+
+export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal) {
   if (is65535ClaudeModelProvider(provider, rawModelId)) {
     const { invokeClaudeCodeProvider } = await import('./claude-code-provider');
     const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
@@ -2475,6 +3590,26 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
     const request = await agnesChatRequest(provider, rawModelId, payload);
     const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
     return normalizeAgnesResponse(data, request.protocol);
+  }
+  if (provider.platform === 'deepseek' && deepSeekResponsesModel(rawModelId) === 'deepseek-v4-pro' && deepSeekMessagesContainImage(payload.messages)) {
+    throw new Error('DeepSeek deepseek-v4-pro 不支持图像输入；图生文请切换到 deepseek-flash');
+  }
+  if (supportsDeepSeekResponsesInput(provider, rawModelId, payload.messages)) {
+    const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
+    const data = await requestDeepSeekResponses(provider, rawModelId, messages, {
+      tools: payload.tools,
+      tool_choice: payload.tool_choice,
+      reasoningEffort: payload.reasoningEffort,
+      maxOutputTokens: payload.maxOutputTokens,
+      temperature: payload.temperature,
+      topP: payload.topP,
+      topLogprobs: payload.topLogprobs,
+      text: payload.text,
+      safetyCheck: payload.safetyCheck,
+      title: payload.title,
+      user: payload.user,
+    }, signal);
+    return normalizeDeepSeekResponsesResponse(data, rawModelId);
   }
   // OpenAI-compatible providers accept inline image data URLs. Keep them
   // inline; only local paths are promoted to a public relay URL.
@@ -2491,13 +3626,26 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
   return unwrapProviderData(provider, data);
 }
 
-export async function responsesCompletion(provider: RuntimeProvider, rawModelId: string, input: string | ChatMessage[], options: { tools?: any[]; stream?: boolean } = {}) {
+export async function responsesCompletion(
+  provider: RuntimeProvider,
+  rawModelId: string,
+  input: DeepSeekResponsesInput,
+  options: DeepSeekResponsesOptions & { signal?: AbortSignal } = {},
+) {
   if (isAgnesProvider(provider)) {
-    const messages: ChatMessage[] = typeof input === 'string' ? [{ role: 'user', content: input }] : input;
-    const request = await agnesChatRequest(provider, rawModelId, { messages, tools: options.tools }, { stream: options.stream });
-    return normalizeAgnesResponse(await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000), request.protocol);
+    const messages: ChatMessage[] = typeof input === 'string' ? [{ role: 'user', content: input }] : Array.from(input as readonly ChatMessage[]);
+    const request = await agnesChatRequest(provider, rawModelId, { messages, tools: options.tools ? [...options.tools] : undefined }, { stream: options.stream });
+    if (options.stream) return fetchStreamingResponse(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' }, body: JSON.stringify(request.body) }, 180000, options.signal);
+    return normalizeAgnesResponse(await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, options.signal), request.protocol);
   }
-  const preparedInput = typeof input === 'string' ? input : await prepareProviderChatMessages(input, preparePublicMediaUrl, { prepareDataUrls: false });
+  const preparedInput = provider.platform === 'deepseek'
+    ? await prepareDeepSeekResponsesInput(input)
+    : typeof input === 'string'
+      ? input
+      : await prepareProviderChatMessages(input as ChatMessage[], preparePublicMediaUrl, { prepareDataUrls: false });
+  if (provider.platform === 'deepseek') {
+    return requestDeepSeekResponses(provider, rawModelId, preparedInput, options, options.signal);
+  }
   const body: Record<string, unknown> = {
     model: rawModelId,
     input: preparedInput,
@@ -2505,6 +3653,13 @@ export async function responsesCompletion(provider: RuntimeProvider, rawModelId:
     ...(options.stream ? { stream: true } : {}),
   };
   const endpoint = providerEndpoint(provider, provider.responsesPath, '/responses');
+  if (options.stream) {
+    return fetchStreamingResponse(endpoint, {
+      method: 'POST',
+      headers: { ...authHeaders(provider), 'Content-Type': 'application/json', Accept: 'text/event-stream, application/json' },
+      body: JSON.stringify(body),
+    }, 180000, options.signal);
+  }
   try {
     return await fetchJson(endpoint, {
       method: 'POST',
@@ -2562,7 +3717,7 @@ async function fetchStreamingResponse(url: string, init: RequestInit, timeout: n
 
 export { fetchStreamingResponse };
 
-export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none' }, signal?: AbortSignal) {
+export async function chatCompletionStream(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal) {
   if (is65535ClaudeModelProvider(provider, rawModelId)) {
     const data = await chatCompletion(provider, rawModelId, payload, signal);
     const encoder = new TextEncoder();
@@ -2582,6 +3737,27 @@ export async function chatCompletionStream(provider: RuntimeProvider, rawModelId
         controller.close();
       },
     }), { headers: { 'Content-Type': 'text/event-stream' } });
+  }
+  if (provider.platform === 'deepseek' && deepSeekResponsesModel(rawModelId) === 'deepseek-v4-pro' && deepSeekMessagesContainImage(payload.messages)) {
+    throw new Error('DeepSeek deepseek-v4-pro 不支持图像输入；图生文请切换到 deepseek-flash');
+  }
+  if (supportsDeepSeekResponsesInput(provider, rawModelId, payload.messages)) {
+    const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
+    const response = await requestDeepSeekResponses(provider, rawModelId, messages, {
+      tools: payload.tools,
+      tool_choice: payload.tool_choice,
+      stream: true,
+      reasoningEffort: payload.reasoningEffort,
+      maxOutputTokens: payload.maxOutputTokens,
+      temperature: payload.temperature,
+      topP: payload.topP,
+      topLogprobs: payload.topLogprobs,
+      text: payload.text,
+      safetyCheck: payload.safetyCheck,
+      title: payload.title,
+      user: payload.user,
+    }, signal);
+    return normalizeDeepSeekChatStream(response as Response, rawModelId);
   }
   if (isAgnesProvider(provider) && agnesTextProtocol(provider) !== 'chat-completions') {
     const data = await chatCompletion(provider, rawModelId, payload, signal);

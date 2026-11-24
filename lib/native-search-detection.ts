@@ -10,6 +10,7 @@ function protocolFromValue(value: unknown): NativeSearchProtocol | undefined {
   const text = String(value || '').toLowerCase();
   if (!text) return undefined;
   if (/(?:gemini|google|ground)/.test(text)) return 'gemini-grounding';
+  if (/deepseek[ -_]?tools?/.test(text)) return 'deepseek-tools';
   if (/(?:perplexity|sonar|native[ -_]?chat)/.test(text)) return 'native-chat';
   if (/(?:openai|response|web[ -_]?search|browser|search[ -_]?parameter)/.test(text)) return 'openai-responses';
   return undefined;
@@ -51,8 +52,8 @@ export function inferNativeSearch(rawId: string, platform?: ProviderPlatform, me
   if (/(?:^|[/:_-])(?:sonar|sonar-[^/]+|perplexity)(?:$|[/:_-])/.test(id) || /perplexity|sonar/.test(id)) {
     return { detected: true, protocol: 'native-chat', detection: 'model-id' };
   }
-  if (platform === 'deepseek' && /deepseek[-_ ]?v4.*(?:flash|pro)/.test(id)) {
-    return { detected: true, protocol: 'openai-responses', detection: 'provider' };
+  if (platform === 'deepseek' && /(?:deepseek[-_ ]?flash|deepseek[-_ ]?v4.*(?:flash|pro))/.test(id)) {
+    return { detected: true, protocol: 'deepseek-tools', detection: 'provider' };
   }
   if (platform === 'google-gemini' && /gemini[-_ ]?\d/.test(id) && !/(?:embedding|aqa|tts|audio|robotics)/.test(id)) {
     return { detected: true, protocol: 'gemini-grounding', detection: 'provider' };

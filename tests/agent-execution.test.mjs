@@ -46,6 +46,31 @@ test('failed tool evidence overrides model success and unrelated successes do no
   assert.equal(outcome.toolOutcomeText('完成', [{ name: 'read', key: 'a', ok: false }, { name: 'read', key: 'a', ok: true }]), '完成');
 });
 
+test('file content repairs replace only the result for the same filename targets', () => {
+  const key = (files) => outcome.toolOutcomeKey('file_generate', JSON.stringify({ files }));
+  const failed = { filename: 'page.html', content: '' };
+  const repaired = { filename: 'page.html', content: '<html>fixed</html>' };
+  assert.equal(key([failed]), key([repaired]));
+  assert.equal(outcome.toolOutcomeText('已完成 1 个文件。', [
+    { name: 'file_generate', key: key([failed]), ok: false, error: '没有收到有效的文件内容' },
+    { name: 'file_generate', key: key([repaired]), ok: true },
+  ]), '已完成 1 个文件。');
+  assert.match(outcome.toolOutcomeText('', [
+    { name: 'file_generate', key: key([failed]), ok: false, error: 'page.html 仍未生成' },
+    { name: 'file_generate', key: key([{ filename: 'other.html', content: 'ok' }]), ok: true },
+  ]), /page\.html 仍未生成/);
+  assert.equal(key([{ filename: 'a.html', content: '' }, { filename: 'b.html', content: '' }]), key([{ filename: 'b.html', content: 'b' }, { filename: 'a.html', content: 'a' }]));
+  assert.notEqual(key([{ content: '' }]), key([repaired]), 'unknown targets cannot clear a previous failure');
+  const batch = [{ filename: 'a.html', content: 'a' }, { filename: 'b.html', content: '' }];
+  const partialKey = outcome.toolOutcomeKey('file_generate', JSON.stringify({ files: batch }), { ok: true, files: [{ name: 'a.html' }] });
+  assert.notEqual(partialKey, key(batch), 'a partial batch does not resolve every requested target');
+  assert.match(outcome.toolOutcomeText('', [
+    { name: 'file_generate', key: key(batch), ok: false, error: 'batch failed' },
+    { name: 'file_generate', key: partialKey, ok: true },
+  ]), /batch failed/);
+  assert.notEqual(outcome.toolOutcomeKey('move', '{"source":"a","destination":"b"}'), outcome.toolOutcomeKey('move', '{"source":"a","destination":"c"}'));
+});
+
 test('rename success requires destination to exist and original to disappear', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'sanmao-move-'));
   try {

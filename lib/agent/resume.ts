@@ -28,6 +28,7 @@ import { resolveLocalDataDir } from '@/lib/data-paths';
 import { stripToolCallMarkup } from '@/lib/skills';
 import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
 import { toolOutcomeText } from '@/lib/agent/tool-outcome';
+import { AgentContextBudgetExceededError, boundAgentChatPayload } from '@/lib/agent/context-budget';
 import { browserMutationObservationGap, browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { tabbitBrowserTool } from '@/lib/tools';
@@ -284,6 +285,14 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     },
     ...executed,
   ];
+  // Freeze the saved user turn before the loop adds its own verification prompts.
+  const currentUserMessage = messages.findLast((message) => message.role === 'user');
+  const completeResume = (payload: Parameters<typeof chatCompletion>[2]) => {
+    const boundedPayload = boundAgentChatPayload(payload, runtime.model, {
+      currentTurnStart: currentUserMessage ? payload.messages.indexOf(currentUserMessage) : -1,
+    });
+    return chatCompletion(runtime.provider, runtime.model.rawId, boundedPayload, input.signal ?? AbortSignal.timeout(RESUME_TIMEOUT_MS));
+  };
 
   // 用户点过「允许」之后，下一步常常是「再看看结果」：这一步不该逼他再补一句需求。
   // 所以续跑把只读的外部工具继续借给模型，让它把刚执行完的那一步读完、再写回答。
@@ -366,6 +375,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   };
 
   let text = '';
+  let contextBudgetFailure = '';
   if (continuationTools.length && callCount < MCP_TOOL_MAX_CALLS_PER_TURN && budget > 5_000) {
     const loop = await runToolLoop({
       messages,
@@ -375,7 +385,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       deadlineMs: Math.max(5_000, budget),
       signal: input.signal,
       callModel: async () => {
-        const reply = await chatCompletion(runtime.provider, runtime.model.rawId, { messages, tools: continuationTools, tool_choice: 'auto' }, input.signal ?? AbortSignal.timeout(RESUME_TIMEOUT_MS));
+        const reply = await completeResume({ messages, tools: continuationTools, tool_choice: 'auto' });
         return reply?.choices?.[0]?.message ?? null;
       },
       runCalls: async (calls) => {
@@ -401,6 +411,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     }).catch((error) => {
       // 只读补读失败不影响已经执行完的那一步：下面还有一次不带工具的收尾。
       if (input.signal?.aborted) throw error;
+      if (error instanceof AgentContextBudgetExceededError) contextBudgetFailure = error.message;
       console.error('[Agent] 确认后续跑补读失败：', error);
       return null;
     });
@@ -415,10 +426,12 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
 
   if (!text) {
     try {
-      const reply = await chatCompletion(runtime.provider, runtime.model.rawId, { messages, tool_choice: 'none' }, input.signal ?? AbortSignal.timeout(RESUME_TIMEOUT_MS));
+      const reply = await completeResume({ messages, tool_choice: 'none' });
       text = stripToolCallMarkup(String(reply?.choices?.[0]?.message?.content || '')).trim();
+      if (text) contextBudgetFailure = '';
     } catch (error) {
       if (input.signal?.aborted) throw error;
+      if (error instanceof AgentContextBudgetExceededError) contextBudgetFailure = error.message;
       // 工具已经真的执行过了，这里只是没能写出说明文字：如实告诉用户，别让它看起来像没执行。
       console.error('[Agent] 确认后续跑整理回答失败：', error);
     }
@@ -431,5 +444,11 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       return typeof value.ok === 'boolean' ? [{ name: message.tool_call_id || '操作', ok: value.ok, error: value.error || (!value.ok ? value.content : undefined) }] : [];
     } catch { return []; }
   });
-  return { status: 200, body: { ok: true, message: toolOutcomeText(text || `${fallback}（这轮没能整理出说明文字，可以继续追问细节。）`, outcomes), mcpTools: usedMcpTools } };
+  const outcomeText = toolOutcomeText(text || `${fallback}（这轮没能整理出说明文字，可以继续追问细节。）`, outcomes);
+  // Approval has already been consumed and its calls may have had side effects.
+  // A model budget failure must not make those calls look safe to repeat.
+  const budgetGuidance = contextBudgetFailure
+    ? `${contextBudgetFailure}\n已批准步骤的执行结果已保留，但本次未能继续完成模型整理或结果核验。请先核对实际结果，避免重复执行。`
+    : '';
+  return { status: 200, body: { ok: true, message: [outcomeText, budgetGuidance].filter(Boolean).join('\n\n'), mcpTools: usedMcpTools } };
 }
