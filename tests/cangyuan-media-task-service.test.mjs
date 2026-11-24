@@ -250,6 +250,24 @@ test('submission stores completed outputs and polling persists later provider re
   assert.equal(later.repository.records[0].status, 'succeeded');
 });
 
+test('polling stops when a provider disables the creative task protocol', async () => {
+  let protocolEnabled = true;
+  const harness = createHarness({
+    resolveProvider: (provider) => ({
+      ...provider,
+      ...(protocolEnabled ? { creativeTaskProtocol: 'cangyuan-creative-v1' } : { creativeTaskProtocol: undefined }),
+    }),
+  });
+  const task = await harness.service.create({ kind: 'music', modelId: 'model-1', idempotencyKey: 'protocol-disabled', input: { prompt: 'ambient synth' } });
+  protocolEnabled = false;
+  harness.setTime(task.nextPollAt);
+
+  const result = await harness.service.get(task.id);
+  assert.equal(result.status, 'failed');
+  assert.match(result.error, /音乐与三维任务接口已停用/);
+  assert.equal(harness.polled.length, 0);
+});
+
 test('task history filters by media kind before applying its result limit', async () => {
   const harness = createHarness();
   harness.repository.records.push(
