@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "latestVersion": "0.7.107",
-  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.107",
+  "latestVersion": "0.7.108",
+  "releaseUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/tag/v0.7.108",
   "projectUrl": "https://github.com/sanmao44/sanmao.ai-LuminaAgent",
-  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip",
+  "packageUrl": "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.108/SANMAO.AI-0.7.108.zip",
   "mirrorUrls": [
-    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip",
-    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip",
-    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.107/SANMAO.AI-0.7.107.zip"
+    "https://ghfast.top/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.108/SANMAO.AI-0.7.108.zip",
+    "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.108/SANMAO.AI-0.7.108.zip",
+    "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.108/SANMAO.AI-0.7.108.zip"
   ],
   "sha256": "cde6707159b591b03a91b7d5977dc2311c9fd90fea3b859cd7304ab5fd7c6278",
   "notes": [
-    "扩展媒体工作台的创意模型兼容性，优化媒体生成流程和画布音频草稿恢复。",
-    "增加音频聊天与 Agent 的转写模型选择，改进云端转写回退、字幕校正和语音样例。",
-    "完善即梦 Canvas CLI 模型发现、苍原视频模型识别与视频输入参数适配。",
-    "优化 Office 产物回退处理和 Agent 网页搜索稳定性。"
+    "改进视频模型参数和任务恢复，降低提交超时、刷新或并发重试造成重复生成的风险。",
+    "完善 MiniMax 官方音色选择与试听，修复克隆录音导入并统一音效时长和结果标记。",
+    "改进画布素材替换、媒体播放、节点编辑器居中与触控板缩放，优化移动端布局和失败恢复提示。",
+    "对齐 DeepSeek Responses、联网搜索和网页读取协议，改进 Agent 上下文预算、备用模型和 HTML 文件交付。"
   ]
 }
