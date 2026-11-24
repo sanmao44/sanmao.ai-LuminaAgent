@@ -74,6 +74,9 @@ const AGENT_AUTO_FAILOVER_TIMEOUT_MS = 40_000;
 // Default manually selected models still fail visibly instead of holding the
 // composer in a pending state for the provider's longer transport timeout.
 const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
+// File generation needs a longer first completion because the model must
+// produce the complete file tool arguments before local execution can begin.
+const AGENT_FILE_GENERATION_TIMEOUT_MS = 180_000;
 const AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS = 180_000;
 const CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS = 75_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
@@ -593,6 +596,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     if (!messages.length) return applicationJson({ error: '消息不能为空。' }, { status: 400 });
 
     const latestMessage = latestUser(messages);
+    let fileDeliveryDeadlineRequested = likelyFileGenerationRequest(String(latestMessage?.content || ''));
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
       const bodyHasTranscriptionSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription');
@@ -711,6 +715,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
         : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
           ? AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS
+          : fileDeliveryDeadlineRequested
+            ? AGENT_FILE_GENERATION_TIMEOUT_MS
           : AGENT_MODEL_CALL_TIMEOUT_MS,
       // Let an established response stream finish regardless of pauses between chunks.
       idleTimeoutMs: null,
@@ -1371,6 +1377,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       ? browserSessionAuthorization
       : undefined;
     const fileGenerationRequest = requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && (likelyFileGenerationRequest(latestInstruction) || requestRoute.artifactKind === 'file');
+    fileDeliveryDeadlineRequested ||= fileGenerationRequest;
     // 上一轮助手提出可以交付文件、本轮用户只回“1/好/可以”时，也要继续下发 Office 工具。
     const previousAssistantText = (() => {
       for (let index = messages.length - 2; index >= 0; index -= 1) {

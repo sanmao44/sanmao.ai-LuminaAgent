@@ -27,6 +27,7 @@ function harness(options = {}) {
   const imageRuntimeRequests = [];
   const modelCalls = [];
   const candidateCalls = [];
+  const modelTimeouts = [];
   const bundledSkillInstalls = [];
   const spreadsheetCalls = [];
   const presentationCalls = [];
@@ -249,9 +250,17 @@ function harness(options = {}) {
       createAgentApplicationComposition: (options) => {
         const providerApi = mocks['@/lib/providers'];
         const invoke = options.invokeProvider || ((runtime, payload, signal) => providerApi.chatCompletion(runtime.provider, runtime.model.rawId, payload, signal));
+        const timeoutFor = options.timeoutFor
+          ? (runtime, mode) => {
+            const timeoutMs = options.timeoutFor(runtime, mode);
+            modelTimeouts.push({ modelId: runtime.model.id, mode, timeoutMs });
+            return timeoutMs;
+          }
+          : undefined;
         const invoker = createAgentModelInvoker({
           coordinator: createProviderCoordinator({
             ...options,
+            timeoutFor,
             health: { order: options.orderCandidates, onSuccess: options.onModelHealthSuccess, onFailure: options.onModelHealthFailure },
           }),
           defaultSignal: options.signal,
@@ -382,7 +391,7 @@ function harness(options = {}) {
   const infrastructure = mocks['@/apps/api/agent-composition'].createAgentApplicationInfrastructure();
   const application = createTsRequire(process.cwd(), mocks)('./apps/api/agent-application');
   return {
-	    calls, searchCalls, modelCalls, candidateCalls, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
+	    calls, searchCalls, modelCalls, candidateCalls, modelTimeouts, mcpCalls, mcpAuditCalls, discoveryCalls, mcpSelectionCalls, tabbitCalls, manageCalls, runtimeLoads, images, imageModelCalls, imageRuntimeRequests, bundledSkillInstalls, spreadsheetCalls, presentationCalls, transcriptionCalls, savedSubtitleArtifacts,
     generationLogFinishes,
     async post(messages, extra = {}) {
       const request = new Request('http://localhost/api/agent', {
@@ -1999,6 +2008,13 @@ test('filesystem success prose is rejected when no tool has executed', async () 
   assert.doesNotMatch(data.message, /已经完成/);
 });
 
+test('ordinary chat keeps the standard provider response deadline', async () => {
+  const agent = harness();
+  await agent.post([{ role: 'user', content: '你好' }]);
+
+  assert.equal(agent.modelTimeouts[0].timeoutMs, 60_000);
+});
+
 test('HTML delivery fails as a retryable request when the model describes a temporary file but returns no file', async () => {
   const agent = harness({
     describeProviderFailure: (error) => error instanceof Error ? error.message : String(error),
@@ -2059,6 +2075,7 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(data.files[0].mimeType, 'text/html;charset=utf-8');
   assert.equal(data.files[0].content, content);
   assert.match(data.message, /1 个文件/);
+  assert.equal(agent.modelTimeouts[0].timeoutMs, 180_000);
 });
 
 test('HTML delivery repairs invalid file content once using the actual tool error', async () => {
