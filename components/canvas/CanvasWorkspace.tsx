@@ -278,6 +278,7 @@ import CanvasAudioPlayer from "@/components/canvas/CanvasAudioPlayer";
 import CanvasWorkspaceHeader, { type CanvasPanel } from "@/components/canvas/CanvasWorkspaceHeader";
 import CanvasViewport, { CanvasWorld } from "@/components/canvas/CanvasViewport";
 import CanvasViewportOverlay from "@/components/canvas/CanvasViewportOverlay";
+import CanvasEmptyState from "@/components/canvas/CanvasEmptyState";
 import CanvasConnectionOverlay, { type CanvasConnectionNodePicker } from "@/components/canvas/CanvasConnectionOverlay";
 import CanvasMarquee, { type CanvasMarqueeState } from "@/components/canvas/CanvasMarquee";
 import { CONNECTION_STYLE_OPTIONS } from "@/components/canvas/CanvasPanels";
@@ -2607,6 +2608,27 @@ export default function SuperCanvas() {
     },
     [document.camera, stagePoint],
   );
+  const openFilePickerAtViewportCenter = useCallback(() => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    if (!rect) {
+      openFilePicker();
+      return;
+    }
+    openFilePicker(screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2));
+  }, [openFilePicker, screenToWorld]);
+  const openCreateContextMenu = useCallback((clientX: number, clientY: number) => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    const keyboardActivation = clientX === 0 && clientY === 0;
+    const x = keyboardActivation && rect ? rect.left + rect.width / 2 : clientX;
+    const y = keyboardActivation && rect ? rect.top + rect.height / 2 : clientY;
+    const point = stagePoint(x, y);
+    setContextMenu({
+      x,
+      y,
+      menu: "create",
+      world: canvasStageToWorldPoint(point, document.camera),
+    });
+  }, [document.camera, stagePoint]);
   const stageToWorld = useCallback(
     (point: Point) => canvasStageToWorldPoint(point, document.camera),
     [document.camera],
@@ -3025,7 +3047,7 @@ export default function SuperCanvas() {
         ".canvas-node,.canvas-group,.canvas-group-label,.canvas-floating,.canvas-deck",
       );
       const overUiOverlay = target.closest(
-        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-node-quick-toolbar,.canvas-minimap,.canvas-minimap-fit-mobile,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
+        ".canvas-selection-toolbar,.canvas-selection-layout-toolbar,.canvas-node-quick-toolbar,.canvas-minimap,.canvas-minimap-fit-mobile,.canvas-agent-dock,.canvas-agent-dock-rail,.canvas-empty-state,.canvas-context-menu,.canvas-status-chip,.canvas-connection-picker,.canvas-angle-workbench,.select-menu,.select-menu-popover,.model-picker,.model-picker-panel,.model-picker-dialog-backdrop",
       );
       // A blank-canvas press is the shared escape hatch for inline naming. The
       // marquee handler stops propagation, so this belongs at the stage edge.
@@ -14198,6 +14220,12 @@ export default function SuperCanvas() {
           cloneTask={cloneTask}
           snapGuides={snapGuides}
           onOpenCloneDialog={() => setCloneDialogOpen(true)}
+        />
+        <CanvasEmptyState
+          visible={document.nodes.length === 0 && document.groups.length === 0}
+          onImport={openFilePickerAtViewportCenter}
+          onOpenCreateMenu={openCreateContextMenu}
+          onAskAgent={askAgentAboutCanvas}
         />
         <CanvasWorld camera={document.camera} zoomTier={canvasZoomTier}>
             <CanvasEdgeLayer

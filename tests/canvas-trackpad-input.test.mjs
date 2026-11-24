@@ -122,7 +122,12 @@ class CanvasDocument extends EventTarget {
   }
   removeEventListener(type, listener, options) {
     this.removals.push({ type, listener, options });
-    super.removeEventListener(type, listener, options);
+    const capture = typeof options === "boolean" ? options : Boolean(options?.capture);
+    const registration = this.registrations.find((item) =>
+      item.type === type && item.listener === listener &&
+      (typeof item.options === "boolean" ? item.options : Boolean(item.options?.capture)) === capture,
+    );
+    super.removeEventListener(type, listener, registration?.options ?? options);
   }
 }
 
