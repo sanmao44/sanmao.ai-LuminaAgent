@@ -356,6 +356,52 @@ test('does not retry a per-minute video submission limit and gives an actionable
   });
 });
 
+test('only Agnes Video 2.5 Flash treats an explicit video_queue_full 503 as a definite rejection', async () => {
+  const queueFull = () => new Response(JSON.stringify({ error: { code: 'video_queue_full', message: 'video queue is full' } }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  });
+  const submit = (modelId) => video.submitRemoteVideo(
+    agnesProvider(), modelId, { prompt: 'a quiet ocean', seconds: 4, videoMode: 'text' }, 'idem-queue-full',
+  );
+
+  globalThis.fetch = async () => queueFull();
+  await assert.rejects(submit('agnes-video-2.5-flash'), (error) => {
+    assert.equal(error.status, 503);
+    assert.equal(error.code, 'AGNES_VIDEO_QUEUE_FULL');
+    assert.equal(error.possiblyAccepted, undefined);
+    assert.match(error.message, /video queue is full/);
+    return true;
+  });
+
+  globalThis.fetch = async () => queueFull();
+  await assert.rejects(submit('agnes-video-2.5'), (error) => {
+    assert.equal(error.status, 503);
+    assert.equal(error.possiblyAccepted, true);
+    return true;
+  });
+
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: 'provider_overloaded', message: 'temporarily unavailable' } }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  });
+  await assert.rejects(submit('agnes-video-2.5-flash'), (error) => {
+    assert.equal(error.status, 503);
+    assert.equal(error.possiblyAccepted, true);
+    return true;
+  });
+
+  globalThis.fetch = async () => new Response(JSON.stringify({ status: 'queued' }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+  await assert.rejects(submit('agnes-video-2.5-flash'), (error) => {
+    assert.equal(error.code, 'AGNES_VIDEO_ID_MISSING');
+    assert.equal(error.possiblyAccepted, true);
+    return true;
+  });
+});
+
 test('uses the shared media relay for local images without sending API credentials', async () => {
   const previous = {
     relay: process.env.SANMAO_MEDIA_RELAY_URL,

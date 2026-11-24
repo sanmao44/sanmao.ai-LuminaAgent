@@ -15,6 +15,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
   let currentTask;
   let submitCount = 0;
   let submittedInput;
+  const submittedKeys = [];
   let pollResult;
   let pollCount = 0;
   let submitHandler;
@@ -110,9 +111,10 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
         return pollResult;
       },
       runJimengVideo: async () => { throw new Error('unused'); },
-      submitRemoteVideo: async (_provider, _modelId, input) => {
+      submitRemoteVideo: async (_provider, _modelId, input, key) => {
         submitCount += 1;
         submittedInput = input;
+        submittedKeys.push(key);
         if (submitHandler) return submitHandler(input, submitCount);
         const error = submissionErrors.shift();
         if (error) throw error;
@@ -153,6 +155,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     submitCount: () => submitCount,
     pollCount: () => pollCount,
     submittedInput: () => submittedInput,
+    submittedKeys: () => submittedKeys,
     VideoProviderError,
     pushSubmissionError: (error) => submissionErrors.push(error),
     setPollResult: (result) => { pollResult = result; },
@@ -424,6 +427,34 @@ test('a lost POST response never causes a second charge through an automatic res
   assert.equal(harness.submitCount(), 1);
   await harness.loadService().refreshVideoTask('task-1');
   assert.equal(harness.submitCount(), 1);
+});
+
+test('Agnes Flash queue-full retries keep one task and use exponential backoff', async () => {
+  const harness = createHarness([], 'agnes-videos', 'agnes-video-2.5-flash');
+  const queueFull = () => new harness.VideoProviderError('video queue is full', { status: 503, code: 'AGNES_VIDEO_QUEUE_FULL' });
+  const firstAttemptAt = Date.now();
+  harness.pushSubmissionError(queueFull());
+  const first = await harness.service.createVideoGeneration({
+    modelId: 'model-1', idempotencyKey: 'agnes-flash-queue-full', input: { prompt: 'animate the ocean', seconds: 4, videoMode: 'text' },
+  });
+  assert.equal(first.status, 'pending');
+  assert.equal(first.errorCode, 'VIDEO_SUBMISSION_RETRY');
+  assert.equal(first.pollCount, 1);
+  assert.ok(first.nextPollAt >= firstAttemptAt + 29_000);
+  assert.ok(first.nextPollAt <= Date.now() + 31_000);
+
+  harness.makeRetryEligible();
+  const secondAttemptAt = Date.now();
+  harness.pushSubmissionError(queueFull());
+  const second = await harness.loadService().refreshVideoTask(first.id);
+  assert.equal(second.status, 'pending');
+  assert.equal(second.errorCode, 'VIDEO_SUBMISSION_RETRY');
+  assert.equal(second.pollCount, 2);
+  assert.ok(second.nextPollAt >= secondAttemptAt + 59_000);
+  assert.ok(second.nextPollAt <= Date.now() + 61_000);
+  assert.equal(harness.submitCount(), 2);
+  assert.deepEqual(harness.submittedKeys(), ['agnes-flash-queue-full', 'agnes-flash-queue-full']);
+  assert.equal(harness.task().id, first.id);
 });
 
 test('separate workers atomically claim only one retry after an explicitly rejected submission', async () => {

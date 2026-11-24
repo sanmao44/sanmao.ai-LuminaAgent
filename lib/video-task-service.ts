@@ -567,6 +567,9 @@ async function refreshVideoTaskOnce(id: string) {
           ? failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED')
           : failUnconfirmedVideoSubmission(task);
       }
+      if (error instanceof VideoProviderError && error.code === 'AGNES_VIDEO_QUEUE_FULL') {
+        return keepVideoSubmissionPending(task, error);
+      }
       if (isRetryableVideoProviderError(error)) {
         const providerError = error as VideoProviderError;
         return applyProviderUpdate(id, {
