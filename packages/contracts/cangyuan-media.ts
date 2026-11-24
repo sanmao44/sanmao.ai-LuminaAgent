@@ -665,6 +665,8 @@ function isPublicHttpUrl(value: string) {
   }
 }
 
+export { isPublicHttpUrl as isPublicCangyuanMediaUrl };
+
 function isLocalOrPrivateHost(hostname: string) {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return true;

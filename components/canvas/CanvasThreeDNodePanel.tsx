@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RegistryModel } from "@/lib/types";
-import type { CanvasThreeDDraft, CanvasThreeDTaskSnapshot } from "@/lib/canvas/types";
+import type { CanvasNode, CanvasThreeDDraft, CanvasThreeDTaskSnapshot } from "@/lib/canvas/types";
 import SelectMenu from "@/components/SelectMenu";
 import CangyuanMediaUploadField from "@/components/cangyuan/CangyuanMediaUploadField";
 import CangyuanThreeDScenarioPicker from "@/components/cangyuan/CangyuanThreeDScenarioPicker";
@@ -22,6 +22,8 @@ import {
 } from "@/packages/contracts/cangyuan-media";
 import { CANGYUAN_3D_TASK_POLL_INTERVAL_MS } from "@/lib/cangyuan-media-task-polling";
 import styles from "./CanvasThreeDNodePanel.module.css";
+import { assignCanvasThreeDReference, canvasThreeDReferenceOptions, resolveCanvasThreeDReferences, swapCanvasThreeDViews, type CanvasThreeDReferenceSlot } from "@/lib/canvas/three-d-references";
+import { publishCanvasThreeDReferences } from "@/lib/canvas/three-d-reference-upload";
 
 const MODE_LABELS: Record<Cangyuan3DMode, string> = {
   "text-to-3d": "文字生成",
@@ -55,6 +57,8 @@ export type CanvasThreeDNodePanelProps = {
   onDraftChange: (nodeId: string, draft: CanvasThreeDDraft) => void;
   onTaskChange: (nodeId: string, task: CanvasThreeDTaskSnapshot) => void;
   onNotify?: (message: string, kind?: "ok" | "error") => void;
+  references?: readonly CanvasNode[];
+  onPickFromCanvas?: (slot: CanvasThreeDReferenceSlot) => void;
 };
 
 function snapshot(task: CangyuanMediaTask): CanvasThreeDTaskSnapshot {
@@ -89,11 +93,17 @@ export default function CanvasThreeDNodePanel({
   onDraftChange,
   onTaskChange,
   onNotify,
+  references = [],
+  onPickFromCanvas,
 }: CanvasThreeDNodePanelProps) {
   const availableModels = useMemo(() => models.filter((model) =>
     model.enabled && model.published && model.capabilities.includes("3d-generate") && getCangyuan3DModelProfile(model.rawId) !== null,
   ), [models]);
   const [localDraft, setLocalDraft] = useState<CanvasThreeDDraft>(() => draft || { prompt: "", options: {} });
+  const latestDraftRef = useRef(localDraft);
+  latestDraftRef.current = localDraft;
+  const referencesRef = useRef(references);
+  referencesRef.current = references;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [uploadingFields, setUploadingFields] = useState<Set<string>>(() => new Set());
@@ -103,17 +113,18 @@ export default function CanvasThreeDNodePanel({
   const mode = profile
     ? reconcileCangyuan3DMode(profile.modelId, localDraft.options.mode || profile.defaultMode)
     : "image-to-3d";
-  const options = { ...localDraft.options, mode };
+  const resolvedReferences = resolveCanvasThreeDReferences(localDraft, references);
+  const options = { ...canvasThreeDReferenceOptions(localDraft, references), mode };
   const promptRequired = profile?.modelId === "tripo3d" || mode === "text-to-3d";
   const singleImageRequired = profile?.family === "trellis" || mode === "image-to-3d";
-  const multiviewImages = localDraft.options.multiviewImages || {};
+  const multiviewImages = options.multiviewImages || {};
   const multiviewCount = Object.values(multiviewImages).filter((url) => Boolean(url?.trim())).length;
   const activeTask = Boolean(task && ACTIVE_STATUSES.has(task.status));
   const uploadPending = uploadingFields.size > 0;
   const canSubmit = Boolean(
     model && !busy && !activeTask && !uploadPending &&
     (!promptRequired || localDraft.prompt.trim()) &&
-    (!singleImageRequired || localDraft.options.imageUrl?.trim()) &&
+    (!singleImageRequired || options.imageUrl?.trim()) &&
     (mode !== "multiview-to-3d" || multiviewCount >= 2 && multiviewImages.front?.trim()),
   );
 
@@ -122,7 +133,9 @@ export default function CanvasThreeDNodePanel({
   }, [onTaskChange]);
 
   useEffect(() => {
-    setLocalDraft(draft || { prompt: "", options: {} });
+    const next = draft || { prompt: "", options: {} };
+    latestDraftRef.current = next;
+    setLocalDraft(next);
     setError("");
   }, [nodeId, draft]);
 
@@ -159,12 +172,14 @@ export default function CanvasThreeDNodePanel({
   }, [nodeId, task?.id, task?.status]);
 
   const commitDraft = useCallback((next: CanvasThreeDDraft) => {
+    latestDraftRef.current = next;
     setLocalDraft(next);
     onDraftChange(nodeId, next);
   }, [nodeId, onDraftChange]);
 
   function updateOptions(patch: Partial<Cangyuan3DOptions>) {
-    commitDraft({ ...localDraft, options: { ...localDraft.options, ...patch } });
+    const current = latestDraftRef.current;
+    commitDraft({ ...current, options: { ...current.options, ...patch } });
   }
 
   const handleUploadState = useCallback((fieldId: string, uploading: boolean) => {
@@ -182,11 +197,12 @@ export default function CanvasThreeDNodePanel({
     setBusy(true);
     setError("");
     try {
+      const preparedOptions = await publishCanvasThreeDReferences(options);
       const request = buildCanvasThreeDRequest({
         modelId: model.id,
         rawModelId: model.rawId,
         prompt: localDraft.prompt,
-        options: localDraft.options,
+        options: preparedOptions,
       });
       const response = await fetch("/api/cangyuan/3d", {
         method: "POST",
@@ -215,12 +231,14 @@ export default function CanvasThreeDNodePanel({
     const nextModel = availableModels.find((item) => item.id === nextModelId);
     const nextProfile = nextModel ? getCangyuan3DModelProfile(nextModel.rawId) : null;
     if (!nextModel || !nextProfile) return;
-    const nextOptions: Cangyuan3DOptions = { mode: nextProfile.defaultMode };
-    commitDraft({ ...localDraft, modelId: nextModel.id, options: nextOptions });
+    const current = latestDraftRef.current;
+    const nextOptions: Cangyuan3DOptions = { mode: nextProfile.defaultMode, imageUrl: current.options.imageUrl, multiviewImages: current.options.multiviewImages };
+    commitDraft({ ...current, modelId: nextModel.id, options: nextOptions });
   }
 
   function applyScenario(scenario: CangyuanThreeDScenario) {
-    const nextOptions: Cangyuan3DOptions = { ...localDraft.options, mode };
+    const current = latestDraftRef.current;
+    const nextOptions: Cangyuan3DOptions = { ...current.options, mode };
     if (scenario.tripo) {
       nextOptions.texture = scenario.tripo.texture;
       nextOptions.pbr = scenario.tripo.pbr;
@@ -231,14 +249,30 @@ export default function CanvasThreeDNodePanel({
       }
       Object.assign(nextOptions, scenario.trellis);
     }
-    commitDraft({ ...localDraft, options: nextOptions });
+    commitDraft({ ...current, options: nextOptions });
   }
 
   function updateMultiview(view: Cangyuan3DView, url: string) {
-    const next = { ...multiviewImages };
-    if (url) next[view] = url;
-    else delete next[view];
-    updateOptions({ multiviewImages: next });
+    commitDraft(assignCanvasThreeDReference(latestDraftRef.current, referencesRef.current, view, url ? { url, name: "已添加图片" } : undefined));
+  }
+
+  function updateSingleImage(url: string) {
+    commitDraft(assignCanvasThreeDReference(latestDraftRef.current, referencesRef.current, "image", url ? { url, name: "已添加图片" } : undefined));
+  }
+
+  function canvasPickButton(slot: CanvasThreeDReferenceSlot) {
+    return onPickFromCanvas && <button type="button" className={styles.canvasPick} disabled={busy || activeTask} onClick={() => onPickFromCanvas(slot)} aria-label={`从画布选择${slot === "image" ? "参考图片" : VIEWS.find((view) => view.key === slot)?.label}`}>⌁ 画布点选</button>;
+  }
+
+  function referencePreview(slot: CanvasThreeDReferenceSlot) {
+    const reference = slot === "image" ? resolvedReferences.image : resolvedReferences.multiview[slot];
+    if (!reference) return null;
+    return reference.nodeId
+      ? <figure className={styles.connectedPreview}>
+          <img src={reference.url} alt={`${slot === "image" ? "参考图片" : VIEWS.find((view) => view.key === slot)?.label}：${reference.name}`} />
+          <figcaption><span title={reference.name}>画布引用 · {reference.name}</span><button type="button" className={styles.referenceClear} disabled={busy || activeTask} aria-label={`清空${slot === "image" ? "参考图" : VIEWS.find((view) => view.key === slot)?.label}`} onClick={() => commitDraft(assignCanvasThreeDReference(latestDraftRef.current, referencesRef.current, slot))}>{slot === "image" ? "清空参考图" : "清空视角"}</button></figcaption>
+        </figure>
+      : <CangyuanReferenceImagePreview url={reference.url} />;
   }
 
   function rangeField(label: string, key: "meshSimplify" | "ssGuidanceStrength" | "ssSamplingSteps" | "slatGuidanceStrength" | "slatSamplingSteps", min: number, max: number, step: number, help: string, compactHelp: string) {
@@ -285,7 +319,7 @@ export default function CanvasThreeDNodePanel({
               <div className={styles.inputColumn}>
                 <label className={styles.field}>
                   <span className={styles.label}>物体描述{promptRequired ? " · 必填" : " · 可选"}</span>
-                  <textarea value={localDraft.prompt} maxLength={5000} rows={3} placeholder="描述形状、材质、比例与风格" onChange={(event) => commitDraft({ ...localDraft, prompt: event.target.value })} />
+                  <textarea value={localDraft.prompt} maxLength={5000} rows={3} placeholder="描述形状、材质、比例与风格" onChange={(event) => commitDraft({ ...latestDraftRef.current, prompt: event.target.value })} />
                 </label>
 
                 {singleImageRequired && (
@@ -294,12 +328,14 @@ export default function CanvasThreeDNodePanel({
                       fieldId={`canvas-${nodeId}-3d-image`}
                       kind="image"
                       label="参考图片"
-                      value={localDraft.options.imageUrl || ""}
-                      onChange={(url) => updateOptions({ imageUrl: url || undefined })}
+                      value={resolvedReferences.image?.nodeId ? "" : options.imageUrl || ""}
+                      onChange={updateSingleImage}
                       onUploadingChange={handleUploadState}
+                      disabled={busy || activeTask}
+                      extraAction={canvasPickButton("image")}
                       note={profile.family === "trellis" ? "此模型必须提供图片；文件会通过项目中转服务生成可访问链接。" : "文件会通过项目中转服务生成可访问链接。"}
                     />
-                    <CangyuanReferenceImagePreview url={localDraft.options.imageUrl || ""} />
+                    {referencePreview("image")}
                   </div>
                 )}
 
@@ -324,22 +360,28 @@ export default function CanvasThreeDNodePanel({
                   <div className={styles.multiview}>
                     <div className={styles.sectionHeading}><strong>多视角参考</strong><span>{multiviewCount}/4 张</span></div>
                     <div className={styles.viewGrid}>
-                      {VIEWS.map((view) => (
+                      {VIEWS.map((view, index) => (
                         <div className={styles.referenceImage} key={view.key}>
                           <CangyuanMediaUploadField
                             fieldId={`canvas-${nodeId}-3d-${view.key}`}
                             kind="image"
                             label={view.label}
-                            value={multiviewImages[view.key] || ""}
+                            value={resolvedReferences.multiview[view.key]?.nodeId ? "" : multiviewImages[view.key] || ""}
                             onChange={(url) => updateMultiview(view.key, url)}
                             onUploadingChange={handleUploadState}
+                            disabled={busy || activeTask}
+                            extraAction={canvasPickButton(view.key)}
                             maxFileBytes={30 * 1024 * 1024}
                           />
-                          <CangyuanReferenceImagePreview url={multiviewImages[view.key] || ""} />
+                          {referencePreview(view.key)}
+                          {multiviewImages[view.key] && <div className={styles.viewActions}>
+                            <button type="button" aria-label={`${view.label}图片前移`} disabled={index === 0 || busy || activeTask} onClick={() => commitDraft(swapCanvasThreeDViews(latestDraftRef.current, referencesRef.current, view.key, VIEWS[index - 1].key))}>← 前移</button>
+                            <button type="button" aria-label={`${view.label}图片后移`} disabled={index === VIEWS.length - 1 || busy || activeTask} onClick={() => commitDraft(swapCanvasThreeDViews(latestDraftRef.current, referencesRef.current, view.key, VIEWS[index + 1].key))}>后移 →</button>
+                          </div>}
                         </div>
                       ))}
                     </div>
-                    <p className={styles.hint}>至少需要 2 张不同方向的图片，并包含正面图。</p>
+                    <p className={styles.hint}>至少需要 2 张不同方向的图片，并包含正面图。用箭头调整图片对应的视角。</p>
                   </div>
                 )}
               </div>
@@ -367,7 +409,7 @@ export default function CanvasThreeDNodePanel({
                 {profile.family === "tripo" && (
                   <section className={styles.settingsSection} aria-label="生成质量参数">
                     <h3 className={styles.sectionTitle}>生成质量</h3>
-                    <CangyuanTripoQualityOptions profile={profile} options={options} alwaysVisible onChange={(next) => commitDraft({ ...localDraft, options: applyTripoQualityOptions(profile, localDraft.options, next) })} />
+                    <CangyuanTripoQualityOptions profile={profile} options={options} alwaysVisible onChange={(next) => commitDraft({ ...latestDraftRef.current, options: applyTripoQualityOptions(profile, latestDraftRef.current.options, next) })} />
                   </section>
                 )}
 

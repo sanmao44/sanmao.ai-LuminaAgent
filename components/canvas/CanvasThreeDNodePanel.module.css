@@ -24,9 +24,21 @@
 .inputColumn,.settingsColumn{display:grid;align-content:start;gap:11px;min-width:0;min-height:0}
 .settingsColumn{padding-left:17px;border-left:1px solid var(--line)}
 .referenceImage{display:grid;gap:5px;min-width:0}
+.canvasPick,.referenceClear,.viewActions button{border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--text-2);font:inherit;font-size:9px;cursor:pointer}
+.canvasPick{min-height:30px;padding:0 8px;white-space:nowrap}
+.referenceClear{flex-shrink:0;min-height:20px;padding:0 5px;border-color:transparent;background:transparent;font-size:8px}
+.canvasPick:hover:not(:disabled),.referenceClear:hover:not(:disabled),.viewActions button:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft);color:var(--accent-text)}
+.canvasPick:focus-visible,.referenceClear:focus-visible,.viewActions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.canvasPick:disabled,.referenceClear:disabled,.viewActions button:disabled{opacity:.45;cursor:not-allowed}
+.connectedPreview{display:grid;gap:3px;min-width:0;margin:0;padding:4px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}
+.connectedPreview img{display:block;width:100%;max-height:62px;aspect-ratio:2.4;object-fit:contain;border-radius:4px;background:var(--panel-3)}
+.connectedPreview figcaption{display:flex;align-items:center;gap:4px;min-width:0;color:var(--muted);font-size:8px;line-height:1.3}
+.connectedPreview figcaption>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.viewActions{display:flex;justify-content:space-between;gap:4px;min-width:0}
+.viewActions button{min-width:0;min-height:23px;padding:0 5px;font-size:8px}
 .referenceImage :global(.cangyuan-media-upload-field){display:grid;gap:5px}
 .referenceImage :global(.cangyuan-media-upload-heading){display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--text-2);font-size:10px;font-weight:680}
-.referenceImage :global(.cangyuan-media-upload-controls){display:flex;align-items:center;gap:6px}
+.referenceImage :global(.cangyuan-media-upload-controls){display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .referenceImage :global(.cangyuan-media-upload-status),.referenceImage :global(.cangyuan-media-upload-hint){margin:0;color:var(--muted);font-size:9px;line-height:1.4}
 .referenceImage :global(.cangyuan-media-upload-button),.referenceImage :global(.cangyuan-media-clear-button){min-height:30px;padding:0 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2);color:var(--text-2);font:inherit;font-size:9px;font-weight:650;cursor:pointer}
 .referenceImage :global(.cangyuan-media-upload-button:hover),.referenceImage :global(.cangyuan-media-clear-button:hover){border-color:var(--accent);color:var(--accent-text)}
@@ -44,6 +56,9 @@
 .viewGrid .referenceImage :global(.cangyuan-media-upload-hint),.viewGrid .referenceImage :global(.cangyuan-media-upload-status){display:none}
 .viewGrid .referenceImage :global(.cangyuan-reference-preview){padding:2px}
 .viewGrid .referenceImage :global(.cangyuan-reference-preview img){max-height:44px}
+.viewGrid .canvasPick{min-height:25px;padding-inline:6px;font-size:8px}
+.viewGrid .connectedPreview{padding:2px}
+.viewGrid .connectedPreview img{max-height:44px}
 .settingsSection{display:grid;align-content:start;gap:8px;min-width:0}
 .sectionTitle{margin:0;padding-bottom:6px;border-bottom:1px solid var(--line);color:var(--text-2);font-size:10px;font-weight:750}
 .scenarioPicker :global(.cangyuan-3d-scenarios){display:grid;gap:6px;padding:0 0 8px;border-bottom:1px solid var(--line);background:transparent}

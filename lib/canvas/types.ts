@@ -11,7 +11,7 @@ import type {
 import type { ProvenanceEdge } from '../provenance/types';
 import type { AudioTranscriptionResult } from '../../packages/contracts/audio-transcription';
 import type { SpeechAdvancedOptions } from '../../packages/contracts/audio-synthesis';
-import type { Cangyuan3DOptions, CangyuanMediaOutput, CangyuanMediaTaskStatus, CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
+import type { Cangyuan3DOptions, Cangyuan3DView, CangyuanMediaOutput, CangyuanMediaTaskStatus, CangyuanMusicOptions } from '../../packages/contracts/cangyuan-media';
 
 export type CanvasNodeType = 'media' | 'prompt' | 'generator' | 'upscale' | 'video-editor' | 'angle';
 export type CanvasMediaKind = 'image' | 'video' | 'audio' | '3d';
@@ -413,6 +413,8 @@ export type CanvasThreeDDraft = {
   modelId?: string;
   prompt: string;
   options: Cangyuan3DOptions;
+  /** Node bindings follow source edits. Null keeps an uploaded or cleared slot independent. */
+  referenceNodes?: Partial<Record<'image' | Cangyuan3DView, string | null>>;
 };
 
 export type CanvasThreeDTaskSnapshot = {

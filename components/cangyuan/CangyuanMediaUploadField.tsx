@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CangyuanMediaUploadKind } from '@/packages/contracts/cangyuan-media-upload';
 import './CangyuanMediaUploadField.css';
 
@@ -16,6 +16,7 @@ type Props = {
   note?: string;
   accept?: string;
   requirePng?: boolean;
+  extraAction?: ReactNode;
 };
 
 type UploadResponse = { url?: unknown; expiresAt?: unknown; error?: unknown };
@@ -56,6 +57,7 @@ export default function CangyuanMediaUploadField({
   note,
   accept,
   requirePng = false,
+  extraAction,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -162,6 +164,7 @@ export default function CangyuanMediaUploadField({
             清除
           </button>
         )}
+        {extraAction}
       </div>
       {uploading ? (
         <p className="cangyuan-media-upload-status" role="status">正在上传并准备可访问链接…</p>

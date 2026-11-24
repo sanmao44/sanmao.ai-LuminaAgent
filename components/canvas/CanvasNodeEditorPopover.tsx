@@ -17,6 +17,7 @@ import { notifyCanvasNodeEditorOverlayPositionChange } from "@/components/canvas
 import { incomingReferences, isCanvasReadyImageSource, nodeSize } from "@/lib/canvas/model";
 import { canvasImageReferencesForContinuation } from "@/lib/canvas/reference-edges";
 import { resolveCanvasVideoInputs } from "@/lib/canvas/references";
+import type { CanvasThreeDReferenceSlot } from "@/lib/canvas/three-d-references";
 import { canvasVideoTargetHasImageReference, variantRequirementsFor } from "@/lib/canvas/node-editor";
 import type {
   CanvasAudioGenerationMeta,
@@ -112,6 +113,7 @@ export type CanvasNodeEditorPopoverProps = {
   onReferenceDrop: (ownerId: string, sourceId: string, role: CanvasInputRole) => void;
   onAddReferenceFiles: (ownerId: string, files: File[]) => void;
   onPickFromCanvas?: (role?: CanvasInputRole) => void;
+  onPickThreeDImage?: (slot: CanvasThreeDReferenceSlot) => void;
   onRestoreAutomatic: (targetId: string) => void;
   branchDraft?: CanvasReuseDraft | null;
   onDraftReferenceFiles?: (files: File[]) => void;
@@ -192,6 +194,7 @@ function CanvasNodeEditorPopover({
   onReferenceDrop,
   onAddReferenceFiles,
   onPickFromCanvas,
+  onPickThreeDImage,
   onRestoreAutomatic,
   branchDraft,
   onDraftReferenceFiles,
@@ -897,6 +900,8 @@ function CanvasNodeEditorPopover({
              onDraftChange={onThreeDDraftChange}
              onTaskChange={onThreeDTaskChange}
              onNotify={onNotify}
+             references={editorReferences}
+             onPickFromCanvas={onPickThreeDImage}
            />
          ) : audioNode ? (
            <CanvasAudioNodePanel

@@ -249,6 +249,72 @@ test('voice-clone-tts does not expose MiniMax engines from its former mixed engi
   } finally { stub.restore(); }
 });
 
+test('clone speech omits legacy neutral speed for Qwen3 and Chatterbox and resolves the default engine', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    for (const engine of [undefined, 'qwen3', 'chatterbox']) {
+      await speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+        text: '克隆配音', voiceId: 'registered-voice', engine, speed: 1, format: 'mp3', seed: 0,
+      });
+      assert.deepEqual(stub.calls.at(-1).body, {
+        model: 'voice-clone-tts', input: '克隆配音', voice_id: 'registered-voice',
+        engine: engine || 'qwen3', response_format: 'mp3', seed: 0,
+      });
+    }
+    assert.equal(stub.calls.length, 3);
+  } finally { stub.restore(); }
+});
+
+test('clone speech rejects unsupported speed changes before submitting and keeps ElevenLabs speed bounds', async () => {
+  const stub = stubFetch(() => audioResponse(mp3, 'audio/mpeg'));
+  try {
+    for (const engine of [undefined, 'qwen3', 'chatterbox']) {
+      await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+        text: '不能静默忽略调整', voiceId: 'registered-voice', engine, speed: 1.25,
+      }), /当前克隆声音引擎暂不接受语速调整/);
+    }
+    assert.equal(stub.calls.length, 0);
+    for (const engine of ['elevenlabs-v4', 'elevenlabs-v4-turbo']) {
+      for (const speed of [0.7, 1, 1.2]) {
+        await speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+          text: '指定引擎语速', voiceId: 'registered-voice', engine, speed,
+        });
+        assert.equal(stub.calls.at(-1).body.speed, speed);
+        assert.equal(stub.calls.at(-1).body.engine, engine);
+      }
+      await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+        text: '不能超出引擎范围', voiceId: 'registered-voice', engine, speed: 1.25,
+      }), /速度必须在 0.7–1.2 之间/);
+    }
+    assert.equal(stub.calls.length, 6);
+  } finally { stub.restore(); }
+});
+
+test('clone speech does not retry a rejected parameter or replace the selected voice and engine', async () => {
+  const stub = stubFetch(() => ({ ok: false, status: 422, headers: new Headers(), text: async () => '{"error":{"message":"incompatible settings"}}' }));
+  try {
+    await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+      text: '保持指定音色', voiceId: 'registered-voice', speed: 1,
+    }), /HTTP 422/);
+    assert.equal(stub.calls.length, 1);
+    assert.equal(stub.calls[0].body.voice_id, 'registered-voice');
+    assert.equal(stub.calls[0].body.engine, 'qwen3');
+    assert.equal('speed' in stub.calls[0].body, false);
+  } finally { stub.restore(); }
+});
+
+test('clone speech explains ElevenLabs voice incompatibility in Chinese without switching engines', async () => {
+  const stub = stubFetch(() => ({ ok: false, status: 422, headers: new Headers(), text: async () => JSON.stringify({ error: { message: 'The ElevenLabs engines speak only ElevenLabs voices — create a voice with engine: elevenlabs.', code: 'bad_response_status_code' } }) }));
+  try {
+    await assert.rejects(() => speech.synthesizeSpeech(cangyuanRuntime('voice-clone-tts'), {
+      text: '保持音色与引擎', voiceId: 'registered-voice', engine: 'elevenlabs-v4', speed: 1,
+    }), /当前音色与 ElevenLabs 引擎不兼容.*bad_response_status_code/);
+    assert.equal(stub.calls.length, 1);
+    assert.equal(stub.calls[0].body.voice_id, 'registered-voice');
+    assert.equal(stub.calls[0].body.engine, 'elevenlabs-v4');
+  } finally { stub.restore(); }
+});
+
 test('沧元 TTS accepts recommended-as-guidance voice values but rejects undocumented model options', async () => {
   const stub = stubFetch(() => audioResponse(Buffer.from([1, 2, 3]), 'application/octet-stream'));
   try {

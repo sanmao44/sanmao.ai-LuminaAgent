@@ -63,6 +63,9 @@ test('speech profiles distinguish official model limits from the platform input 
   assert.deepEqual(speechContract.getSpeechModelResponseFormats('minimax-speech-2.8-hd-tts', undefined, 'cangyuan'), ['mp3', 'wav', 'flac']);
   assert.deepEqual(speechContract.getSpeechModelSpeedRange('minimax-speech-2.8-turbo-tts', undefined, 'cangyuan'), { min: 0.5, max: 2 });
   assert.deepEqual(speechContract.getSpeechModelSpeedRange('voice-clone-tts', 'elevenlabs-v4', 'cangyuan'), { min: 0.7, max: 1.2 });
+  for (const engine of [undefined, 'qwen3', 'chatterbox']) {
+    assert.equal(speechContract.getSpeechModelSpeedRange('voice-clone-tts', engine, 'cangyuan'), undefined);
+  }
   assert.deepEqual(speechContract.getSpeechModelAdvancedOptions('gemini-tts', { engine: 'turbo', voiceId: 'stale' }, 'cangyuan'), {});
   assert.deepEqual(speechContract.getSpeechModelProfile('voice-clone-tts', 'cangyuan').languageCodes, ['auto', 'ru', 'en', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko']);
   assert.ok(speechContract.getSpeechModelProfile('voice-clone-tts', 'cangyuan').emotionOptions.includes('disgusted'));

@@ -138,7 +138,10 @@ function formatSpeechProviderError(detail: string) {
     const error = root.error && typeof root.error === 'object'
       ? root.error as Record<string, unknown>
       : root;
-    const message = typeof error.message === 'string' ? error.message.trim() : '';
+    const rawMessage = typeof error.message === 'string' ? error.message.trim() : '';
+    const message = /The ElevenLabs engines speak only ElevenLabs voices/i.test(rawMessage)
+      ? '当前音色与 ElevenLabs 引擎不兼容。请选择与当前音色匹配的引擎，或选择为该引擎登记的音色。'
+      : rawMessage;
     const type = typeof error.type === 'string' ? error.type.trim() : '';
     const code = typeof error.code === 'string' ? error.code.trim() : '';
     const param = typeof error.param === 'string' ? error.param.trim() : '';
@@ -175,10 +178,11 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
   const providerKey = isCangyuanProvider(runtime.provider) ? 'cangyuan' : undefined;
   const profile = getSpeechModelProfile(runtime.model.rawId, providerKey);
   if (profile) {
+    const engine = input.engine || (profile.publicModel === 'voice-clone-tts' ? profile.defaultEngine : undefined);
     if (profile.textMaxLength !== undefined && text.length > profile.textMaxLength) {
       throw new Error(`语音模型 ${profile.publicModel} 的正文最多 ${profile.textMaxLength} 个字符。`);
     }
-    if (input.format && !getSpeechModelResponseFormats(profile.publicModel, input.engine, providerKey).includes(input.format)) {
+    if (input.format && !getSpeechModelResponseFormats(profile.publicModel, engine, providerKey).includes(input.format)) {
       throw new Error(`语音模型 ${profile.publicModel} 不支持 ${input.format} 格式。`);
     }
     const unsupportedOptions = Object.entries(input).filter(([key, value]) =>
@@ -212,8 +216,12 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     if (profile.supportsDialogue && (!input.dialogue?.length || input.dialogue.length > 50)) throw new Error('多人对白需要 1 到 50 句。');
     if (!profile.supportsDialogue && input.dialogue?.length) throw new Error('当前配音型号不支持多人对白。');
     if (input.voice && (profile.supportsDialogue || profile.requiresVoiceId)) throw new Error('当前配音型号使用对白音色或已登记的音色编号，不能再传预设音色。');
-    const speedRange = getSpeechModelSpeedRange(profile.publicModel, input.engine, providerKey);
-    if (input.speed !== undefined && !speedRange) {
+    const speedRange = getSpeechModelSpeedRange(profile.publicModel, engine, providerKey);
+    // Earlier workspace/canvas drafts always included the neutral UI default.
+    // Keep those drafts usable without sending an unsupported optional field.
+    const omitNeutralCloneSpeed = profile.publicModel === 'voice-clone-tts' && !speedRange && input.speed === 1;
+    if (input.speed !== undefined && !speedRange && !omitNeutralCloneSpeed) {
+      if (profile.publicModel === 'voice-clone-tts') throw new Error('当前克隆声音引擎暂不接受语速调整，请将语速恢复为 1（原始语速）。');
       throw new Error(`语音模型 ${profile.publicModel} 不支持速度参数。`);
     }
     if (input.speed !== undefined && speedRange && (input.speed < speedRange.min || input.speed > speedRange.max)) {
@@ -225,9 +233,9 @@ export async function synthesizeSpeech(runtime: SpeechRuntime, input: SpeechRequ
     const voice = String(input.voice || '').trim();
     if (voice && !advancedOptions.voiceId && !profile.supportsDialogue && !profile.requiresVoiceId) body.voice = voice;
     if (input.format) body.response_format = input.format;
-    if (input.speed !== undefined) body.speed = input.speed;
+    if (input.speed !== undefined && !omitNeutralCloneSpeed) body.speed = input.speed;
     if (advancedOptions.applyTextNormalization) body.apply_text_normalization = advancedOptions.applyTextNormalization;
-    if (advancedOptions.engine) body.engine = advancedOptions.engine;
+    if (engine) body.engine = engine;
     if (advancedOptions.languageCode) body.language_code = advancedOptions.languageCode;
     if (advancedOptions.language) body.language = advancedOptions.language;
     if (advancedOptions.seed !== undefined) body.seed = advancedOptions.seed;

@@ -11,11 +11,11 @@ const loadQualityOptions = createTsRequire(process.cwd(), {
 });
 const qualityOptions = loadQualityOptions('./components/cangyuan/CangyuanTripoQualityOptions');
 const styles = new Proxy({}, { get: (_, key) => String(key) });
-const loadPanel = createTsRequire(process.cwd(), {
-  './CanvasThreeDNodePanel.module.css': styles,
+const panelOverrides = {
+  './CanvasThreeDNodePanel.module.css': { __esModule: true, default: styles },
   '@/components/SelectMenu': ({ ariaLabel, options }) => createElement('div', { 'aria-label': ariaLabel }, ...options.map((option) =>
     createElement('span', { key: option.value }, option.label))),
-  '@/components/cangyuan/CangyuanMediaUploadField': ({ label }) => createElement('div', { 'aria-label': label }, label, ' 上传文件'),
+  '@/components/cangyuan/CangyuanMediaUploadField': ({ label, extraAction }) => createElement('div', { 'aria-label': label }, label, ' 上传文件', extraAction),
   '@/components/cangyuan/CangyuanThreeDScenarioPicker': () => createElement('div', null, '场景预设'),
   '@/components/cangyuan/CangyuanReferenceImagePreview': () => null,
   '@/components/ThreeDModelPreview': ({ label }) => createElement('div', { 'aria-label': label || '三维模型预览' }),
@@ -25,13 +25,15 @@ const loadPanel = createTsRequire(process.cwd(), {
     applyTripoQualityOptions: qualityOptions.applyTripoQualityOptions,
   },
   '@/lib/canvas/three-d-generation': { buildCanvasThreeDRequest: () => ({}) },
+  '@/lib/canvas/three-d-reference-upload': { publishCanvasThreeDReferences: async (options) => options },
   '@/lib/cangyuan-media-task-polling': { CANGYUAN_3D_TASK_POLL_INTERVAL_MS: 1000 },
-});
+};
+const loadPanel = createTsRequire(process.cwd(), panelOverrides);
 const panel = loadPanel('./components/canvas/CanvasThreeDNodePanel').default;
 const contracts = createTsRequire(process.cwd())('./packages/contracts/cangyuan-media');
 
-function renderModel(rawId, options = {}) {
-  return renderToStaticMarkup(createElement(panel, {
+function modelProps(rawId, options = {}, extra = {}) {
+  return {
     nodeId: 'three-d-1',
     models: [{
       id: `provider-1:${rawId}`,
@@ -45,7 +47,12 @@ function renderModel(rawId, options = {}) {
     draft: { modelId: `provider-1:${rawId}`, prompt: '一艘木船', options },
     onDraftChange: () => undefined,
     onTaskChange: () => undefined,
-  }));
+    ...extra,
+  };
+}
+
+function renderModel(rawId, options = {}, extra = {}) {
+  return renderToStaticMarkup(createElement(panel, modelProps(rawId, options, extra)));
 }
 
 test('3D panel shows Tripo controls beside the prompt without collapsed model settings', () => {
@@ -107,4 +114,131 @@ test('every registered 3D model renders its supported generation modes and ready
       assert.doesNotMatch(markup, /disabled=""[^>]*>生成三维模型/, `${modelId} / ${mode} should be ready with valid input`);
     }
   }
+});
+
+const connectedImage = (id) => ({
+  id, type: 'media', x: 0, y: 0, width: 240, height: 180,
+  data: { kind: 'image', name: `${id}视图`, url: `https://cdn.example.test/${id}.png`, status: 'completed' },
+});
+
+test('connected canvas image is previewed and enables single-image generation alongside uploading', () => {
+  const markup = renderModel('trellis', { mode: 'image-to-3d' }, {
+    references: [connectedImage('正面')], onPickFromCanvas: () => undefined,
+  });
+  assert.match(markup, /src="https:\/\/cdn\.example\.test\/正面\.png"/);
+  assert.match(markup, /画布引用 · 正面视图/);
+  assert.match(markup, /从画布选择参考图片/);
+  assert.match(markup, /上传文件/);
+  assert.doesNotMatch(markup, /disabled=""[^>]*>生成三维模型/);
+});
+
+test('multiview previews show each connected image with canvas picking and reorder actions', () => {
+  const markup = renderModel('tripo3d-v3.1', { mode: 'multiview-to-3d' }, {
+    references: ['正面', '背面', '左侧', '右侧'].map(connectedImage), onPickFromCanvas: () => undefined,
+  });
+  assert.equal((markup.match(/画布引用 · /g) || []).length, 4);
+  assert.equal((markup.match(/aria-label="从画布选择/g) || []).length, 4);
+  assert.equal((markup.match(/图片前移"/g) || []).length, 4);
+  assert.equal((markup.match(/图片后移"/g) || []).length, 4);
+  assert.match(markup, /4\/4 张/);
+  assert.doesNotMatch(markup, /disabled=""[^>]*>生成三维模型/);
+});
+
+function interactionPanel(props) {
+  const react = {
+    useMemo: (compute) => compute(), useCallback: (callback) => callback,
+    useEffect: () => undefined, useRef: (value) => ({ current: value }),
+    useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => undefined],
+  };
+  const Component = createTsRequire(process.cwd(), { ...panelOverrides, react })('./components/canvas/CanvasThreeDNodePanel').default;
+  const elements = (element) => {
+    if (Array.isArray(element)) return element.flatMap(elements);
+    if (!element || typeof element !== 'object') return [];
+    return [element, ...elements(element.props?.children), ...elements(element.props?.extraAction)];
+  };
+  return elements(Component(props));
+}
+
+test('each multiview canvas picker preserves the requested view and arrow changes the submitted view assignment', () => {
+  const picked = [];
+  const changes = [];
+  const sources = [connectedImage('正面'), connectedImage('背面')];
+  const elements = interactionPanel(modelProps('tripo3d-v3.1', { mode: 'multiview-to-3d' }, {
+    references: sources, onPickFromCanvas: (slot) => picked.push(slot),
+    onDraftChange: (_id, value) => changes.push(value),
+  }));
+  elements.filter((element) => element.type === 'button' && element.props.className === 'canvasPick').forEach((button) => button.props.onClick());
+  assert.deepEqual(picked, ['front', 'back', 'left', 'right']);
+  elements.find((element) => element.props?.['aria-label'] === '正面（必需）图片后移').props.onClick();
+  const { canvasThreeDReferenceOptions } = createTsRequire(process.cwd())('./lib/canvas/three-d-references');
+  assert.deepEqual(canvasThreeDReferenceOptions(changes[0], sources).multiviewImages, {
+    front: sources[1].data.url, back: sources[0].data.url,
+  });
+});
+
+test('switching a model keeps canvas node bindings while clearing incompatible model settings', () => {
+  const changes = [];
+  const props = modelProps('tripo3d', { mode: 'image-to-3d', texture: 'HD', imageUrl: 'https://cdn.example.test/upload.png' }, {
+    onDraftChange: (_id, value) => changes.push(value),
+  });
+  props.draft.referenceNodes = { image: 'source-1' };
+  props.models.push({ ...props.models[0], id: 'provider-1:trellis', rawId: 'trellis', displayName: 'Trellis' });
+  const elements = interactionPanel(props);
+  elements.find((element) => element.props?.ariaLabel === '选择三维生成模型').props.onChange('provider-1:trellis');
+  assert.deepEqual(changes[0].referenceNodes, { image: 'source-1' });
+  assert.equal(changes[0].options.texture, undefined);
+  assert.equal(changes[0].options.imageUrl, 'https://cdn.example.test/upload.png');
+});
+
+test('uploads completing in reverse order merge into separate views without overwriting earlier results', async () => {
+  const changes = [];
+  const elements = interactionPanel(modelProps('tripo3d-v3.1', { mode: 'multiview-to-3d' }, {
+    onDraftChange: (_id, value) => changes.push(value),
+  }));
+  const upload = (view) => elements.find((element) => element.props?.fieldId === `canvas-three-d-1-3d-${view}`).props.onChange;
+  const frontUpload = upload('front');
+  const backUpload = upload('back');
+  let finishFront;
+  let finishBack;
+  const front = new Promise((resolve) => { finishFront = resolve; }).then(() => frontUpload('https://cdn.example.test/front.png'));
+  const back = new Promise((resolve) => { finishBack = resolve; }).then(() => backUpload('https://cdn.example.test/back.png'));
+  finishBack();
+  await back;
+  finishFront();
+  await front;
+  assert.deepEqual(changes.at(-1).options.multiviewImages, {
+    front: 'https://cdn.example.test/front.png', back: 'https://cdn.example.test/back.png',
+  });
+});
+
+test('an old upload completion preserves canvas view reordering and concurrent prompt edits', () => {
+  const changes = [];
+  const sources = [connectedImage('正面'), connectedImage('背面')];
+  const elements = interactionPanel(modelProps('tripo3d-v3.1', { mode: 'multiview-to-3d' }, {
+    references: sources, onDraftChange: (_id, value) => changes.push(value),
+  }));
+  const finishLeftUpload = elements.find((element) => element.props?.fieldId === 'canvas-three-d-1-3d-left').props.onChange;
+  elements.find((element) => element.props?.['aria-label'] === '正面（必需）图片后移').props.onClick();
+  elements.find((element) => element.type === 'textarea').props.onChange({ target: { value: '完成后添加的新描述' } });
+  finishLeftUpload('https://cdn.example.test/upload-left.png');
+  const { canvasThreeDReferenceOptions } = createTsRequire(process.cwd())('./lib/canvas/three-d-references');
+  assert.deepEqual(canvasThreeDReferenceOptions(changes.at(-1), sources).multiviewImages, {
+    front: sources[1].data.url, back: sources[0].data.url, left: 'https://cdn.example.test/upload-left.png',
+  });
+  assert.equal(changes.at(-1).prompt, '完成后添加的新描述');
+});
+
+test('a single image upload finishing after a model switch keeps the newly selected model', () => {
+  const changes = [];
+  const props = modelProps('tripo3d', { mode: 'image-to-3d', texture: 'HD' }, {
+    onDraftChange: (_id, value) => changes.push(value),
+  });
+  props.models.push({ ...props.models[0], id: 'provider-1:trellis', rawId: 'trellis', displayName: 'Trellis' });
+  const elements = interactionPanel(props);
+  const finishImageUpload = elements.find((element) => element.props?.fieldId === 'canvas-three-d-1-3d-image').props.onChange;
+  elements.find((element) => element.props?.ariaLabel === '选择三维生成模型').props.onChange('provider-1:trellis');
+  finishImageUpload('https://cdn.example.test/upload.png');
+  assert.equal(changes.at(-1).modelId, 'provider-1:trellis');
+  assert.equal(changes.at(-1).options.texture, undefined);
+  assert.equal(changes.at(-1).options.imageUrl, 'https://cdn.example.test/upload.png');
 });

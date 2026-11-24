@@ -193,7 +193,17 @@ test('canvas speech layout renders every catalog model and voice-clone engine va
     }
     if (profile.supportsDialogue) assert.match(markup, /多人对白/, profile.publicModel);
     if (profile.supportsVoiceId) assert.match(markup, /音色编号/, profile.publicModel);
-    if (profile.publicModel === 'voice-clone-tts') assert.match(markup, /声音引擎/, engine || profile.publicModel);
+    if (profile.publicModel === 'voice-clone-tts') {
+      assert.match(markup, /声音引擎/, engine || profile.publicModel);
+      if (/^elevenlabs-v4(?:-turbo)?$/.test(engine || '')) {
+        assert.match(markup, /aria-label="语速数值"/, engine);
+        assert.match(markup, /min="0.7"/);
+        assert.match(markup, /max="1.2"/);
+      } else {
+        assert.doesNotMatch(markup, /aria-label="语速数值"/);
+        assert.match(markup, /当前引擎使用原始语速/);
+      }
+    }
   }
 });
 

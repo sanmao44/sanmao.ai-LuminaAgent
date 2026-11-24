@@ -355,6 +355,7 @@ import type {
   CanvasVideoEditorState,
 } from "@/lib/canvas/types";
 import { canvasThreeDTaskNodeProjection } from "@/lib/canvas/three-d-generation";
+import { assignCanvasThreeDReference, type CanvasThreeDReferenceSlot } from "@/lib/canvas/three-d-references";
 import {
   updateCanvasAudioDraftDocument,
   updateCanvasAudioMusicDraftDocument,
@@ -578,6 +579,7 @@ type CanvasReferencePicker = {
   targetId: string;
   mode: "connected" | "draft";
   role?: CanvasInputRole;
+  threeDSlot?: CanvasThreeDReferenceSlot;
 };
 type Point = CanvasViewportPoint;
 const CANVAS_VIDEO_MAX_WAIT_MS = 30 * 60 * 1000;
@@ -1948,7 +1950,7 @@ export default function SuperCanvas() {
     [addLog, commit, notify, runtime],
   );
   const beginReferencePicker = useCallback(
-    (targetId: string, mode: CanvasReferencePicker["mode"], role?: CanvasInputRole) => {
+    (targetId: string, mode: CanvasReferencePicker["mode"], role?: CanvasInputRole, threeDSlot?: CanvasThreeDReferenceSlot) => {
       const target = nodeById(canvasCoreRef.current.document(), targetId);
       const targetKind = target && (target.type === "media" || target.type === "generator")
         ? target.data.kind
@@ -1963,7 +1965,7 @@ export default function SuperCanvas() {
         ),
       );
       if (!target || !supportedTarget) return;
-      setReferencePicker({ targetId, mode, ...(role ? { role } : {}) });
+      setReferencePicker({ targetId, mode, ...(role ? { role } : {}), ...(threeDSlot ? { threeDSlot } : {}) });
       setReferencePickerHoverNodeId(null);
       setReferencePickerFlashNodeId(null);
       setContextMenu(null);
@@ -1994,6 +1996,10 @@ export default function SuperCanvas() {
         notify("这个节点暂时不能作为参考对象。", "error");
         return;
       }
+      if (picker.threeDSlot && !isCanvasReadyImageSource(node)) {
+        notify("三维生成需要一张已完成的图片。", "error");
+        return;
+      }
 
       let accepted = false;
       if (picker.mode === "draft") {
@@ -2018,6 +2024,19 @@ export default function SuperCanvas() {
           "left",
           picker.role,
         );
+        if (accepted && picker.threeDSlot) {
+          const current = canvasCoreRef.current.document();
+          const target = nodeById(current, picker.targetId);
+          if (target?.data.kind === "3d") {
+            const draft = target.data.threeDDraft || { prompt: "", options: {} };
+            updateCanvasThreeDDraft(target.id, assignCanvasThreeDReference(
+              draft,
+              incomingReferences(current, target.id),
+              picker.threeDSlot,
+              { nodeId: node.id, url: String(node.data.url || ""), name: String(node.data.name || "画布图片") },
+            ));
+          }
+        }
       }
       if (!accepted) return;
       setReferencePicker(null);
@@ -2026,7 +2045,7 @@ export default function SuperCanvas() {
       setCursorTask("idle");
       window.setTimeout(() => setReferencePickerFlashNodeId((current) => current === node.id ? null : current), 520);
     },
-    [connectCanvasNodes, notify, referencePicker, reuseDraft],
+    [connectCanvasNodes, notify, referencePicker, reuseDraft, updateCanvasThreeDDraft],
   );
   const refreshGenerationLogs = useCallback(async () => {
     setGenerationLogsLoading(true);
@@ -14012,7 +14031,7 @@ export default function SuperCanvas() {
             const nodeId = hit?.dataset.canvasNodeId || null;
             const node = nodeId ? nodeById(canvasCoreRef.current.document(), nodeId) : undefined;
             setReferencePickerHoverNodeId(
-              node && node.id !== referencePicker.targetId && isCanvasReferencePickerCandidate(node)
+              node && node.id !== referencePicker.targetId && (referencePicker.threeDSlot ? isCanvasReadyImageSource(node) : isCanvasReferencePickerCandidate(node))
                 ? node.id
                 : null,
             );
@@ -14543,6 +14562,7 @@ export default function SuperCanvas() {
                 reuseDraft?.sourceNodeId === editorNode.id ? "draft" : "connected",
                 role,
               )}
+              onPickThreeDImage={(slot) => beginReferencePicker(editorNode.id, "connected", "reference-image", slot)}
               onRestoreAutomatic={restoreAutomaticVideoInputMode}
               maskState={maskStateForNode(editorNode)}
               onLocalEdit={() => openCanvasMaskEditor(editorNode.id)}

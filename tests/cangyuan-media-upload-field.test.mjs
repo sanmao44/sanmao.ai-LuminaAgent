@@ -32,3 +32,13 @@ test('Cangyuan upload field keeps the site limit when the model has no file cap'
 
   assert.match(markup, /最大 30 MiB/);
 });
+
+test('canvas selection renders alongside upload and clear actions in the shared control row', () => {
+  const markup = renderToStaticMarkup(createElement(CangyuanMediaUploadField, {
+    fieldId: 'three-d-front', kind: 'image', label: '正面',
+    value: 'https://cdn.example.test/front.png', onChange: () => undefined,
+    extraAction: createElement('button', { type: 'button' }, '画布点选'),
+  }));
+  assert.match(markup, /class="cangyuan-media-upload-controls"[\s\S]*替换文件[\s\S]*清除[\s\S]*画布点选<\/button><\/div>/);
+  assert.match(markup, /正面公网 URL/);
+});

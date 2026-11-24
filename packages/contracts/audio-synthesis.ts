@@ -147,7 +147,6 @@ const SPEECH_MODEL_PROFILES: Readonly<Record<string, SpeechModelProfile>> = Obje
     suggestedVoices: Object.freeze([] as const),
     responseFormats: Object.freeze(['mp3', 'wav'] as const),
     textMaxLength: 4000,
-    speedRange: Object.freeze({ min: 0.5, max: 2 }),
     requiresVoiceId: true,
     supportsVoiceId: true,
     supportsAdvancedControls: true,
@@ -211,7 +210,11 @@ export function getSpeechModelResponseFormats(publicModel: string, engine?: stri
 export function getSpeechModelSpeedRange(publicModel: string, engine?: string, providerKey?: string) {
   const profile = getSpeechModelProfile(publicModel, providerKey);
   if (!profile) return undefined;
-  if (profile.publicModel === 'voice-clone-tts' && /^elevenlabs-v4(?:-turbo)?$/i.test(engine || '')) return { min: 0.7, max: 1.2 };
+  if (profile.publicModel === 'voice-clone-tts') {
+    // Live verification on 2026-11-24: Qwen3 and Chatterbox reject even speed=1
+    // with HTTP 422, despite the public documentation advertising 0.5–2.
+    return /^elevenlabs-v4(?:-turbo)?$/i.test(engine || '') ? { min: 0.7, max: 1.2 } : undefined;
+  }
   return profile.speedRange;
 }
 
