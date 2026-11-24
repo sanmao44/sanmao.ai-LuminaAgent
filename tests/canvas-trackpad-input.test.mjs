@@ -101,3 +101,112 @@ test("canvas gives modified wheel gestures to the image viewer when it is undern
   assert.equal(gestures.shouldCanvasInterceptModifiedWheel(true, true), false);
   assert.equal(gestures.shouldCanvasInterceptModifiedWheel(false, false), false);
 });
+
+class WheelTarget {
+  constructor(selectors = []) {
+    this.selectors = selectors;
+  }
+  closest(selector) {
+    return this.selectors.includes(selector) ? this : null;
+  }
+}
+
+globalThis.Element = WheelTarget;
+
+class CanvasDocument extends EventTarget {
+  registrations = [];
+  removals = [];
+  addEventListener(type, listener, options) {
+    this.registrations.push({ type, listener, options });
+    super.addEventListener(type, listener, options);
+  }
+  removeEventListener(type, listener, options) {
+    this.removals.push({ type, listener, options });
+    super.removeEventListener(type, listener, options);
+  }
+}
+
+function pinchWheel(target, overrides = {}) {
+  const event = new Event("wheel", { cancelable: true, bubbles: true });
+  Object.assign(event, { ctrlKey: true, metaKey: false, deltaY: -24, clientX: 420, clientY: 280 }, overrides);
+  Object.defineProperty(event, "target", { value: target });
+  return event;
+}
+
+test("canvas pinch listener cancels page zoom across stage, controls and body portals exactly once", (t) => {
+  const document = new CanvasDocument();
+  const zooms = [];
+  const unbind = gestures.bindCanvasPinchZoom(document, (...args) => zooms.push(args));
+  t.after(unbind);
+
+  for (const selectors of [[], ["textarea"], [".canvas-node-editor-popover"], [".canvas-topbar"], [".select-menu-popover"]]) {
+    const before = zooms.length;
+    const event = pinchWheel(new WheelTarget(selectors));
+    assert.equal(document.dispatchEvent(event), false);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.cancelBubble, true);
+    assert.equal(zooms.length, before + 1);
+    assert.deepEqual(zooms.at(-1), [420, 280, Math.exp(24 * 0.0032)]);
+  }
+  const event = pinchWheel(new WheelTarget(), { ctrlKey: false, metaKey: true, deltaY: 24 });
+  document.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.ok(zooms.at(-1)[2] < 1);
+});
+
+test("canvas pinch listener preserves normal scrolling in controls and menus", (t) => {
+  const document = new CanvasDocument();
+  const unbind = gestures.bindCanvasPinchZoom(document, () => assert.fail("ordinary scroll must not pinch zoom"));
+  t.after(unbind);
+  for (const deltaY of [24, 120]) {
+    const event = pinchWheel(new WheelTarget(["textarea", ".select-menu-popover"]), { ctrlKey: false, deltaY });
+    assert.equal(document.dispatchEvent(event), true);
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(event.cancelBubble, false);
+  }
+});
+
+test("media preview keeps its own pinch while preview controls do not zoom the background", (t) => {
+  const document = new CanvasDocument();
+  const unbind = gestures.bindCanvasPinchZoom(document, () => assert.fail("preview must not zoom canvas"));
+  t.after(unbind);
+  const stageEvent = pinchWheel(new WheelTarget([".media-viewer-stage", ".canvas-modal-backdrop"]));
+  assert.equal(document.dispatchEvent(stageEvent), true);
+  assert.equal(stageEvent.defaultPrevented, false);
+  assert.equal(stageEvent.cancelBubble, false);
+
+  const headerEvent = pinchWheel(new WheelTarget([".canvas-modal-backdrop"]));
+  assert.equal(document.dispatchEvent(headerEvent), false);
+  assert.equal(headerEvent.defaultPrevented, true);
+  assert.equal(headerEvent.cancelBubble, false);
+});
+
+test("modal workbenches retain their own gestures without zooming the canvas behind them", (t) => {
+  const document = new CanvasDocument();
+  const unbind = gestures.bindCanvasPinchZoom(document, () => assert.fail("modal must not zoom canvas"));
+  t.after(unbind);
+  for (const stage of [".canvas-spherical-stage", ".video-editor-preview", ".video-editor-timeline"]) {
+    const event = pinchWheel(new WheelTarget([stage, ".canvas-modal-backdrop"]));
+    document.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.cancelBubble, false, "local gesture handler must still receive the event");
+  }
+});
+
+test("canvas pinch registers a cancellable capture listener and removes it on exit", (t) => {
+  const document = new CanvasDocument();
+  let zooms = 0;
+  const unbind = gestures.bindCanvasPinchZoom(document, () => zooms++);
+  const registration = document.registrations[0];
+  assert.equal(registration.type, "wheel");
+  assert.deepEqual(registration.options, { capture: true, passive: false });
+  document.dispatchEvent(pinchWheel(new WheelTarget()));
+  assert.equal(zooms, 1);
+  unbind();
+  assert.equal(document.removals[0].listener, registration.listener);
+  assert.equal(document.removals[0].options, true);
+  const afterExit = pinchWheel(new WheelTarget());
+  document.dispatchEvent(afterExit);
+  assert.equal(zooms, 1);
+  assert.equal(afterExit.defaultPrevented, false);
+});

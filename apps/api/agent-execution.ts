@@ -9,10 +9,10 @@ type ToolReply = { content?: unknown; tool_calls?: unknown; reasoning_content?: 
 
 export type CapabilityFollowupOptions = {
   messages: ChatMessage[];
-  contextMaxChars: number;
+  contextMaxChars?: number;
   signal: AbortSignal;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
-  boundAgentContext: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
+  boundAgentContext?: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
   boundToolResult: (content: string) => string;
   callModel: (input: { messages: ChatMessage[]; tools: unknown[]; step: number }) => Promise<ToolReply>;
   skillTools: readonly unknown[];
@@ -56,10 +56,10 @@ function rejectedToolResult(call: ToolLoopCall): ToolLoopMessage {
 
 export type McpCapabilityFollowupOptions = {
   messages: ChatMessage[];
-  contextMaxChars: number;
+  contextMaxChars?: number;
   signal: AbortSignal;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
-  boundAgentContext: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
+  boundAgentContext?: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
   boundToolResult: (content: string) => string;
   mcpTools: readonly unknown[];
   maxSteps: number;
@@ -103,15 +103,13 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
     const execution = runtimeCalls.length
       ? await options.toolRuntime.executeCalls(runtimeCalls)
       : { results: [], deferredCalls: [], stalled: false };
-    if (allowedTools === options.artifactTools) {
-      for (const result of execution.results) {
-        const call = runtimeCalls.find((candidate) => candidate.id === result.tool_call_id);
-        if (!call || !artifactToolNames.has(String(call.function?.name || ''))) continue;
-        try {
-          const outcome = JSON.parse(String(result.content || '')) as { ok?: unknown; file?: unknown };
-          if (outcome.ok === true && outcome.file) artifactDelivered = true;
-        } catch { /* A malformed artifact result does not establish delivery. */ }
-      }
+    for (const result of execution.results) {
+      const call = runtimeCalls.find((candidate) => candidate.id === result.tool_call_id);
+      if (!call || !artifactToolNames.has(String(call.function?.name || ''))) continue;
+      try {
+        const outcome = JSON.parse(String(result.content || '')) as { ok?: unknown; file?: unknown; files?: unknown };
+        if (outcome.ok === true && (outcome.file || (Array.isArray(outcome.files) && outcome.files.length > 0))) artifactDelivered = true;
+      } catch { /* A malformed artifact result does not establish delivery. */ }
     }
     if (runtimeCalls.length && runtimeCalls.every((call) => String(call.function.name).startsWith('skill_'))) {
       skillToolCalls += runtimeCalls.length;
@@ -138,21 +136,26 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
   }
 
   const initialArtifactCall = options.initialToolCalls.some((call) => isArchiveToolCall(call) || String(call?.function?.name || '').startsWith('document_') || String(call?.function?.name || '').startsWith('spreadsheet_') || String(call?.function?.name || '').startsWith('presentation_'));
+  const initialFileCall = options.initialToolCalls.some((call) => String(call?.function?.name || '') === 'file_generate');
+  const repairFileOnly = initialFileCall && !initialArtifactCall;
+  const followupArtifactTools = repairFileOnly
+    ? options.artifactTools.filter((tool) => modelToolName(tool) === 'file_generate')
+    : options.artifactTools;
   const generatedImageCall = options.initialToolCalls.some((call) => String(call?.function?.name || '').startsWith('image_'));
   const continueAfterGeneratedImage = Boolean(options.continueAfterImage && options.hasGenerated && generatedImageCall);
   const continueAfterUnavailableImage = Boolean(options.continueAfterImage && options.imageAttemptUnavailable && generatedImageCall);
-  if (!options.skipArtifactFollowup && options.artifactRequested && options.artifactTools.length
-    && (continueAfterGeneratedImage || continueAfterUnavailableImage || (initialArtifactCall && !options.hasGenerated && !options.hasGeneratedFiles))
+  if (!options.skipArtifactFollowup && options.artifactRequested && followupArtifactTools.length
+    && (continueAfterGeneratedImage || continueAfterUnavailableImage || ((initialArtifactCall || initialFileCall) && !options.hasGenerated && !options.hasGeneratedFiles))
     && (!options.hasWebSearch || continueAfterGeneratedImage || continueAfterUnavailableImage)) {
     const outcome = await options.toolRuntime.runLoop({
       messages: options.messages,
       contextMaxChars: options.contextMaxChars,
       boundAgentContext: options.boundAgentContext,
       boundToolResult: options.boundToolResult,
-      maxSteps: 2,
+      maxSteps: repairFileOnly ? 1 : 2,
       signal: options.signal,
-      callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.artifactTools] }),
-      runCalls: async (calls) => runCalls(calls, options.artifactTools),
+      callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...followupArtifactTools] }),
+      runCalls: async (calls) => runCalls(calls, followupArtifactTools),
       orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
       shouldContinue: () => !artifactDelivered,
       finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),

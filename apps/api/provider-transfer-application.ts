@@ -1,4 +1,5 @@
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
+import { defaultResponsesPath, normalizeResponsesPath } from '@/lib/provider-presets';
 import { isProviderCreativeTaskProtocol } from '@/packages/contracts/provider-creative-task';
 import { decryptBackupPayload, encryptBackupPayload, isEncryptedBackup, validateBackupPassword } from '@/lib/backup-crypto';
 import { getProviderWithKey, getPublicState, mergeProviderTransferConfiguration } from '@/lib/store';
@@ -49,7 +50,7 @@ function parseProviderTransferBundle(value: unknown): ProviderTransferBundle {
     if (!Array.isArray(model.capabilities) || model.capabilities.some((capability) => typeof capability !== 'string' || !modelCapabilities.includes(capability))) throw new Error('迁移文件中的模型能力不受支持');
     if (model.source !== undefined && model.source !== 'manual' && model.source !== 'discovered') throw new Error('迁移文件中的模型来源无效');
     if (model.billing !== undefined && model.billing !== 'free' && model.billing !== 'paid' && model.billing !== 'temporary-free') throw new Error('迁移文件中的计费类型不受支持');
-    if (model.nativeSearchProtocol !== undefined && !['openai-responses', 'gemini-grounding', 'native-chat'].includes(String(model.nativeSearchProtocol))) throw new Error('迁移文件中的搜索协议不受支持');
+    if (model.nativeSearchProtocol !== undefined && !['openai-responses', 'deepseek-tools', 'gemini-grounding', 'native-chat'].includes(String(model.nativeSearchProtocol))) throw new Error('迁移文件中的搜索协议不受支持');
     if (model.nativeSearchOverride !== undefined && !['auto', 'enabled', 'disabled'].includes(String(model.nativeSearchOverride))) throw new Error('迁移文件中的搜索设置不受支持');
     if (model.nativeSearchDetection !== undefined && !['metadata', 'model-id', 'provider', 'manual'].includes(String(model.nativeSearchDetection))) throw new Error('迁移文件中的搜索检测方式不受支持');
     if (model.enabledByDefault !== undefined && typeof model.enabledByDefault !== 'boolean') throw new Error('迁移文件中的默认模型状态无效');
@@ -85,7 +86,7 @@ export async function exportProviderTransfer(password: string) {
       imageEditPath: provider.imageEditPath || '/images/edits',
       imageUpscalePath: provider.imageUpscalePath || provider.imageEditPath || '/images/edits',
       imageUpscaleStatusPath: provider.imageUpscaleStatusPath || '',
-      responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
+      responsesPath: normalizeResponsesPath(provider.platform || 'custom', provider.responsesPath || defaultResponsesPath(provider.platform || 'custom')),
       textProtocol: provider.textProtocol || 'chat-completions',
       creativeTaskProtocol: provider.creativeTaskProtocol,
       videoTransport: provider.videoTransport || (legacy65535 ? 'native-task' : provider.platform === 'agnes' ? 'agnes-videos' : 'auto'),

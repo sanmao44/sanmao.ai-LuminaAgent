@@ -19,12 +19,12 @@ import { ToolRuntime, type ToolRuntimeCall } from '@/packages/tool-runtime/runti
 import type { RuntimeObserver } from '@/packages/contracts/observability';
 import type { AgentIntentPreview, AgentIntentPreviewRoute, AgentRequestMode } from '@/packages/contracts/planning';
 import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
-import { AGENT_INLINE_TEXT_MAX_CHARS, boundAgentContext, boundToolResult, modelInputCharBudget } from '@/lib/agent/context-budget';
+import { AGENT_INLINE_TEXT_MAX_CHARS, AgentContextBudgetExceededError, boundAgentChatPayload, boundAgentContext, boundToolResult } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserMutationObservationGap, browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { hasInlineToolCallMarkup, parseInlineToolCalls } from '@/lib/agent/inline-tool-calls';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
-import { appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
+import { APPROVAL_MAX_STORED_CHARS, appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, isImageEditRequest, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
@@ -35,7 +35,7 @@ import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creat
 import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
-import { toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
+import { toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
@@ -719,11 +719,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       onModelHealthSuccess: noteAgentModelSuccess,
       onModelHealthFailure: noteAgentModelFailure,
       onCurrent: (runtime) => { agentRuntime = runtime; },
+      invokeProvider: (runtime, payload, signal) => chatCompletion(
+        runtime.provider, runtime.model.rawId, boundChatPayload(payload, runtime.model), signal,
+      ),
+      invokeProviderStream: (runtime, payload, signal) => chatCompletionStream(
+        runtime.provider, runtime.model.rawId, boundChatPayload(payload, runtime.model), signal,
+      ),
     });
     runtimeObserver = composition.observer;
     if (!agentRuntime) return applicationJson({ error: '还没有可用的对话模型。请先到“模型库”勾选一个对话模型。' }, { status: 400 });
 
-    const contextMaxChars = modelInputCharBudget(agentRuntime.model.contextWindow, agentRuntime.model.maxInputTokens, agentRuntime.model.maxOutputTokens);
     let state: Awaited<ReturnType<typeof getPublicState>> | null = null;
     const ensurePublicState = async () => {
       if (!state) state = await getPublicState();
@@ -936,6 +941,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       task: body.task ? String(body.task).slice(0, 100) : undefined,
       ...taskContext,
     }).catch(() => null);
+    let currentUserMessage: ChatMessage | undefined;
+    const boundChatPayload = (payload: Parameters<typeof chatCompletion>[2], model: AgentCompositionRuntime['model']) => {
+      const currentTurnStart = currentUserMessage ? payload.messages.indexOf(currentUserMessage) : -1;
+      return boundAgentChatPayload(payload, model, { currentTurnStart });
+    };
     const invokeChatModel = (payload: Parameters<typeof chatCompletion>[2], signal: AbortSignal) => composition.invokeChatModel(payload, signal);
     const trackedChatCompletion = (
       _provider: Parameters<typeof chatCompletion>[0],
@@ -1064,7 +1074,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           if (classifierRuntime) {
             intentClassifierModelId = classifierRuntime.model.id;
             const planned = await withAgentOperationDeadline(requestController.signal, 2_000, 'intent classification',
-              (classifierSignal) => (composition.invokeIntentClassifier || composition.invokeSpecificChatModel)(classifierRuntime, semanticPayload, classifierSignal));
+              (classifierSignal) => (composition.invokeIntentClassifier || composition.invokeSpecificChatModel)(classifierRuntime, boundChatPayload(semanticPayload, classifierRuntime.model), classifierSignal));
             recordLlmUsage(planned);
             decision = parseSemanticIntent(planned?.choices?.[0]?.message?.content);
             intentClassifierStatus = decision ? 'used' : 'fallback';
@@ -1552,6 +1562,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       ...(requestRoute.contextNeed === 'none' ? [] : memoryContextMessage(body.memory, latest?.content || '')),
       ...modelContextMessages.map((m) => ({ role: m.role, content: toChatContent(m, supportsVideoInput) } as ChatMessage)),
     ];
+    currentUserMessage = llmMessages.findLast((message) => message.role === 'user');
     const personaInstruction = personaContextMessage(body.persona)[0];
     if (personaInstruction) {
       llmMessages.push(personaInstruction);
@@ -1564,7 +1575,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     if (isTextPolishTask) llmMessages[0] = { role: 'system', content: textPolishInstructions };
     const projectBriefInstruction = creativeProjectBriefInstruction(creativeProjectBrief);
     if (projectBriefInstruction) llmMessages[0] = { ...llmMessages[0], content: `${llmMessages[0].content}\n\n${projectBriefInstruction}` };
-    llmMessages = boundAgentContext(llmMessages, contextMaxChars);
+    // Keep the source context intact until the actual candidate is selected.
+    // Each provider invocation applies that model's budget without losing
+    // history a later, larger fallback could still use.
 
     // Ordinary streamed answers do not need the MCP catalogue, skill index or
     // tool schemas. Keep this fast path after the local route and context
@@ -1835,7 +1848,6 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // 路径各有自己的提示词；下面挂浏览器工具用法时要用同一个判断，别把约定塞进别人的提示词里。
     const agentSystemPromptInUse = !isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask;
     if (!isReversePromptTask && !isOneTakeVideoPromptTask && !isPromptOptimizationTask && !isSmartVariantPlanningTask) llmMessages[0] = isCinematicDirectorTask ? llmMessages[0] : { role: 'system', content: system };
-    llmMessages = boundAgentContext(llmMessages, contextMaxChars);
 
     // Search is selected locally before this point. Do not give ordinary
     // questions another model-side web_search planning round trip.
@@ -1993,12 +2005,10 @@ const auditMcpCall = (
     if (agentSystemPromptInUse && browserToolPrefixes.some((prefix) => callableTools.some((tool: any) => String(tool?.function?.name || '').startsWith(prefix)))) {
       system += `\n\n${BROWSER_TOOL_GUIDE}`;
       llmMessages[0] = { role: 'system', content: system };
-      llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
     if (agentSystemPromptInUse && tabbitBrowserToolAvailable) {
       system += `\n\n${TABBIT_BROWSER_TOOL_GUIDE}`;
       llmMessages[0] = { role: 'system', content: system };
-      llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
     if (agentSystemPromptInUse && desktopAutomationRequest) {
       const verificationTools = desktopCaptureRequested
@@ -2008,10 +2018,9 @@ const auditMcpCall = (
       if (desktopRequestedInputText !== null) system += '\n\nFor a user-specified input literal, the Type argument must match it exactly, and the latest desktop observation text must contain it; otherwise the task is incomplete.';
 
       llmMessages[0] = { role: 'system', content: system };
-      llmMessages = boundAgentContext(llmMessages, contextMaxChars);
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
-    const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }));
+    const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
     const artifactFallbackKind = artifactGenerationRequest
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
@@ -2634,7 +2643,7 @@ const auditMcpCall = (
         for (const message of result.results) {
           if (message.tool_call_id !== call.id) continue;
           if (call.id && desktopInstructionDeniedCallIds.has(call.id)) continue;
-          try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: String(call.function.name) + ':' + String(call.function.arguments), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
+          try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: toolOutcomeKey(String(call.function.name), call.function.arguments, outcome), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
 
         }
       },
@@ -2730,17 +2739,32 @@ const auditMcpCall = (
       pending: PendingToolCall[];
       /** 这次确认之前已经发生的对话（不含本条助手消息）。 */
       messages: readonly ChatMessage[];
-      assistant: { content: string | null; tool_calls: unknown[]; reasoning_content?: string };
+      assistant: { content: string | null; tool_calls: unknown[]; reasoning_content?: string; server_tool_calls?: unknown[] };
       executed: readonly ChatMessage[];
     }): { response: AgentApplicationOutput; message: string } | { response: null; reason: string } => {
       const pendingCalls = input.pending;
       const approvalMessage = approvalMessageFor(pendingCalls);
       let approvalPayload: { id: string; expiresAt: number; message: string; policy: string; calls: Array<Record<string, unknown>> } | null = null;
       try {
-        const approvalRecord = createApproval({
+        const approvalTail: ChatMessage[] = [{ role: 'assistant', ...input.assistant }, ...input.executed];
+        const modelMessages = boundChatPayload({ messages: [...input.messages, ...approvalTail] }, agentRuntime.model).messages;
+        const approvalMetadata = {
           provider: agentRuntime.provider.name,
           model: agentRuntime.model.id,
-          messages: input.messages as ChatMessage[],
+          pending: pendingCalls,
+          gating: gatingContext,
+        };
+        // Model requests retain their original history for other candidates.
+        // Only the saved approval snapshot also obeys its independent storage cap.
+        const overheadBytes = new TextEncoder().encode(JSON.stringify(approvalMetadata)).byteLength + 512;
+        const savedMessages = boundAgentContext(modelMessages, APPROVAL_MAX_STORED_CHARS, {
+          currentTurnStart: currentUserMessage ? modelMessages.indexOf(currentUserMessage) : -1,
+          maxBytes: APPROVAL_MAX_STORED_CHARS,
+          overheadBytes,
+        });
+        const approvalRecord = createApproval({
+          ...approvalMetadata,
+          messages: savedMessages.slice(0, -approvalTail.length),
           assistant: input.assistant,
           executed: input.executed as ChatMessage[],
           pending: pendingCalls,
@@ -2750,6 +2774,10 @@ const auditMcpCall = (
         approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, policy: normalizeMcpApprovalPolicy(executionPublicState.settings.mcpApprovalPolicy), calls: pendingCalls.map(describePendingCall) };
       } catch (error) {
         // 存不下就当场取消这一步：绝不执行一个自己都记不住的操作。
+        if (error instanceof AgentContextBudgetExceededError) {
+          const message = `${error.message} 待确认的操作没有执行；本轮已经返回的工具结果请核对，避免重复执行。`;
+          return { response: applicationJson({ error: message, mcpTools: usedMcpTools }, { status: 502 }), message };
+        }
         return { response: null, reason: error instanceof Error ? error.message : '待确认的操作没能保存下来' };
       }
       // 待确认的调用绝不能写进 secondMessages：历史里出现没有结果的 tool_calls，
@@ -2787,14 +2815,11 @@ const auditMcpCall = (
     const carriedAssistantFields = typeof toolCallMessage?.reasoning_content === 'string' && toolCallMessage.reasoning_content ? { reasoning_content: toolCallMessage.reasoning_content } : {};
     const carriedServerToolFields = Array.isArray(toolCallMessage?.server_tool_calls) ? { server_tool_calls: toolCallMessage.server_tool_calls } : {};
     const secondMessages: ChatMessage[] = [...llmMessages, { role: 'assistant', content: toolCallMessage?.content || null, tool_calls: toolCalls, ...carriedAssistantFields, ...carriedServerToolFields }, ...toolResults];
-    secondMessages.splice(0, secondMessages.length, ...boundAgentContext(secondMessages, contextMaxChars));
     // 技能工具经常需要链式调用（先检索再读取、安装后再核对）。如果后续轮次完全
     // 不给工具，模型会把调用写成文本标记（如 DSML），既不执行也会显示成乱码。
     // 这里只为技能工具补最多两轮原生调用，其余工具仍保持单轮，控制成本与副作用。
     // 轮数、总次数、中止和 Trace 统一由 lib/agent/tool-loop.ts 管，两份重复的循环收成一份。
     const toolTrace: ToolLoopTraceStep[] = [];
-    const boundToolLoopContext = (messages: ToolLoopMessage[], maxChars: number): ToolLoopMessage[] =>
-      boundAgentContext(messages as ChatMessage[], maxChars) as ToolLoopMessage[];
     let followupText = '';
     let artifactFollowupText = '';
     const continuePptAfterImageAttempt = presentationImageGenerationRequest && toolCalls.some(isImageToolCall);
@@ -2807,11 +2832,9 @@ const auditMcpCall = (
         return outcome.ok === false;
       } catch { return false; }
     });
-    if (skillToolCalls > 0 || (artifactGenerationRequest && (toolCalls.some(isArtifactToolCall) || continuePptAfterImageAttempt))) {
+    if (skillToolCalls > 0 || (artifactGenerationRequest && (toolCalls.some((call: ToolLoopCall) => isArtifactToolCall(call) || call.function?.name === 'file_generate') || continuePptAfterImageAttempt))) {
       const followups = await runCapabilityFollowups({
         messages: secondMessages,
-        contextMaxChars,
-        boundAgentContext: boundToolLoopContext,
         boundToolResult,
         signal: requestController.signal,
         toolRuntime,
@@ -2850,8 +2873,6 @@ const auditMcpCall = (
       let stepResults: ChatMessage[] = [];
       const mcpLoop = await runMcpCapabilityFollowup({
         messages: secondMessages,
-        contextMaxChars,
-        boundAgentContext: boundToolLoopContext,
         boundToolResult,
         toolRuntime,
         mcpTools: mcpFollowupTools,
@@ -3025,7 +3046,8 @@ const auditMcpCall = (
       }
     }
     if (fileGenerationRequest && !generatedFiles.length) {
-      throw new Error('本轮没有生成可下载文件。请重试，或切换到支持文件工具的对话模型。');
+      const failure = toolOutcomeText('', toolOutcomes);
+      throw new Error(failure || '本轮没有生成可下载文件。请重试，或切换到支持文件工具的对话模型。');
     }
     if (presentationImageGenerationRequest && generatedDeliveryCount <= 0) {
       const failure = artifactFollowupText || '配图已生成，但 PPT 工具没有返回成功结果，因此没有创建 PPT。';

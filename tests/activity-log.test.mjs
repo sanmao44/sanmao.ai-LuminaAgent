@@ -75,6 +75,13 @@ test("generation log kind labels describe each output type", () => {
   assert.equal(activityLog.generationLogKindLabel({ mode: "llm", taskKind: "llm" }), "LLM");
 });
 
+test("Canvas LLM metadata labels successful Search/Fetch requests without inventing zero counts", () => {
+  assert.equal(activityLog.generationLogWebSearchRequestLabel({ webSearchRequestCount: 3 }), " · 搜索/抓取 3 次");
+  assert.equal(activityLog.generationLogWebSearchRequestLabel({ webSearchRequestCount: 0 }), "");
+  assert.equal(activityLog.generationLogWebSearchRequestLabel({ webSearchRequestCount: -1 }), "");
+  assert.equal(activityLog.generationLogWebSearchRequestLabel({ webSearchRequestCount: Number.NaN }), "");
+});
+
 test("audio task logs do not pretend to have image output URLs", () => {
   assert.deepEqual(activityLog.generationLogOutputUrls({ mode: "audio", mediaKind: "audio", imageUrls: ["wrong-image.png"] }), []);
   assert.deepEqual(activityLog.generationLogOutputUrls({ mode: "audio", mediaKind: "audio", audioUrl: "/api/storage/audio?name=speech.mp3" }), ["/api/storage/audio?name=speech.mp3"]);

@@ -27,7 +27,8 @@ function generatedFileFromArtifact(artifact: ArtifactDescriptor): GeneratedFile 
 }
 
 function artifactToolError(call: ToolCall, error: unknown): ChatMessage {
-  return { role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: error instanceof Error ? error.message : '文件生成失败' }) };
+  const message = error instanceof Error ? error.message : typeof error === 'string' && error.trim() ? error : '文件生成失败';
+  return { role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: message }) };
 }
 
 export async function executeArtifactCapability(input: ArtifactCapabilityInput): Promise<ChatMessage> {

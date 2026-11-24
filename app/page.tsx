@@ -2467,6 +2467,7 @@ export default function Page() {
     const [providerTestBusy, setProviderTestBusy] = useState(false);
     const [providerTestResult, setProviderTestResult] = useState('');
     const [providerTestSucceeded, setProviderTestSucceeded] = useState(false);
+    const providerConnectionRequestRef = useRef(0);
     const [providerSetupDismissed, setProviderSetupDismissed] = useState(false);
     const providerTestResultRef = useRef(null);
     useEffect(()=>{
@@ -2485,7 +2486,8 @@ export default function Page() {
     }, [providerSetupDismissed]);
     const [jimengLogin, setJimengLogin] = useState({ status: 'idle', installed: false, version: '', verificationUri: '', userCode: '', deviceCode: '', message: '', error: '', account: null, accountCheckedAt: '', accountError: '' });
     const [syncingId, setSyncingId] = useState(null);
-    const [providerForm, setProviderForm] = useState(emptyProviderForm);
+    const providerSyncRequestRef = useRef(0);
+    const [providerForm, setProviderFormState] = useState(emptyProviderForm);
     const [manualModelProvider, setManualModelProvider] = useState(null);
     const [manualModelForm, setManualModelForm] = useState({ rawId: '', displayName: '', kind: 'auto', audioTask: '' });
     const [manualModelBusy, setManualModelBusy] = useState(false);
@@ -5127,7 +5129,19 @@ export default function Page() {
         await refreshAdmin();
         notify('已退出管理模式');
     }
+    function invalidateProviderConnectionRequest() {
+        providerConnectionRequestRef.current += 1;
+        setProviderTestResult('');
+        setProviderTestSucceeded(false);
+        setProviderTestBusy(false);
+        setProviderBusy(false);
+    }
+    function setProviderForm(update: Parameters<typeof setProviderFormState>[0]) {
+        invalidateProviderConnectionRequest();
+        setProviderFormState(update);
+    }
     function closeProviderEditor() {
+        invalidateProviderConnectionRequest();
         setProviderEditor(false);
         setProviderEditId(null);
         if (!state.providers.length) setProviderSetupDismissed(true);
@@ -5207,9 +5221,9 @@ export default function Page() {
                 name: providerEditId ? old.name : suggestedName
             }));
     }
-    async function testProvider() {
-        const localCli = providerForm.videoTransport === 'jimeng-cli';
-        if ((!providerForm.baseUrl.trim() && !localCli) || (!providerForm.apiKey.trim() && !providerEditId && !localCli)) return notify('请先填写服务地址和访问密钥');
+    async function testProvider(requestVersion = ++providerConnectionRequestRef.current, form = { ...providerForm }, editId = providerEditId) {
+        const localCli = form.videoTransport === 'jimeng-cli';
+        if ((!form.baseUrl.trim() && !localCli) || (!form.apiKey.trim() && !editId && !localCli)) return notify('请先填写服务地址和访问密钥');
         setProviderTestBusy(true);
         setProviderTestResult('');
         setProviderTestSucceeded(false);
@@ -5220,14 +5234,15 @@ export default function Page() {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    ...providerForm,
-                    providerId: providerEditId
+                    ...form,
+                    providerId: editId
                 })
             });
             const data = await res.json();
+            if (requestVersion !== providerConnectionRequestRef.current) return false;
             if (!res.ok) {
                 const status = Number(data.providerStatus || 0);
-                const hint = providerForm.platform === 'agnes' && status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
+                const hint = form.platform === 'agnes' && status === 401 ? '（HTTP 401：Agnes 已拒绝本次 Key；请确认国内 .cn Key 配套 https://api.agnes-ai.cn/v1，国际 .com Key 配套 https://apihub.agnes-ai.com/v1，Key 只填 sk- 开头内容，不要填 Bearer）' : '';
                 throw new Error(`${data.error || '连接测试失败'}${hint}`);
             }
             const names = Array.isArray(data.sample) ? data.sample.map((m)=>m.id).slice(0, 4).join('、') : '';
@@ -5235,11 +5250,12 @@ export default function Page() {
             setProviderTestSucceeded(true);
             return true;
         } catch (error) {
+            if (requestVersion !== providerConnectionRequestRef.current) return false;
             setProviderTestResult(`连接失败：${error instanceof Error ? error.message : '请求失败'}`);
             setProviderTestSucceeded(false);
             return false;
         } finally{
-            setProviderTestBusy(false);
+            if (requestVersion === providerConnectionRequestRef.current) setProviderTestBusy(false);
         }
     }
     async function jimengLoginAction(action) {
@@ -5259,35 +5275,39 @@ export default function Page() {
     }
     async function saveProvider(e) {
         e.preventDefault();
-        const localCli = providerForm.videoTransport === 'jimeng-cli';
-        if (!providerForm.baseUrl.trim() && !localCli) return notify('请填写服务商提供的 API 地址');
-        if (!providerEditId && !providerForm.apiKey.trim() && !localCli) return notify('请填写访问密钥');
+        const form = { ...providerForm };
+        const editId = providerEditId;
+        const localCli = form.videoTransport === 'jimeng-cli';
+        if (!form.baseUrl.trim() && !localCli) return notify('请填写服务商提供的 API 地址');
+        if (!editId && !form.apiKey.trim() && !localCli) return notify('请填写访问密钥');
+        const requestVersion = ++providerConnectionRequestRef.current;
         setProviderBusy(true);
         try {
-            const connected = await testProvider();
-            if (!connected) return;
-            const editId = providerEditId;
+            const connected = await testProvider(requestVersion, form, editId);
+            if (!connected || requestVersion !== providerConnectionRequestRef.current) return;
             const res = await fetch(editId ? `/api/providers/${editId}` : '/api/providers', {
                 method: editId ? 'PATCH' : 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify(providerForm)
+                body: JSON.stringify(form)
             });
             const data = await applyReturnedState(res);
+            if (requestVersion !== providerConnectionRequestRef.current) return;
             const id = editId || data.id;
             setProviderEditor(false);
             setProviderEditId(null);
             setProviderTestResult('');
             notify(editId ? '连接已更新，正在重新读取模型' : '连接已保存，正在读取模型');
-            await syncProvider(id);
+            await syncProvider(id, requestVersion);
         } catch (error) {
-            notify(error instanceof Error ? error.message : '保存失败');
+            if (requestVersion === providerConnectionRequestRef.current) notify(error instanceof Error ? error.message : '保存失败');
         } finally{
-            setProviderBusy(false);
+            if (requestVersion === providerConnectionRequestRef.current) setProviderBusy(false);
         }
     }
-    async function syncProvider(id) {
+    async function syncProvider(id, requestVersion?: number) {
+        const syncRequestVersion = ++providerSyncRequestRef.current;
         setSyncingId(id);
         try {
             const previousIds = new Set(state.models.filter((model)=>model.providerId === id).map((model)=>model.rawId || model.id));
@@ -5295,6 +5315,7 @@ export default function Page() {
                 method: 'POST'
             });
             const data = await applyReturnedState(res);
+            if (requestVersion !== undefined && requestVersion !== providerConnectionRequestRef.current) return;
             const syncedModels = data.state?.models?.filter((model)=>model.providerId === id) || [];
             const newCount = syncedModels.filter((model)=>!previousIds.has(model.rawId || model.id)).length;
             const enabledCount = syncedModels.filter((model)=>model.enabled && model.published).length;
@@ -5307,10 +5328,11 @@ export default function Page() {
             setModelProviderGroupExpansion({ filterKey: '', overrides: new Map() });
             setSection('models');
         } catch (error) {
+            if (requestVersion !== undefined && requestVersion !== providerConnectionRequestRef.current) return;
             notify(error instanceof Error ? error.message : '读取模型失败');
             await refreshState();
         } finally{
-            setSyncingId(null);
+            if (syncRequestVersion === providerSyncRequestRef.current) setSyncingId(null);
         }
     }
     async function addManualModel(event) {

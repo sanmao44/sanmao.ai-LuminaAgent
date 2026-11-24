@@ -188,6 +188,71 @@ test('shouldContinue 返回 false 时停下，并把这一步标成不再继续'
   assert.equal(outcome.trace[0].continued, false);
 });
 
+test('context is bounded before each model call, including text continuation prompts', async () => {
+  const messages = [{ role: 'user', content: 'old history' }, { role: 'user', content: 'current task' }];
+  const events = [];
+  let modelCalls = 0;
+  const outcome = await loop.runToolLoop({
+    messages,
+    contextMaxChars: 100,
+    boundAgentContext: (items) => {
+      events.push('bound');
+      return items.filter((item) => item.content !== 'old history');
+    },
+    callModel: async ({ messages: current }) => {
+      events.push('model');
+      assert.equal(current.some((item) => item.content === 'old history'), false);
+      modelCalls += 1;
+      if (modelCalls === 1) return { content: 'still checking' };
+      assert.equal(current.at(-1).content, 'continue the current task');
+      return { content: 'done' };
+    },
+    runCalls: recorder().runCalls,
+    continueOnText: ({ text }) => text === 'still checking' ? 'continue the current task' : false,
+  });
+  assert.deepEqual(events, ['bound', 'model', 'bound', 'model']);
+  assert.equal(outcome.text, 'done');
+});
+
+test('a delivered file survives large tool arguments when no further model call is needed', async () => {
+  const messages = [{ role: 'user', content: 'Generate an HTML file.' }];
+  let budgetChecks = 0;
+  let delivered = false;
+  const argumentsJson = JSON.stringify({ files: [{ filename: 'large.html', content: '<html>' + 'x'.repeat(100_000) + '</html>' }] });
+  const outcome = await loop.runToolLoop({
+    messages,
+    contextMaxChars: 1000,
+    boundAgentContext: (items) => {
+      budgetChecks += 1;
+      if (JSON.stringify(items).length > 1000) throw new Error('model context is too large');
+      return items;
+    },
+    callModel: async () => ({ tool_calls: [{ id: 'large-file', function: { name: 'file_generate', arguments: argumentsJson } }] }),
+    runCalls: async () => {
+      delivered = true;
+      return [{ role: 'tool', tool_call_id: 'large-file', content: JSON.stringify({ ok: true, files: [{ name: 'large.html', size: 100_013 }] }) }];
+    },
+    shouldContinue: () => !delivered,
+  });
+  assert.equal(delivered, true);
+  assert.equal(budgetChecks, 1);
+  assert.equal(outcome.stopReason, 'stopped');
+  assert.equal(messages.at(-2).tool_calls[0].function.arguments, argumentsJson);
+  assert.equal(messages.at(-1).tool_call_id, 'large-file');
+});
+
+test('an oversized required context is rejected before a model request is sent', async () => {
+  let modelCalls = 0;
+  await assert.rejects(loop.runToolLoop({
+    messages: [{ role: 'user', content: 'required input' }],
+    contextMaxChars: 1,
+    boundAgentContext: () => { throw new Error('required input exceeds model budget'); },
+    callModel: async () => { modelCalls += 1; return { content: 'unexpected' }; },
+    runCalls: recorder().runCalls,
+  }), /required input exceeds model budget/);
+  assert.equal(modelCalls, 0);
+});
+
 test('超过总时长就不再开新一轮', async () => {
   const messages = [];
   const { executed, runCalls } = recorder();

@@ -16,6 +16,7 @@ import { isIntentClassifierEnabledByDefault, isIntentClassifierModel, isInternal
 import { isRetiredAgnesModel } from './agnes';
 import { isCangyuanProvider, usesCangyuanVideoProtocol } from './cangyuan-provider';
 import { prepareImageStoragePath } from './image-storage';
+import { defaultResponsesPath, normalizeResponsesPath } from './provider-presets';
 import type { ProviderTransferBundle } from '@/packages/contracts/provider-transfer';
 import type { ManualModelAudioTask, ManualProviderModelInput } from '@/packages/contracts/model-library';
 import { classifyAudioModelPurpose } from './audio-model-classification';
@@ -312,7 +313,7 @@ export async function getPublicState(): Promise<PublicState> {
       imageEditPath: p.imageEditPath || '/images/edits',
       imageUpscalePath: p.imageUpscalePath || p.imageEditPath || '/images/edits',
       imageUpscaleStatusPath: p.imageUpscaleStatusPath || '',
-      responsesPath: p.responsesPath || (p.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
+      responsesPath: normalizeResponsesPath(p.platform || 'custom', p.responsesPath || defaultResponsesPath(p.platform || 'custom')),
       textProtocol: p.textProtocol || 'chat-completions',
         creativeTaskProtocol: p.creativeTaskProtocol,
       videoTransport: usesCangyuanVideoProtocol(p) ? 'cangyuan-videos' : p.videoTransport || (legacy65535 ? 'native-task' : p.platform === 'agnes' ? 'agnes-videos' : 'auto'),
@@ -988,7 +989,7 @@ export async function getRuntimeModelCandidates(id: string | null | undefined, k
   const runtimes = await Promise.all(ordered.map(async (candidate) => {
     const provider = state.providers.find((item) => item.id === candidate.providerId);
     if (!provider) return null;
-    return { model: candidate, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+    return { model: candidate, provider: { ...provider, responsesPath: normalizeResponsesPath(provider.platform || 'custom', provider.responsesPath || defaultResponsesPath(provider.platform || 'custom')), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
   }));
   return runtimes.filter((runtime): runtime is NonNullable<typeof runtime> => Boolean(runtime));
 }
@@ -1015,7 +1016,7 @@ export async function getRuntimeIntentClassifierModel() {
     model,
     provider: {
       ...provider,
-      responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'),
+      responsesPath: normalizeResponsesPath(provider.platform || 'custom', provider.responsesPath || defaultResponsesPath(provider.platform || 'custom')),
       apiKey: await decryptSecret(provider.encryptedApiKey),
       videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined,
     },
@@ -1105,7 +1106,7 @@ export async function getRuntimeVisionModel(id: string | null | undefined) {
   if (!model) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);
   if (!provider) return null;
-  return { model, provider: { ...provider, responsesPath: provider.responsesPath || (provider.platform === 'deepseek' ? 'https://api.deepseek.com/beta/responses' : '/responses'), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
+  return { model, provider: { ...provider, responsesPath: normalizeResponsesPath(provider.platform || 'custom', provider.responsesPath || defaultResponsesPath(provider.platform || 'custom')), apiKey: await decryptSecret(provider.encryptedApiKey), videoApiKey: provider.encryptedVideoApiKey ? await decryptSecret(provider.encryptedVideoApiKey) : undefined } };
 }
 
 export async function getRuntimeImageModelForCapabilities(id: string | null | undefined, capabilities: readonly ModelCapability[]) {
