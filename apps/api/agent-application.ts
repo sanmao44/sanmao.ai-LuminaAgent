@@ -37,7 +37,7 @@ import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-person
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
-import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure } from '@/lib/agent/text-file-fallback';
+import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure, isTextFileContextSizeFailure, isCompleteTextFileContent } from '@/lib/agent/text-file-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
@@ -150,6 +150,7 @@ function normalizeGeneratedFile(raw: any, index: number): GeneratedFile | null {
   const rawName = typeof raw.filename === 'string' ? raw.filename : typeof raw.name === 'string' ? raw.name : '';
   const safeName = rawName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim().slice(0, 160) || `SANMAO-file-${index + 1}.txt`;
   const extension = safeName.includes('.') ? safeName.split('.').pop()?.toLowerCase() || '' : '';
+  if (encoding === 'utf8' && ['html', 'htm', 'svg', 'json'].includes(extension) && !isCompleteTextFileContent(content, extension)) return null;
   const mimeType = typeof raw.mimeType === 'string' && raw.mimeType.trim() ? raw.mimeType.trim().slice(0, 120) : FILE_MIME_TYPES[extension] || (encoding === 'base64' ? 'application/octet-stream' : 'text/plain;charset=utf-8');
   const size = encoding === 'base64' ? Math.floor(content.replace(/\s/g, '').length * 0.75) : new TextEncoder().encode(content).length;
   return { name: safeName, mimeType, content, encoding, size };
@@ -598,8 +599,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
 
     const latestMessage = latestUser(messages);
     let fileDeliveryDeadlineRequested = likelyFileGenerationRequest(String(latestMessage?.content || ''));
-    // Keep the recovery call bounded so two stalled generations do not exceed
-    // the client-side Canvas wait budget.
+    // File recovery is still a single full-document response. Give it the same
+    // long deadline as the primary file request; a 60s recovery window cuts off
+    // polished HTML before the model can finish and surfaces as a false failure.
     let textFileFallbackInProgress = false;
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
@@ -718,7 +720,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       timeoutFor: (runtime, mode) => mode === 'failover'
         ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
         : textFileFallbackInProgress
-          ? AGENT_MODEL_CALL_TIMEOUT_MS
+          ? AGENT_FILE_GENERATION_TIMEOUT_MS
           : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
           ? AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS
           : fileDeliveryDeadlineRequested
@@ -1267,7 +1269,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const presentationImageGenerationRequest = requestModeAllowsExecution
       && requestRoute.artifactKind === 'ppt'
       && !/(?:不要|不需要|无需|不用).{0,6}(?:图片|配图|插图)/i.test(latestInstruction);
-    const imageGenerationRequest = !presentationImageGenerationRequest && requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
+    const imageGenerationRequest = !presentationImageGenerationRequest && requestRoute.route !== 'file' && requestRoute.artifactKind !== 'file' && requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
       && (canvasImageEditRequest
         || requestedDeliverable === 'IMAGE'
         || requestedDeliverable === 'BOTH'
@@ -2002,9 +2004,15 @@ const auditMcpCall = (
     const toolSelectionText = toolSelectionIsolated ? '' : `${mcpTurnText}\n${priorityServerIds.join(' ')}`;
     const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);
     if (isCanvasNodeExecution) callableTools.splice(0, callableTools.length);
+    // Text/code delivery is a hard file lane. Do not expose Office or archive
+    // tools for an HTML/SVG/JSON/etc. request: a visual description inside an
+    // HTML request must never let the model route the turn to DOCX/PPTX/ZIP.
+    const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
     const initialCallableTools = presentationImageGenerationRequest
       ? callableTools.filter((tool) => tool.function.name === 'presentation_generate' || tool.function.name === 'image_generate')
-      : callableTools;
+      : textFileFallbackRequested
+        ? callableTools.filter((tool) => tool.function.name === 'file_generate')
+        : callableTools;
     /**
      * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
      * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
@@ -2033,11 +2041,14 @@ const auditMcpCall = (
       llmMessages[0] = { role: 'system', content: system };
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
-    const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
-    const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
+    const artifactToolsOnly = initialCallableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
     const artifactFallbackKind = artifactGenerationRequest && !textFileFallbackRequested
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
+    if (textFileFallbackRequested) {
+      system += '\\n\\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
+      llmMessages[0] = { role: 'system', content: system };
+    }
     let artifactFallbackUsed = false;
     const artifactFallbackContext: unknown = requestRoute.contextNeed === 'required'
       ? modelContextMessages
@@ -2213,10 +2224,16 @@ const auditMcpCall = (
      } catch (error) {
        if (requestController.signal.aborted) throw requestController.signal.reason || error;
        const failureStatus = Number((error as { providerStatus?: number; status?: number } | null)?.providerStatus || (error as { status?: number } | null)?.status || 0);
-       if (failureStatus === 413 || /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
+      const textFileRecoveryAllowed = fileGenerationRequest
+        && isTextFileFallbackRequested(latestInstruction)
+        && latestReferenceImageCount === 0
+        && !(latestMessage?.files?.length)
+        && (isTextFileContextSizeFailure(error));
+      if (failureStatus === 413 && !textFileRecoveryAllowed) throw error;
+      if (failureStatus !== 413 && /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
         const providerFailureKind = (error as { providerFailureKind?: unknown } | null)?.providerFailureKind;
         const isProviderTimeout = (error instanceof Error && error.name === 'TimeoutError') || providerFailureKind === 'timeout';
-        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && (isToolSchemaProviderFailure(error) || isProviderTimeout)) {
+        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && (isToolSchemaProviderFailure(error) || isProviderTimeout || textFileRecoveryAllowed)) {
           try {
             const fallback = await requestTextFileFallback();
             if (fallback.ok) {

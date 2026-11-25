@@ -2044,6 +2044,30 @@ for (const failure of [
   });
 }
 
+test('HTML delivery recovers from a context-size 413 with the minimal fenced-document fallback', async () => {
+  const content = '<!doctype html><html><body><main>context recovery</main></body></html>';
+  const failure = Object.assign(new Error('context_length_exceeded: prompt tokens exceed model limit'), {
+    providerStatus: 413,
+    providerFailureKind: 'http',
+    providerErrorCode: 'context_length_exceeded',
+  });
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (payload, count) => {
+      if (count === 1) throw failure;
+      assert.equal(payload.tool_choice, 'none');
+      assert.equal(payload.tools, undefined);
+      const fence = String.fromCharCode(96).repeat(3);
+      return { content: fence + 'html\n' + content + '\n' + fence };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 交互页面，命名为 context-recovery.html' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files?.[0]?.name, 'context-recovery.html', JSON.stringify(data));
+  assert.equal(data.files?.[0]?.content, content);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+
 test('HTML delivery recovers from an initial model timeout with a validated tool-free file response', async () => {
   const content = '<!doctype html><html><body><main>timeout recovery</main></body></html>';
   const failure = Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' });
@@ -2059,7 +2083,7 @@ test('HTML delivery recovers from an initial model timeout with a validated tool
   const data = await agent.post([{ role: 'user', content: '写一个 HTML 文件，命名为 timeout-recovery.html' }]);
 
   assert.equal(agent.modelCalls.length, 2);
-  assert.deepEqual(agent.modelTimeouts.map((entry) => entry.timeoutMs), [180_000, 60_000]);
+  assert.deepEqual(agent.modelTimeouts.map((entry) => entry.timeoutMs), [180_000, 180_000]);
   assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
   assert.equal(data.files[0].name, 'timeout-recovery.html');
   assert.equal(data.files[0].content, content);
@@ -2128,6 +2152,24 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(data.files[0].content, content);
   assert.match(data.message, /1 个文件/);
   assert.equal(agent.modelTimeouts[0].timeoutMs, 180_000);
+});
+
+test('HTML interactive page exposes only the text-file lane, never Office or image tools', async () => {
+  const content = '<!doctype html><html><body><button id="go">Go</button></body></html>';
+  const agent = harness({
+    reply: (payload) => {
+      const offered = (payload.tools || []).map((tool) => tool.function.name);
+      assert.ok(offered.includes('file_generate'), JSON.stringify(offered));
+      for (const forbidden of ['image_generate', 'document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
+        assert.equal(offered.includes(forbidden), false, 'must not offer ' + forbidden);
+      }
+      return { tool_calls: [{ id: 'html-interactive', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'interactive.html', content }] }) } }] };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一个小丑骑单轮车的 SVG 动画 HTML 交互页面，要求具备交互功能，设计要精致，并加入一些小巧思。' }]);
+  assert.equal(data.error, undefined, JSON.stringify(data));
+  assert.equal(data.files?.[0]?.name, 'interactive.html');
+  assert.equal(agent.images.length, 0);
 });
 
 test('HTML delivery keeps the file when the optional image lane returns no image', async () => {

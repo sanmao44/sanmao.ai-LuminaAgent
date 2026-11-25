@@ -33,7 +33,7 @@ function requestedExtension(instruction: string) {
     ?.replace(/[^a-z]/giu, '').toLowerCase();
   return mentionedExtension && (TEXT_FILE_EXTENSIONS as readonly string[]).includes(mentionedExtension)
     ? mentionedExtension
-    : 'txt';
+    : /(?:网页|网站页面|网页文件|交互页面|HTML页面)/iu.test(instruction) ? 'html' : 'txt';
 }
 
 export function isTextFileFallbackRequested(instruction: string) {
@@ -44,7 +44,8 @@ export function isTextFileFallbackRequested(instruction: string) {
   const requestsFile = /(?:生成|创建|制作|导出|下载|保存|交付|输出|文件)/iu.test(instruction);
   const requestsTextFormat = /(?:^|[^a-z0-9])(?:markdown|html?|yaml|yml|json|csv|tsv|svg|css|xml|txt|jsx|tsx|js|ts|py|java|sql|sh|ps1)(?=\s*(?:格式|文件|附件|交付|输出|下载|保存|导出|网页|页面))/iu.test(instruction)
     || /(?:生成|创建|制作|导出|下载|保存|交付|输出)[^。！？\n]{0,40}(?:markdown|html?|yaml|yml|json|csv|tsv|svg|css|xml|txt|jsx|tsx|js|ts|py|java|sql|sh|ps1)(?:$|[^a-z0-9])/iu.test(instruction);
-  return requestsFile && requestsTextFormat;
+  const requestsHtmlPage = /(?:生成|创建|制作|导出|下载|保存|交付|输出)[^。！？\n]{0,48}(?:网页|网站页面|网页文件|交互页面|HTML页面)/iu.test(instruction);
+  return requestsFile && (requestsTextFormat || requestsHtmlPage);
 }
 
 function requestedFilename(instruction: string, extension: string, modelFilename: unknown) {
@@ -73,7 +74,24 @@ function parseEnvelope(value: string): Record<string, unknown> | null {
   }
 }
 
-function isCompleteDocument(content: string, extension: string) {
+function parseRawDocument(value: string, extension: string) {
+  if (!['html', 'htm', 'svg'].includes(extension)) return null;
+  const text = value.trim();
+  const fenced = text.match(/^\x60{3}(?:html?|svg)?\s*\r?\n?([\s\S]*?)\r?\n?\x60{3}$/i);
+  if (fenced) return { filename: '', content: fenced[1].trim() };
+  // Accept a complete raw document as a last-resort recovery, but never accept
+  // prose surrounding it. This keeps truncated/explanatory replies out of the
+  // file tool while avoiding JSON escaping overhead for large HTML responses.
+  if (extension === 'svg' && /^<svg\b[\s\S]*<\/svg\s*>$/i.test(text)) {
+    return { filename: '', content: text };
+  }
+  if ((extension === 'html' || extension === 'htm') && /^(?:<!doctype\s+html\s*>)?[\s\S]*<html\b[\s\S]*<\/html\s*>$/i.test(text)) {
+    return { filename: '', content: text };
+  }
+  return null;
+}
+
+export function isCompleteTextFileContent(content: string, extension: string) {
   if (extension === 'html' || extension === 'htm') {
     return /<html\b[\s\S]*<\/html\s*>/iu.test(content);
   }
@@ -89,14 +107,17 @@ export function textFileFallbackSystemPrompt() {
     '你现在负责为 SANMAO.AI 生成用户明确要求交付的文本/代码文件。',
     '当前阶段没有可调用工具；不要声称文件已保存、已生成或已下载。',
     '只根据最近一条用户请求生成完整、可直接保存的文件内容；需要上下文时仅把较早对话作为资料。',
-    '最终只输出一个 JSON 对象，字段为 filename 和 content；不要 Markdown 代码围栏、解释、路径或其他文字。',
-    'filename 使用短文件名并带正确扩展名；content 必须是完整 UTF-8 文件正文，不得省略、截断或用占位符。',
+    'HTML/HTM/SVG 文件优先只输出一个完整的 html 或 svg fenced 文档（例如 ```html\\n...\\n```），不要 JSON 转义；其他文本/代码文件只输出一个 JSON 对象，字段为 filename 和 content。两种格式都不要解释、路径或其他文字。',
+    'filename 使用短文件名并带正确扩展名；content 或 fenced 文档必须是完整 UTF-8 文件正文，不得省略、截断或用占位符。',
   ].join('\n');
 }
 
 export function textFileFallbackUserPrompt(instruction: string) {
   const extension = requestedExtension(instruction);
-  return `请为以下当前请求生成完整的 .${extension} 文件。若请求指定文件名则沿用，否则使用 SANMAO-交付物.${extension}。只返回 JSON：{"filename":"...","content":"..."}。\n\n[当前用户请求]\n${instruction}`;
+  const outputRule = ['html', 'htm', 'svg'].includes(extension)
+    ? `只返回完整的 ${extension === 'svg' ? 'SVG' : 'HTML'} 代码围栏，不能加解释。`
+    : '只返回 JSON：{"filename":"...","content":"..."}。';
+  return `请为以下当前请求生成完整的 .${extension} 文件。若请求指定文件名则沿用，否则使用 SANMAO-交付物.${extension}。${outputRule}\n\n[当前用户请求]\n${instruction}`;
 }
 
 export function makeTextFileFallbackCall(input: {
@@ -105,13 +126,13 @@ export function makeTextFileFallbackCall(input: {
   callId: string;
 }): TextFileFallbackResult {
   if (typeof input.response !== 'string') return { ok: false, reason: 'invalid-json' };
-  const envelope = parseEnvelope(input.response);
+  const extension = requestedExtension(input.instruction);
+  const envelope = parseEnvelope(input.response) || parseRawDocument(input.response, extension);
   if (!envelope) return { ok: false, reason: 'invalid-json' };
   if (typeof envelope.content !== 'string' || !envelope.content.trim()) return { ok: false, reason: 'missing-content' };
   if (envelope.content.length > MAX_TEXT_FILE_CHARS) return { ok: false, reason: 'content-too-large' };
 
-  const extension = requestedExtension(input.instruction);
-  if (!isCompleteDocument(envelope.content, extension)) return { ok: false, reason: 'invalid-document' };
+  if (!isCompleteTextFileContent(envelope.content, extension)) return { ok: false, reason: 'invalid-document' };
   const filename = requestedFilename(input.instruction, extension, envelope.filename);
   const call: TextFileFallbackCall = {
     id: input.callId,
@@ -130,4 +151,16 @@ export function isToolSchemaProviderFailure(error: unknown) {
   const status = Number(value.providerStatus || value.status || 0);
   const message = typeof value.message === 'string' ? value.message : '';
   return status === 400 && /(?:tool|function|schema|工具|参数)/iu.test(message);
+}
+
+/** A 413 caused by prompt/context size can be recovered by the minimal file
+ * prompt; a bare body-size 413 may come from attachments or a proxy limit and
+ * must remain fail-fast instead of being retried blindly. */
+export function isTextFileContextSizeFailure(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { providerStatus?: unknown; status?: unknown; providerErrorCode?: unknown; code?: unknown; message?: unknown };
+  const status = Number(value.providerStatus || value.status || 0);
+  if (status !== 413) return false;
+  const text = [value.providerErrorCode, value.code, value.message].filter((item) => typeof item === 'string').join(' ');
+  return /context[_ -]?length|context(?: window)?|prompt(?:[_ -]?tokens?)?|token(?:s)?[\s_ -]*(?:limit|exceed|maximum|超|过大)|上下文|上下文长度|上下文窗口|令牌.{0,12}(?:超|过大|限制)/iu.test(text);
 }
