@@ -2023,11 +2023,10 @@ test('HTML delivery fails as a retryable request when the model describes a temp
   const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
   assert.match(data.error, /没有生成可下载文件/);
   assert.equal(data.files?.length || 0, 0);
-  assert.equal(agent.modelCalls.length, 2, 'the application requests a tool-backed file generation retry before returning failure');
+  assert.equal(agent.modelCalls.length, 3, 'the application retries the native tool, then makes one constrained text fallback before returning failure');
 });
 
 for (const failure of [
-  Object.assign(new Error('HTTP 400: invalid tool schema (request id: req-schema)'), { providerStatus: 400, providerFailureKind: 'http' }),
   Object.assign(new Error('请求内容超过服务商限制：body too large (request id: req-size)'), { providerStatus: 413, providerFailureKind: 'http' }),
   Object.assign(new Error('HTTP 429: rate limit exceeded (request id: req-rate)'), { providerStatus: 429, providerFailureKind: 'http' }),
   Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' }),
@@ -2076,6 +2075,59 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(data.files[0].content, content);
   assert.match(data.message, /1 个文件/);
   assert.equal(agent.modelTimeouts[0].timeoutMs, 180_000);
+});
+
+test('HTML delivery falls back to validated tool-free output after the native tool retry is omitted', async () => {
+  const content = '<!doctype html><html><body><main>交互演示</main></body></html>';
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (payload) => payload.tool_choice === 'none'
+      ? { content: JSON.stringify({ filename: 'demo.html', content }) }
+      : { content: '我会生成 HTML 文件。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+
+  assert.equal(agent.modelCalls.length, 3, 'initial request, native-tool retry, then constrained text fallback');
+  assert.equal(agent.modelCalls[2].payload.tools, undefined, 'the final fallback must not depend on tool-call support');
+  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
+  assert.equal(data.files[0].name, 'demo.html');
+  assert.equal(data.files[0].content, content);
+  assert.match(data.message, /1 个文件/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+
+test('HTML delivery falls back when the provider rejects its tool schema', async () => {
+  const content = '<!doctype html><html><body>schema recovery</body></html>';
+  const failure = Object.assign(new Error('HTTP 400: invalid tool schema'), { providerStatus: 400 });
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (payload, count) => {
+      if (count === 1) throw failure;
+      assert.equal(payload.tool_choice, 'none');
+      return { content: JSON.stringify({ filename: 'recovered.html', content }) };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 文件，命名为 recovered.html' }]);
+
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
+  assert.equal(data.files[0].name, 'recovered.html');
+  assert.equal(data.files[0].content, content);
+});
+
+test('HTML delivery refuses an invalid tool-free fallback without creating a file', async () => {
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (payload) => payload.tool_choice === 'none'
+      ? { content: JSON.stringify({ filename: 'demo.html', content: '<html>未闭合' }) }
+      : { content: '我会生成 HTML 文件。' },
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 网页，命名为 demo.html' }]);
+
+  assert.equal(agent.modelCalls.length, 3);
+  assert.equal(data.files?.length || 0, 0);
+  assert.match(data.error, /没有生成可下载文件|未返回可验证的文本文件内容/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
 });
 
 test('HTML delivery repairs invalid file content once using the actual tool error', async () => {

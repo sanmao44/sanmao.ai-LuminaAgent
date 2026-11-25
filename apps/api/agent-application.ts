@@ -37,6 +37,7 @@ import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-person
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
+import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure } from '@/lib/agent/text-file-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
@@ -2028,7 +2029,8 @@ const auditMcpCall = (
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
     const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
-    const artifactFallbackKind = artifactGenerationRequest
+    const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
+    const artifactFallbackKind = artifactGenerationRequest && !textFileFallbackRequested
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
     let artifactFallbackUsed = false;
@@ -2056,6 +2058,22 @@ const auditMcpCall = (
         reportProgress({ stage: 'tool', message: '当前模型未返回文件调用，正在使用本地 Office 生成器…' });
       }
       return call as ToolRuntimeCall | null;
+    };
+    const requestTextFileFallback = async () => {
+      reportProgress({ stage: 'tool', message: '模型未能调用文件工具，正在通过文本生成补救交付…' });
+      const response = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+        messages: [
+          { role: 'system', content: textFileFallbackSystemPrompt() },
+          { role: 'user', content: textFileFallbackUserPrompt(latestInstruction) },
+        ],
+        tool_choice: 'none',
+      }, requestController.signal);
+      const content = responseContent(response);
+      return makeTextFileFallbackCall({
+        response: content,
+        instruction: latestInstruction,
+        callId: `sanmao-file-fallback-${agentRunId || Date.now()}`,
+      });
     };
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, ...(nativeSearchData.searchRequestCount !== undefined ? { searchRequestCount: nativeSearchData.searchRequestCount } : {}), ...(nativeSearchData.fetchedCount !== undefined ? { fetchedCount: nativeSearchData.fetchedCount } : {}), warnings: nativeSearchData.warnings, searchedAt: nativeSearchData.searchedAt };
@@ -2186,7 +2204,14 @@ const auditMcpCall = (
        if (requestController.signal.aborted) throw requestController.signal.reason || error;
        const failureStatus = Number((error as { providerStatus?: number; status?: number } | null)?.providerStatus || (error as { status?: number } | null)?.status || 0);
        if (failureStatus === 413 || /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
-        if (imageGenerationRequest) {
+        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && isToolSchemaProviderFailure(error)) {
+          const fallback = await requestTextFileFallback();
+          if (fallback.ok) {
+            first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [fallback.call] } }] };
+          } else {
+            throw error;
+          }
+        } else if (imageGenerationRequest) {
          first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'edit' ? 'edit' : 'generate', batchContent: batchPlanContent })] } }] };
         } else if (artifactFallbackKind) {
           const artifactCall = requestArtifactFallback();
@@ -2244,7 +2269,7 @@ const auditMcpCall = (
       toolCalls = inlineToolCalls.slice(0, 1);
       toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
     }
-    if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
+    if (imageGenerationRequest && !textFileFallbackRequested && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
       toolCalls = [...toolCalls, makeFallbackImageToolCall({
         prompt: presentationImageGenerationRequest
           ? `${fallbackImagePrompt}\n横向 16:9 演示文稿配图，画面中不要出现文字或品牌标识。`
@@ -2376,6 +2401,17 @@ const auditMcpCall = (
         } catch (error) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
           throw error;
+        }
+      }
+      if (!toolCalls.length) {
+        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && !presentationImageGenerationRequest) {
+          const fallback = await requestTextFileFallback();
+          if (fallback.ok) {
+            toolCalls = [fallback.call];
+            toolCallMessage = { role: 'assistant', content: null, tool_calls: toolCalls };
+          } else {
+            throw new Error('本轮没有生成可下载文件：模型未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
+          }
         }
       }
       if (!toolCalls.length) {
