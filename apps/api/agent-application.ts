@@ -598,6 +598,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
 
     const latestMessage = latestUser(messages);
     let fileDeliveryDeadlineRequested = likelyFileGenerationRequest(String(latestMessage?.content || ''));
+    // Keep the recovery call bounded so two stalled generations do not exceed
+    // the client-side Canvas wait budget.
+    let textFileFallbackInProgress = false;
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
       const bodyHasTranscriptionSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription');
@@ -714,7 +717,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
       timeoutFor: (runtime, mode) => mode === 'failover'
         ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
-        : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
+        : textFileFallbackInProgress
+          ? AGENT_MODEL_CALL_TIMEOUT_MS
+          : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
           ? AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS
           : fileDeliveryDeadlineRequested
             ? AGENT_FILE_GENERATION_TIMEOUT_MS
@@ -2060,20 +2065,25 @@ const auditMcpCall = (
       return call as ToolRuntimeCall | null;
     };
     const requestTextFileFallback = async () => {
-      reportProgress({ stage: 'tool', message: '模型未能调用文件工具，正在通过文本生成补救交付…' });
-      const response = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-        messages: [
-          { role: 'system', content: textFileFallbackSystemPrompt() },
-          { role: 'user', content: textFileFallbackUserPrompt(latestInstruction) },
-        ],
-        tool_choice: 'none',
-      }, requestController.signal);
-      const content = responseContent(response);
-      return makeTextFileFallbackCall({
-        response: content,
-        instruction: latestInstruction,
-        callId: `sanmao-file-fallback-${agentRunId || Date.now()}`,
-      });
+      textFileFallbackInProgress = true;
+      try {
+        reportProgress({ stage: 'tool', message: '模型未能调用文件工具，正在通过文本生成补救交付…' });
+        const response = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+          messages: [
+            { role: 'system', content: textFileFallbackSystemPrompt() },
+            { role: 'user', content: textFileFallbackUserPrompt(latestInstruction) },
+          ],
+          tool_choice: 'none',
+        }, requestController.signal);
+        const content = responseContent(response);
+        return makeTextFileFallbackCall({
+          response: content,
+          instruction: latestInstruction,
+          callId: `sanmao-file-fallback-${agentRunId || Date.now()}`,
+        });
+      } finally {
+        textFileFallbackInProgress = false;
+      }
     };
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, ...(nativeSearchData.searchRequestCount !== undefined ? { searchRequestCount: nativeSearchData.searchRequestCount } : {}), ...(nativeSearchData.fetchedCount !== undefined ? { fetchedCount: nativeSearchData.fetchedCount } : {}), warnings: nativeSearchData.warnings, searchedAt: nativeSearchData.searchedAt };
@@ -2204,12 +2214,24 @@ const auditMcpCall = (
        if (requestController.signal.aborted) throw requestController.signal.reason || error;
        const failureStatus = Number((error as { providerStatus?: number; status?: number } | null)?.providerStatus || (error as { status?: number } | null)?.status || 0);
        if (failureStatus === 413 || /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
-        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && isToolSchemaProviderFailure(error)) {
-          const fallback = await requestTextFileFallback();
-          if (fallback.ok) {
-            first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [fallback.call] } }] };
-          } else {
-            throw error;
+        const providerFailureKind = (error as { providerFailureKind?: unknown } | null)?.providerFailureKind;
+        const isProviderTimeout = (error instanceof Error && error.name === 'TimeoutError') || providerFailureKind === 'timeout';
+        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && (isToolSchemaProviderFailure(error) || isProviderTimeout)) {
+          try {
+            const fallback = await requestTextFileFallback();
+            if (fallback.ok) {
+              first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [fallback.call] } }] };
+            } else if (isProviderTimeout) {
+              throw new Error('本轮没有生成可下载文件：模型响应超时后未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
+            } else {
+              throw error;
+            }
+          } catch (fallbackError) {
+            if (requestController.signal.aborted) throw requestController.signal.reason || fallbackError;
+            // Keep the original upstream timeout visible when recovery also
+            // times out; it is the most useful provider-side diagnosis.
+            if (isProviderTimeout && fallbackError instanceof Error && fallbackError.name === 'TimeoutError') throw error;
+            throw fallbackError;
           }
         } else if (imageGenerationRequest) {
          first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'edit' ? 'edit' : 'generate', batchContent: batchPlanContent })] } }] };
@@ -2403,15 +2425,17 @@ const auditMcpCall = (
           throw error;
         }
       }
-      if (!toolCalls.length) {
-        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && !presentationImageGenerationRequest) {
-          const fallback = await requestTextFileFallback();
-          if (fallback.ok) {
-            toolCalls = [fallback.call];
-            toolCallMessage = { role: 'assistant', content: null, tool_calls: toolCalls };
-          } else {
-            throw new Error('本轮没有生成可下载文件：模型未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
-          }
+      // A provider may answer an artifact request with prose even after one
+      // native-tool retry. For text/code files only, make one constrained
+      // tool-free generation attempt and route a validated envelope back
+      // through the ordinary file tool runtime. Never persist prose directly.
+      if (!toolCalls.length && fileGenerationRequest && !artifactFallbackKind && !presentationImageGenerationRequest) {
+        const fallback = await requestTextFileFallback();
+        if (fallback.ok) {
+          toolCalls = [fallback.call];
+          toolCallMessage = { role: 'assistant', content: null, tool_calls: toolCalls };
+        } else {
+          throw new Error('本轮没有生成可下载文件：模型未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
         }
       }
       if (!toolCalls.length) {
@@ -3081,6 +3105,10 @@ const auditMcpCall = (
       });
       if (presentationImageGenerationRequest) {
         // The artifact follow-up receives the image error and generates a text-only deck.
+      } else if (fileGenerationRequest && generatedFiles.length) {
+        // A text-file request may share the image lane (for example an SVG
+        // animation). Preserve the verified file delivery even when no image
+        // result was produced; the file is the requested deliverable.
       } else {
         const failure = `图片未生成成功：${errors.at(-1) || '未收到有效图片结果'}。`;
         await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
@@ -3121,7 +3149,9 @@ const auditMcpCall = (
       : undefined;
     const verifiedFailure = authorizationStatus
       ? videoDownloadSessionConsentQuestion(requestedVideoUrl, authorizationStatus, latestVideoDownloadOutcome?.error)
-      : toolOutcomeText('', toolOutcomes);
+      : toolOutcomeText('', fileGenerationRequest && generatedFiles.length
+        ? toolOutcomes.filter((outcome) => !(isImageToolCall({ function: { name: outcome.name } }) && !outcome.ok))
+        : toolOutcomes);
     if (verifiedFailure) {
       await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
       if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
