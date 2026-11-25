@@ -32,8 +32,12 @@ const compiled = await compileTypeScript('../lib/creation/settings.ts', (source)
     'const getCangyuanImageModelProfile = () => null;',
   )
   .replace(
-    /^import\s+\{\s*getCangyuanVideoModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
-    'const getCangyuanVideoModelProfile = () => null;',
+    /^import\s+\{[^}]*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
+    'const getCangyuanVideoModelProfile = () => null; const isCangyuanVideoModelSelectable = () => false;',
+  )
+  .replace(
+    /^import\s+\{\s*getCangyuanVideoModelSpec\s*,\s*getCangyuanVideoParameter\s*\}\s+from\s+["']\.\.\/cangyuan-video-model-catalog["'];?\s*$/m,
+    'const getCangyuanVideoModelSpec = () => null; const getCangyuanVideoParameter = () => undefined;',
   )
   .replace(
     /^import\s+\{\s*isCangyuanProvider,\s*usesCangyuanVideoProtocol\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
