@@ -249,6 +249,7 @@ const FILESYSTEM_TOOLS: readonly string[] = [
   'directory_tree',
   'move_file',
   'search_files',
+  'search_text',
   'get_file_info',
   'list_allowed_directories',
 ];

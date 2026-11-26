@@ -55,6 +55,8 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { importLocalImage, isLocalImageRead } from '@/lib/agent/local-image';
 import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
+import { callFilesystemEdit, isFilesystemEditCall, prepareFilesystemEdit } from '@/lib/mcp/filesystem-edit';
+import { isFilesystemTextSearchCall, searchFilesystemText } from '@/lib/mcp/filesystem-search';
 import { stripToolCallMarkup } from '@/lib/skills';
 import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
@@ -212,7 +214,17 @@ export type AgentApplicationInfrastructure = {
     discoverMcpForRequest: typeof discoverMcpForRequest;
   };
   browser: { isTabbitCliAvailable: typeof isTabbitCliAvailable; runTabbitBrowserAction: typeof runTabbitBrowserAction };
-  filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
+  filesystem: {
+    persistImageBuffer: typeof persistImageBuffer;
+    importLocalImage: typeof importLocalImage;
+    isLocalImageRead: typeof isLocalImageRead;
+    verifyFilesystemMove: typeof verifyFilesystemMove;
+    prepareFilesystemEdit: typeof prepareFilesystemEdit;
+    callFilesystemEdit: typeof callFilesystemEdit;
+    isFilesystemEditCall: typeof isFilesystemEditCall;
+    searchFilesystemText: typeof searchFilesystemText;
+    isFilesystemTextSearchCall: typeof isFilesystemTextSearchCall;
+  };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
     routeSkillRequest: (input: string, options?: { dataDir?: string } & SkillRouteOptions) => SkillRouteDecision;
@@ -324,7 +336,7 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     web: { planSearch, searchWeb },
     mcp: { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction, discoverMcpForRequest },
     browser: { isTabbitCliAvailable, runTabbitBrowserAction },
-    filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove },
+    filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove, prepareFilesystemEdit, callFilesystemEdit, isFilesystemEditCall, searchFilesystemText, isFilesystemTextSearchCall },
     skills: { buildAgentSkillContext, routeSkillRequest, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
     search: { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess },
     data: { resolveLocalDataDir },

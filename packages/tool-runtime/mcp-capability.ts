@@ -1,6 +1,7 @@
 import { TOOL_LOOP_MCP_REPEAT_LIMIT, mcpCallSignature, trackMcpRepeat } from './tool-loop';
 import { executeMcpTool, executeTabbitTool } from './mcp-executor';
 import type { ChatMessage } from '../contracts/chat';
+import type { McpCallResult } from '../contracts/mcp';
 import type { ToolPolicyDecision } from '../contracts/tool';
 import type { RuntimeObserver } from '../contracts/observability';
 import type { GeneratedFile, ToolCall, ToolRuntimeState, ToolCallRun } from './capability-state';
@@ -59,7 +60,7 @@ export type McpCapabilityDependencies = {
 
 /** Concrete MCP/browser/filesystem services are supplied by the composition root. */
 export type McpCapabilityInfrastructure = {
-  call: (server: McpServer, toolName: string, args: Record<string, unknown>, options: { signal?: AbortSignal; retry: boolean; timeouts: { call: number } }) => Promise<{ isError: boolean; text: string }>;
+  call: (server: McpServer, toolName: string, args: Record<string, unknown>, options: { signal?: AbortSignal; retry: boolean; timeouts: { call: number } }) => Promise<McpCallResult>;
   importBrowserArtifacts: (input: { since: number; max: number }) => Promise<{ files: GeneratedFile[]; skipped: number }>;
   shouldImportBrowserArtifacts: (catalogId: string, failed: boolean) => boolean;
   noteRemoteCatalogCallFailure: (server: McpServer, text: string, options?: { onlyAuth?: boolean }) => void;
@@ -188,6 +189,7 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
   if (state.mcpToolCallCount >= input.mcpToolCallLimit || state.mcpTurnBudget <= 0) return { results: [toolMessage(call.id, { ok: false, error: `本轮外部服务调用已达上限（最多 ${input.mcpToolCallLimit} 次、共 ${Math.round(input.mcpTurnBudgetLimit / 1000)} 秒）。` })] };
   state.mcpToolCallCount += 1;
   const mcpStartedAt = Date.now();
+  const isEditPreview = server.catalogId === 'filesystem' && meta.toolName === 'edit_file' && args?.dryRun === true;
   input.reportProgress({ stage: 'mcp', message: `正在调用 MCP：${meta.serverName} / ${meta.toolName}` });
   if (server.catalogId === 'playwright' && input.isBrowserMutationTool(input.browserToolName(meta.toolName || ''))) input.browserMutationBatches.add(input.stepCalls as object);
   try {
@@ -231,7 +233,7 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       : '';
     const result = { isError: !mcpExecution.ok, text: mcpExecution.text };
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
-    state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError });
+    state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: !result.isError, ...(isEditPreview ? { preview: true } : {}) });
     const userControlWaitSeconds = isWindowsMcpServer(server) && mcpExecution.result?.isError
       ? windowsMcpUserControlWaitSeconds(result.text)
       : null;
@@ -255,7 +257,7 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
   } catch (error) {
     if (input.requestController.signal.aborted) throw input.requestController.signal.reason || error;
     state.mcpTurnBudget -= Date.now() - mcpStartedAt;
-    state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false });
+    state.usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false, ...(isEditPreview ? { preview: true } : {}) });
     const reason = error instanceof Error ? error.message : 'MCP 调用失败';
     if (server.catalogId === 'playwright') { state.browserUses.push({ name: meta.toolName, ok: false, args, result: reason }); input.browserMetrics.record(meta.toolName, false, reason, Date.now() - mcpStartedAt); state.browserRecoveryNeeded = true; }
     return { results: [toolMessage(call.id, { ok: false, error: meta.readOnly ? reason : `${reason}；这次调用是否已经在外部生效无法确认，请先核实结果，再决定是否重试。` })] };

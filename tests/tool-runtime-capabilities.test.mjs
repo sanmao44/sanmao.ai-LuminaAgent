@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(process.cwd());
 const capabilities = load('./packages/tool-runtime/native-capabilities');
 const mcpCapabilities = load('./packages/tool-runtime/mcp-capability');
+const AgentMcpDetailDock = load('./components/AgentMcpDetailDock').default;
 const artifacts = load('./lib/artifacts/index');
 const artifactLimits = load('./lib/artifacts/limits');
 const imageStorage = load('./lib/image-storage');
@@ -280,6 +283,45 @@ test('reference image generation keeps its operation on an accepted async task',
   assert.equal(finished[1].patch.taskId, 'agent-run-1');
   assert.equal(finished[1].patch.mode, 'generate');
   assert.equal(finished[1].patch.operation, 'reference-generate');
+});
+
+test('Filesystem edit_file dry-runs are reported as previews in the MCP call summary', async () => {
+  const { state, input } = createWindowsMcpTestContext({ mcpCall: async () => ({ isError: false, text: 'diff preview' }) });
+  const server = { id: 'filesystem-test', name: '本地文件', url: 'stdio://filesystem', catalogId: 'filesystem', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'edit_file', readOnly: false, blocked: false };
+  const call = { id: 'filesystem-preview' };
+  const args = { path: 'C:\\Temp\\fixture\\note.txt', edits: [{ oldText: 'before', newText: 'after' }], dryRun: true };
+  Object.assign(input, {
+    call,
+    args,
+    policy: { tool: { mcp: meta, risk: 'external_side_effect' } },
+    stepCalls: [call],
+    mcpServerById: new Map([[server.id, server]]),
+    mcpCall: async (_targetServer, _toolName, receivedArgs) => {
+      assert.equal(receivedArgs.dryRun, true);
+      return { isError: false, text: 'diff preview' };
+    },
+  });
+
+  const result = await mcpCapabilities.executeMcpCapability(input);
+  assert.equal(JSON.parse(result.results[0].content).ok, true);
+  assert.deepEqual(state.usedMcpTools, [{ server: '本地文件', name: 'edit_file', readOnly: false, ok: true, preview: true }]);
+});
+
+test('MCP call summary distinguishes previews from writes', () => {
+  const markup = renderToStaticMarkup(createElement(AgentMcpDetailDock, {
+    tools: [
+      { server: '本地文件', name: 'edit_file', readOnly: false, ok: true, preview: true },
+      { server: '本地文件', name: 'write_file', readOnly: false, ok: true },
+    ],
+    Icon: () => null,
+    onClose: () => {},
+  }));
+  assert.match(markup, /预览/);
+  assert.match(markup, /预览完成/);
+  assert.match(markup, /写入/);
+  assert.match(markup, /已完成/);
+  assert.match(markup, /预览调用只返回差异，不会落盘/);
 });
 
 test('Windows-MCP stops immediately after user input takes control instead of polling for 30 seconds', async () => {

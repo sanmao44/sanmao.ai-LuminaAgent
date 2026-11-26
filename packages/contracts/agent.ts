@@ -80,3 +80,21 @@ export interface ToolRuntime {
   discover(): readonly AgentToolDefinition[];
   execute(call: ToolCall, signal?: AbortSignal): Promise<ToolResult>;
 }
+
+/** The user-facing portion of a pending tool call. */
+export type AgentApprovalCall = {
+  id: string;
+  server: string;
+  tool: string;
+  risk: string;
+  reason: string;
+  argsPreview?: string;
+  filesystemDiff?: string;
+};
+
+/** One user action to restore a reviewed local file edit. */
+export type AgentFilesystemUndo = {
+  id: string;
+  expiresAt: number;
+  path: string;
+};

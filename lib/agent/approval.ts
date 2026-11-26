@@ -13,6 +13,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import type { ToolDefinition, ToolGatingContext, ToolRisk } from '@/lib/tools/registry';
+import type { AgentApprovalCall, AgentFilesystemUndo } from '@/packages/contracts/agent';
+import type { FilesystemEditApproval, FilesystemEditUndo } from '@/packages/contracts/mcp';
 
 /** 审批有效期：过期就作废，免得几天后一个旧请求突然被执行。 */
 export const APPROVAL_TTL_MS = 10 * 60_000;
@@ -111,6 +113,7 @@ export type PendingToolCall = {
   risk: ToolRisk;
   reason: string;
   args: unknown;
+  filesystemEdit?: FilesystemEditApproval;
 };
 
 /**
@@ -295,7 +298,10 @@ export function deleteApproval(id: unknown, options: { dataDir?: string } = {}) 
 export function claimApproval(id: unknown, options: { dataDir?: string } = {}): ToolApprovalRecord | null {
   const target = String(id || '').trim();
   if (!/^apv_[a-f0-9]{32}$/.test(target)) return null;
-  const file = approvalFile(target, options);
+  return claimExpiringRecord<ToolApprovalRecord>(target, approvalFile(target, options));
+}
+
+function claimExpiringRecord<T extends { id: string; expiresAt: number }>(target: string, file: string): T | null {
   const claimed = `${file}.claimed`;
   try {
     if (!existsSync(file)) return null;
@@ -304,7 +310,7 @@ export function claimApproval(id: unknown, options: { dataDir?: string } = {}): 
     return null;
   }
   try {
-    const parsed = JSON.parse(readFileSync(claimed, 'utf8')) as ToolApprovalRecord;
+    const parsed = JSON.parse(readFileSync(claimed, 'utf8')) as T;
     if (!parsed || parsed.id !== target || !Number.isFinite(parsed.expiresAt) || parsed.expiresAt <= Date.now()) {
       rmSync(claimed, { force: true });
       return null;
@@ -316,7 +322,9 @@ export function claimApproval(id: unknown, options: { dataDir?: string } = {}): 
     rmSync(claimed, { force: true });
     return null;
   }
-}/** 顺手清理过期记录：审批记录里带着对话内容，不该长期留在磁盘上。 */
+}
+
+/** 顺手清理过期记录：审批记录里带着对话内容，不该长期留在磁盘上。 */
 export function pruneApprovals(options: { dataDir?: string } = {}) {
   const dir = resolveApprovalDir(options);
   if (!existsSync(dir)) return 0;
@@ -337,6 +345,58 @@ export function pruneApprovals(options: { dataDir?: string } = {}) {
     }
   } catch {}
   return removed;
+}
+
+const FILESYSTEM_UNDO_ID = /^undo_[a-f0-9]{32}$/;
+const MAX_PENDING_FILESYSTEM_UNDOS = 128;
+type FilesystemUndoRecord = AgentFilesystemUndo & { change: FilesystemEditUndo; serverId: string; toolId: string };
+
+function filesystemUndoDir(options: { dataDir?: string }) {
+  return path.join(resolveApprovalDir(options), 'file-undo');
+}
+
+function filesystemUndoFile(id: string, options: { dataDir?: string }) {
+  return path.join(filesystemUndoDir(options), `${id}.json`);
+}
+
+/** Keep short-lived inverse edits next to their approval data, with the same one-claim semantics. */
+export function saveFilesystemEditUndo(
+  change: FilesystemEditUndo,
+  tool: { serverId: string; toolId: string },
+  options: { dataDir?: string } = {},
+): AgentFilesystemUndo {
+  const dir = filesystemUndoDir(options);
+  mkdirSync(dir, { recursive: true });
+  const now = Date.now();
+  let active = 0;
+  for (const name of readdirSync(dir)) {
+    if (!/^undo_[a-f0-9]{32}\.json(?:\.claimed)?$/.test(name)) continue;
+    const file = path.join(dir, name);
+    try {
+      if (statSync(file).mtimeMs + APPROVAL_TTL_MS <= now) rmSync(file, { force: true });
+      else active += 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (active >= MAX_PENDING_FILESYSTEM_UNDOS) throw new Error('待撤销的文件编辑太多，本次没有写入。请先处理现有的撤销记录。');
+  const receipt = { id: `undo_${randomUUID().replace(/-/g, '')}`, path: change.target, expiresAt: now + APPROVAL_TTL_MS };
+  const record: FilesystemUndoRecord = { ...receipt, serverId: tool.serverId, toolId: tool.toolId, change };
+  const serialized = JSON.stringify(record);
+  if (Buffer.byteLength(serialized) > APPROVAL_MAX_STORED_CHARS) throw new Error('撤销记录过长，本次没有写入。请缩小编辑范围。');
+  writeFileSync(filesystemUndoFile(receipt.id, options), serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  return receipt;
+}
+
+export function claimFilesystemEditUndo(id: unknown, options: { dataDir?: string } = {}) {
+  const target = String(id || '');
+  if (!FILESYSTEM_UNDO_ID.test(target)) return null;
+  return claimExpiringRecord<FilesystemUndoRecord>(target, filesystemUndoFile(target, options));
+}
+
+export function discardFilesystemEditUndo(id: string, options: { dataDir?: string } = {}) {
+  if (!FILESYSTEM_UNDO_ID.test(id)) return;
+  try { rmSync(filesystemUndoFile(id, options), { force: true }); } catch {} // An unpublished record expires normally.
 }
 
 /**
@@ -363,6 +423,8 @@ export function assessToolApproval(input: {
    * 只读工具平时不需要确认，但读凭据类配置会把秘密带进对话上下文，所以要停下来问一次。
    */
   sensitiveHint?: string;
+  /** Internal signal: the local filesystem adapter verified this exact edit_file dry-run. */
+  filesystemEditPreview?: boolean;
   /** 审批档位：没传按默认档（标准信任）走，等价于旧行为的只有 'always'。 */
   policy?: McpApprovalPolicy | string | null;
   /**
@@ -389,6 +451,11 @@ export function assessToolApproval(input: {
   if (remembered === 'block') {
     return { blocked: true, required: false, risk, reason: '你已经把这一步设成「直接拒绝」，它不会再被调用。' };
   }
+  // A dry-run only returns a local diff; it does not apply the file change.
+  // The application sets this flag only after the filesystem path/write-root guard succeeds.
+  if (input.filesystemEditPreview === true && toolNameOf(definition.name) === 'edit_file') {
+    return { required: false, risk, reason: '' };
+  }
   const assessment = assessMcpToolCall(definition, risk, input);
   // 「以后直接允许」只跳过按风险要的确认：读敏感文件、在页面里执行代码、把本机文件传出去
   // 这几种仍然要问，因为要不要确认取决于「这一次要做什么」，和「这个工具平时能不能用」是两件事。
@@ -404,6 +471,18 @@ function dropCarriesFiles(args: unknown) {
   const files = input.paths ?? input.path;
   const list = Array.isArray(files) ? files : files === undefined || files === null ? [] : [files];
   return list.some((item) => typeof item === 'string' && item.trim());
+}
+
+/** A request to review before writing is stronger than the default approval tier. */
+export function filesystemEditRequestMode(instruction: string): 'preview' | 'review' | null {
+  const text = instruction.replace(/\s+/g, ' ');
+  if (/\bdryRun\s*[:=]\s*true\b|只(?:做|要|需|想)?(?:给我)?(?:看|显示|展示)?\s*(?:预览|差异|diff)|\b(?:only|just) (?:show )?(?:(?:a|the) )?(?:preview|diff)\b|\b(?:preview|diff) only\b/i.test(text)) return 'preview';
+  const reviewThenWrite = /(?:等(?:待)?(?:我|用户)?(?:先)?(?:核对|确认|批准|同意)|(?:我|用户)(?:确认|批准|同意)|(?:核对|确认|批准|同意)(?=后|之后))[\s，,]*(?:后|之后)?[\s，,]*(?:(?:再|才|方可)?\s*(?:落盘|写入|写文件|保存|应用)|(?:再|才|方可)\s*(?:修改|改))/.test(text)
+    || /\b(?:wait for (?:my )?(?:approval|confirmation)|after (?:i|we) (?:confirm|approve)|once (?:i|we) (?:confirm|approve))[, ]+(?:before |then )?(?:writing|saving|applying|write|save|apply)\b/i.test(text);
+  const noWriteBeforeReview = /(?:核对|确认|批准|同意)(?:之前|前)[\s，,]*(?:请\s*)?(?:先\s*)?(?:不要|别|不得)\s*(?:落盘|写入|写文件|保存|应用|(?:修改|改动)(?=\s*(?:文件(?!名)|[，,。！？!?；;]|$)))/.test(text);
+  if (reviewThenWrite || noWriteBeforeReview) return 'review';
+  const noWriteThisTurn = /(?:不要|别|不得)\s*(?:落盘|写入(?:磁盘|文件)?|写文件|(?:修改|改动)文件)(?=\s*(?:[，,。！？!?；;]|$))/.test(text);
+  return noWriteThisTurn ? 'preview' : null;
 }
 
 /** 纯内容判断：只按风险等级、工具名和页面文本决定要不要确认。 */
@@ -458,13 +537,16 @@ export function approvalMessageFor(pending: readonly PendingToolCall[]) {
   // 只读调用进审批只有一种原因：它要读本机上的敏感文件。措辞不能写成「改动外部数据」，
   // 否则用户会以为点下去是在做一件有副作用的事。
   if (pending.length === 1) {
-    const lead = pending[0].readOnly ? '这一步要读取本机文件，确认后我再继续' : '这一步会改动外部数据，确认后我再继续';
-    return `${lead}：${pending[0].serverName} · ${pending[0].toolName}（${pending[0].reason}）。`;
+    const [call] = pending;
+    if (call.filesystemEdit) return '请核对文件差异，确认后写入。';
+    const lead = call.readOnly ? '这一步要读取本机文件，确认后我再继续' : '这一步会改动外部数据，确认后我再继续';
+    return `${lead}：${call.serverName} · ${call.toolName}（${call.reason}）。`;
   }
+  if (pending.every((call) => call.filesystemEdit)) return `请核对这 ${pending.length} 项文件编辑，确认后写入。`;
   if (pending.every((call) => call.readOnly)) return `有 ${pending.length} 个调用要读取本机文件，确认后我再继续。`;
   return `有 ${pending.length} 个调用会改动外部数据，确认后我再继续。`;
 }/** 面板上给用户看的一句话摘要：谁、要做什么、参数长什么样。 */
-export function describePendingCall(call: PendingToolCall) {
+export function describePendingCall(call: PendingToolCall): AgentApprovalCall {
   let argsPreview = '';
   try {
     argsPreview = JSON.stringify(call.args ?? {}).slice(0, 200);
@@ -475,6 +557,7 @@ export function describePendingCall(call: PendingToolCall) {
     tool: call.toolName,
     risk: call.risk,
     reason: call.reason,
-    argsPreview: argsPreview === '{}' ? '' : argsPreview,
+    argsPreview: call.filesystemEdit || argsPreview === '{}' ? '' : argsPreview,
+    ...(call.filesystemEdit ? { filesystemDiff: call.filesystemEdit.diff } : {}),
   };
 }

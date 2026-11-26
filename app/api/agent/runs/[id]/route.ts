@@ -11,8 +11,7 @@ function decode(value: string) {
 /**
  * 待到确认操作的续跑（任务书 §15）。
  *
- * 请求体只认 action。执行哪个 tool call 完全由服务端存下来的那份记录决定，
- * 前端既改不了参数，也伪造不出一个新调用。
+ * 请求体只认 action。审批调用参数和单次文件撤销内容均由服务端记录决定。
  */
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   if (!isTrustedAppRequest(request)) return Response.json({ error: '非法请求来源。' }, { status: 403 });

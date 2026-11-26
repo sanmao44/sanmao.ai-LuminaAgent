@@ -1118,7 +1118,7 @@ test("a waiting approval on the canvas gets the same confirm card as the main ch
   assert.match(component, /const approval = readStoredApproval\(response\.approval\);/);
   assert.match(component, /if \(approval && !openRef\.current\) notify\(/);
   assert.match(component, /\{message\.approval \? \(\s*<AgentApprovalCard\s+approval=\{message\.approval\}\s+onResolved=\{\(outcome\) => resolveMessageApproval\(message\.id, outcome\)\}\s+\/>/);
-  assert.match(component, /<div className="message-approval-result">\{message\.approvalResult\}<\/div>/);
+  assert.match(component, /<AgentApprovalResult\s+message=\{message\.approvalResult\}\s+filesystemUndos=\{message\.filesystemUndos\}\s+onResolved=\{\(outcome\) => resolveMessageApproval\(message\.id, outcome\)\}\s+\/>/);
   // 处理过的确认卡不再留按钮，结果跟着消息走。
   assert.match(component, /delete next\.approval;/);
   assert.match(component, /next\.mcpTools = \[\.\.\.\(item\.mcpTools \|\| \[\]\), \.\.\.outcome\.mcpTools\];/);
@@ -1139,7 +1139,7 @@ test("canvas replies name the external tools they actually used", () => {
 
 test("canvas artifacts keep download and preview entry points", () => {
   // 以前画布助手把 response.files 丢了：生成的 Word / Excel / PPT 在面板里既看不见也拿不到。
-  assert.match(component, /import type \{ AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse \} from "@\/lib\/agent-client";/);
+  assert.match(component, /import type \{ AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse \} from "@\/lib\/agent-client";/);
   assert.match(component, /files\?: AgentGeneratedFile\[\];/);
   assert.match(component, /function readStoredFiles\(value: unknown\): AgentGeneratedFile\[\] \{/);
   assert.match(component, /const files = readStoredFiles\(response\.files\);/);

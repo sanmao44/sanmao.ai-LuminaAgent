@@ -35,6 +35,7 @@ export type BrowserAutomationIntent = {
 const BROWSER_NAVIGATION_PATTERN = /(?:打开|访问|进入|前往|去到|跳转到|登陆|登录)\s*(?:一下\s*)?([^，,。！？!?；;\n]+)/i;
 const ENGLISH_BROWSER_NAVIGATION_PATTERN = /^\s*(?:please\s+)?(?:open|visit|go\s+to|navigate\s+to)\s+(.+)$/i;
 const ENGLISH_BROWSER_CHAIN_ACTION_PATTERN = /\s*(?:,|and)\s*(?:then\s+)?(?:search|find|look\s+up|click|like|dislike|comment|reply|fill|submit|play|scroll|download|save|export|select|choose|sort|inspect|read)\b[\s\S]*$/i;
+const CHINESE_BROWSER_CHAIN_ACTION_PATTERN = /\s*(?:然后|接着|之后|再|并且|并)\s*(?:搜索|查找|检索|点击|点开|选择|滚动|输入|填写|提交|点赞|评论|回复|播放|下载|保存|导出|查看)[\s\S]*$/i;
 const BROWSER_CONTEXT_PATTERN = /(?:在|用|通过|从)[^，,。！？!?；;]{0,24}(?:浏览器|网页|网站|页面)(?:里|中|上)?|(?:浏览器|网页|网站|页面)(?:里|中|上)|当前(?:网页|页面)|这个(?:网页|页面|网站)/i;
 const DESKTOP_CONTEXT_PATTERN = /(?:windows|电脑|桌面|窗口|本地(?:软件|应用|程序)|软件|应用程序|记事本|计算器)/i;
 const WINDOWS_SYSTEM_TARGET_PATTERN = /(?:防火墙|windows\s*(?:defender|安全中心|更新)|安全中心|系统设置|控制面板|任务管理器|设备管理器|网络设置|网络适配器|个性化|辅助功能|终端|命令提示符|电源选项|蓝牙|音量|服务管理器|事件查看器|注册表|组策略|本地安全策略|系统信息|资源监视器|性能监视器|firewall|settings?|control panel|task manager|device manager|defender|registry|group policy|services?)/i;
@@ -70,10 +71,15 @@ export function classifyDesktopAutomation(input: string): DesktopAutomationInten
 }
 
 function browserDestinationFrom(text: string) {
+  // A local repository/file task may contain incidental verbs such as
+  // "进入实现" or "搜索". Keep those requests on the filesystem route
+  // unless the user clearly names a browser or external URL.
+  const explicitBrowserTarget = BROWSER_CONTEXT_PATTERN.test(text) || /(?:https?:\/\/|www\.)/i.test(text);
+  if (!explicitBrowserTarget && likelyFilesystemRequest(text)) return '';
   const englishMatch = text.match(ENGLISH_BROWSER_NAVIGATION_PATTERN);
   const match = englishMatch ? null : text.match(BROWSER_NAVIGATION_PATTERN);
-  const rawCandidate = englishMatch?.[1]?.replace(ENGLISH_BROWSER_CHAIN_ACTION_PATTERN, '') || match?.[1] || '';
-  const candidate = String(rawCandidate).replace(/[.!]+$/g, '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
+  const rawCandidate = englishMatch?.[1] || match?.[1] || '';
+  const candidate = String(rawCandidate).replace(ENGLISH_BROWSER_CHAIN_ACTION_PATTERN, '').replace(CHINESE_BROWSER_CHAIN_ACTION_PATTERN, '').replace(/[.!]+$/g, '').replace(/^['"“”‘’\s]+|['"“”‘’\s]+$/g, '').trim();
   if (!candidate || LOCAL_DESTINATION_PATTERN.test(candidate) || WINDOWS_SYSTEM_TARGET_PATTERN.test(candidate)) return '';
   return candidate;
 }
@@ -122,14 +128,17 @@ export function likelyBrowserAutomationRequest(input: string) {
   return classifyBrowserAutomation(input).shouldAutomate;
 }
 
+const filesystemEditActionPattern = /(?:修改|编辑|改成|改为|改掉|改了|替换为|替换成|修正|修复)/i;
+const filesystemDiffPreviewPattern = /(?:预览|展示|显示|生成|返回|提供|给(?:我)?|贴出|看)[^，,。！？!?;；]{0,40}(?:\bdiff\b|差异)/i;
+
 /** 识别本地文件/项目操作请求，供 MCP 工具预算排序使用。 */
 export function likelyFilesystemRequest(input: string, previousAssistant = '') {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录)?|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system|[a-z]:[\\/]|[^\s]+\.(?:png|jpg|webp|pdf|txt|docx|xlsx|pptx))/i.test(text);
-  const action = /(?:读取|查看|列出|分析|搜索|找到|找出|发我|给我|打开|修改|编辑|创建|重命名|改名|移动|重构|运行|启动|检查|目录结构|文件内容|代码|工作|操作|处理)/i.test(text);
+  const target = /(?:本地文件|文件夹|目录|项目(?:文件|目录|里|首页)|代码库|本地代码|文件系统|工作区|workspace|filesystem|file system|[a-z]:[\\/]|\S\.(?:png|jpg|jpeg|webp|gif|svg|pdf|txt|md|json|csv|xml|yaml|yml|html|css|scss|js|jsx|ts|tsx|mjs|cjs|ps1|sh|docx|xlsx|pptx))/i.test(text);
+  const action = /(?:读取|查看|列出|分析|搜索|找到|找出|定位|追踪|发我|给我|给出|打开|创建|重命名|改名|移动|重构|运行|启动|检查|说明|目录结构|文件内容|代码|调用链|行号|工作|操作|处理)/i.test(text);
   const renameReply = /(?:改名|重命名)/.test(previousAssistant) && /^(?:[^\\/\r\n]+\.[a-z0-9]{1,8}|可以|好的|就这个)[。!！]*$/i.test(text);
-  return (target && action) || renameReply || /^(?:改名|重命名)(?:可以吗|吧|一下|为|成|[?？])/.test(text);
+  return (target && (action || filesystemEditActionPattern.test(text))) || renameReply || /^(?:改名|重命名)(?:可以吗|吧|一下|为|成|[?？])/.test(text);
 }
 
 const directionItemPattern = /^\s*(?:(?:[-*+•])\s*|\d+[.)、]\s*)(.+?)\s*$/;
@@ -421,9 +430,20 @@ export function likelyImageGenerationRequest(input: string) {
 export function likelyFileGenerationRequest(input: string) {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   if (!text) return false;
-  return /(?:导出|下载|保存|生成|创建|制作|整理).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码文件|脚本文件|报告文件|文档文件)/i.test(text)
-    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(text)
-    || /(?:html?|css|svg|xml|yaml|json|csv|tsv|markdown|md|txt)\s*(?:交付|输出|下载|导出|保存|提供|返回)/i.test(text);
+  const fileDeliveryProhibitionPattern = /(?:(?:不(?:要|用)|别|无需|无须|禁止)(?![^，。！？!?;；]{0,8}(?:忘|漏)).{0,20}(?:创建|生成|导出|下载|保存|写入)|严禁(?:写入|创建|生成|导出|下载|保存)).{0,20}(?:任何|任何一个|任何一份)?(?:文件|附件)/gi;
+  const deliveryText = text.replace(fileDeliveryProhibitionPattern, ' ');
+  // Keep explicit diff file requests while treating an inline diff as a preview.
+  const diffFileDeliveryPattern = /(?:导出|下载|附件)|(?:\bdiff\b|差异报告)\s*文件/i;
+  const clauses = filesystemEditActionPattern.test(text) && filesystemDiffPreviewPattern.test(text) && likelyFilesystemRequest(text)
+    ? deliveryText.split(/[，,。！？!?;；]+/).filter((clause) => !filesystemDiffPreviewPattern.test(clause) || diffFileDeliveryPattern.test(clause))
+    : [deliveryText];
+  return clauses.some((clause) => /(?:导出|下载|保存|生成|创建|制作|整理).{0,16}(?:文件|附件|csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|代码文件|脚本文件|报告文件|文档文件)/i.test(clause)
+    || /(?:给我|提供|返回).{0,12}(?:一个|一份|可下载的)?.{0,12}(?:csv|tsv|json|markdown|md|txt|html|css|svg|xml|yaml|文件|附件)/i.test(clause)
+    || /(?:html?|css|svg|xml|yaml|json|csv|tsv|markdown|md|txt)\s*(?:交付|输出|下载|导出|保存|提供|返回)/i.test(clause));
+}
+
+export function prohibitsFileDelivery(input: string) {
+  return /(?:(?:不(?:要|用)|别|无需|无须|禁止)(?![^，。！？!?;；]{0,8}(?:忘|漏)).{0,20}(?:创建|生成|导出|下载|保存|写入)|严禁(?:写入|创建|生成|导出|下载|保存)).{0,20}(?:任何|任何一个|任何一份)?(?:文件|附件)/i.test(String(input || '').replace(/\s+/g, ' ').trim());
 }
 
 type VideoDownloadContextMessage = { role?: string; content?: unknown };

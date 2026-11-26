@@ -45,7 +45,7 @@ test('a stopped reply remains part of the next turn and old requests cannot comm
   assert.ok(page.includes('...currentSessionMessages.filter((message)=>!message.pending)'));
   assert.ok(page.includes('function isCurrentAgentRequest(sessionId, requestId)'));
   assert.ok(page.includes('if (!isCurrentRequest()) return;'));
-  assert.ok(page.includes('const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve()'));
+  assert.ok(page.includes('return queueSessionMutation(chatSaveQueuesRef.current, id, save)'));
   assert.ok(page.includes('agentRequest.partialText = nextContent'));
 });
 

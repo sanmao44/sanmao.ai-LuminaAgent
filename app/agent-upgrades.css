@@ -17,6 +17,7 @@
 .agent-approval-calls{display:grid;gap:5px;margin:0;padding:0;list-style:none}.agent-approval-calls li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
 .agent-approval-server{padding:2px 6px;border-radius:999px;background:color-mix(in srgb,var(--accent-2) 14%,var(--panel-3));color:var(--accent-text);font-size:8px;font-weight:850}
 .agent-approval-calls code{padding:1px 5px;border-radius:5px;background:color-mix(in srgb,var(--accent) 10%,var(--panel-3));color:var(--accent-text);font:0.9em ui-monospace,SFMono-Regular,Consolas,monospace}
+.agent-approval-diff{box-sizing:border-box;flex-basis:100%;min-width:0;max-width:100%;max-height:220px;margin:0;padding:8px;overflow:auto;border:1px solid var(--line);border-radius:6px;color:var(--text);font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
 .agent-approval-calls em{font-style:normal;font-size:8px;font-weight:850;color:var(--warning)}.agent-approval-calls small{flex-basis:100%;font-size:8px;line-height:1.45;color:var(--muted);word-break:break-all}
 .agent-approval-actions{display:flex;gap:7px}.agent-approval-actions button{height:30px;padding:0 12px;border-radius:9px;font-size:9px;font-weight:850;border:1px solid var(--line);background:var(--panel);color:var(--text-2)}
 .agent-approval-actions button:disabled{opacity:.6}.agent-approval-actions .approve{border-color:color-mix(in srgb,var(--warning) 55%,var(--line));background:color-mix(in srgb,var(--warning) 14%,var(--panel));color:var(--warning)}
@@ -26,7 +27,7 @@
 .agent-approval-actions .approve:hover:not(:disabled),.agent-approval-actions .approve:focus-visible{border-color:var(--warning);background:color-mix(in srgb,var(--warning) 22%,var(--panel));outline:none}
 .agent-approval-actions .reject:hover:not(:disabled),.agent-approval-actions .reject:focus-visible{border-color:var(--danger);background:var(--danger-soft);color:var(--danger);outline:none}
 .agent-approval-note{margin:0;font-size:8px;line-height:1.45;color:var(--muted)}.agent-approval-error{margin:0;font-size:8px;line-height:1.45;color:var(--danger)}
-.message-approval-result{display:flex;align-items:center;gap:6px;margin:10px 0 2px;padding:7px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text-2);font-size:9px;line-height:1.5}
+.message-approval-result{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:10px 0 2px;padding:7px 9px;border:1px solid var(--line);border-radius:10px;background:var(--panel-2);color:var(--text-2);font-size:9px;line-height:1.5}
 @media(max-width:560px){.agent-approval-actions{display:grid;grid-template-columns:1fr 1fr}}
 
 /* MCP 徽标只负责切换详情，详情固定停靠在输入框下方，避免遮挡输入区。 */

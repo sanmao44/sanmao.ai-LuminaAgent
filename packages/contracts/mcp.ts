@@ -26,3 +26,23 @@ export type McpToolMeta = {
   blocked: boolean;
   blockedReason?: string;
 };
+
+export type McpCallResult = {
+  isError: boolean;
+  text: string;
+  errorCode?: 'FILESYSTEM_INVALID_TEXT_RANGE';
+  fileTextEvidence?: false;
+};
+
+/** Internal record for one reviewed edit to an authorized local file. */
+export type FilesystemEditApproval = {
+  target: string;
+  baseSha256: string;
+  resultSha256: string;
+  diff: string;
+};
+
+/** Server-only reverse changes for one committed edit. Offsets use the original JS string units. */
+export type FilesystemEditUndo = Omit<FilesystemEditApproval, 'diff'> & {
+  changes: Array<{ offset: number; removed: string; insertedLength: number }>;
+};

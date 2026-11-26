@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { resumeAgentRun, type AgentApproval, type AgentMcpToolUse } from "@/lib/agent-client";
+import { resumeAgentRun, type AgentApproval, type AgentFilesystemUndo, type AgentMcpToolUse } from "@/lib/agent-client";
 
 export type AgentApprovalOutcome = {
   message: string;
   rejected?: boolean;
   mcpTools?: AgentMcpToolUse[];
+  filesystemUndos?: AgentFilesystemUndo[];
 };
 
 const RISK_LABELS: Record<string, string> = {
@@ -56,6 +57,7 @@ export default function AgentApprovalCard({ approval, onResolved }: Props) {
         message: String(result.message || (result.rejected ? "已取消这一步操作，没有执行。" : "已执行完成。")),
         rejected: result.rejected,
         mcpTools: result.mcpTools,
+        filesystemUndos: result.filesystemUndos,
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "这一步没有执行成功。");
@@ -81,6 +83,7 @@ export default function AgentApprovalCard({ approval, onResolved }: Props) {
               <code>{call.tool}</code>
               <em>{RISK_LABELS[call.risk] || call.risk}</em>
               <small>{call.reason}</small>
+              {call.filesystemDiff ? <pre className="agent-approval-diff" aria-label="文件改动预览">{call.filesystemDiff}</pre> : null}
               {call.argsPreview ? <small className="agent-approval-args">{call.argsPreview}</small> : null}
             </li>
           ))}

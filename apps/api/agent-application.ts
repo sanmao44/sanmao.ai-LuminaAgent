@@ -24,18 +24,18 @@ import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserMutationObservationGap, browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
 import { hasInlineToolCallMarkup, parseInlineToolCalls } from '@/lib/agent/inline-tool-calls';
 import { agentToolProgress, beginAgentRun, finishAgentRun, reportAgentProgress, type AgentProgressStage } from '@/lib/agent/progress';
-import { APPROVAL_MAX_STORED_CHARS, appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
+import { APPROVAL_MAX_STORED_CHARS, appendPageContext, approvalMessageFor, assessToolApproval, createApproval, describePendingCall, filesystemEditRequestMode, normalizeMcpApprovalPolicy, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, isImageEditRequest, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
 import type { CreativeRoute } from '@/packages/contracts/creative';
-import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
+import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, isCommandExecutionToolName, isExplicitCommandExecutionRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { contextualImagePrompt, isBareImageExecution, isImageAspectRatioCorrection } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
 import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-persona';
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
-import { toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
+import { filesystemEditPreviewRecoveryText, toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
 import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure, isTextFileContextSizeFailure, isCompleteTextFileContent } from '@/lib/agent/text-file-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
@@ -49,7 +49,7 @@ import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates
 import { prepareAgentRequestContext } from '@/packages/agent-core/request-context';
 import { creativeProjectBriefInstruction } from '@/packages/agent-core/project-brief';
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
-import { runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
+import { mcpFollowupIncompleteMessage, mcpFollowupPartialMessage, mcpFollowupStopMessage, mcpFollowupSummaryPrompt, runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
 import { applicationJson as createApplicationJson } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
@@ -163,7 +163,7 @@ function normalizeGeneratedFile(raw: any, index: number): GeneratedFile | null {
  * 打开网页 → 看页面 → 点击 → 输入 → 再看结果，少一轮就断在半路，所以给得比技能宽一些；
  * 次数与总时长仍由 MCP_TOOL_MAX_CALLS_PER_TURN 和 MCP_TURN_TIME_BUDGET_MS 卡住。
  */
-const MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 6;
+const MCP_TOOL_FOLLOWUP_MAX_ROUNDS = 8;
 /**
  * 浏览器自动化是用户明确交代的一串动作：打开、搜索、验证、点赞、回复往往需要
  * 比普通 MCP 查询更多的快照和恢复轮次。单独放宽浏览器上限，避免把「还没回复」
@@ -514,7 +514,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   const { planSearch, searchWeb } = webInfrastructure;
   const { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction } = mcpInfrastructure;
   const { isTabbitCliAvailable, runTabbitBrowserAction } = browserInfrastructure;
-  const { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove } = filesystemInfrastructure;
+  const { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove, prepareFilesystemEdit, callFilesystemEdit, isFilesystemEditCall } = filesystemInfrastructure;
+  const isFilesystemTextSearchCall = filesystemInfrastructure.isFilesystemTextSearchCall || (() => false);
+  const searchFilesystemText = filesystemInfrastructure.searchFilesystemText || (async () => ({ isError: true, text: '本轮没有可用的本地正文搜索器。' }));
   const { buildAgentSkillContext, createCapabilityPorts, stripToolCallMarkup } = skillInfrastructure;
   const { nativeSearchIsEnabled, runNativeWebSearch } = searchInfrastructure;
   const { orderAgentModelCandidates, noteAgentModelSuccess, noteAgentModelFailure } = infrastructure.health;
@@ -530,6 +532,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   let releaseRuntimeRequest = async () => {};
   let llmResponseChars = 0;
   let llmFailure = '';
+  let forcedLlmSettlementError = '';
   let preserveLlmLogPending = false;
   let settleLlmLog: ((result: AgentStreamSettlement) => Promise<void>) | null = null;
   let recordProviderUsage: ((usage: unknown) => void) | null = null;
@@ -896,13 +899,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       if (!llmLogId && llmLogPromise) llmLogId = await llmLogPromise;
       if (!llmLogId) return;
       llmLogSettled = true;
-      if (Number.isFinite(result.promptTokens) && Number(result.promptTokens) >= 0) llmPromptTokens += Number(result.promptTokens);
-      if (Number.isFinite(result.completionTokens) && Number(result.completionTokens) >= 0) llmCompletionTokens += Number(result.completionTokens);
-      if (Number.isFinite(result.totalTokens) && Number(result.totalTokens) >= 0) llmTotalTokens += Number(result.totalTokens);
-      else if (Number.isFinite(result.promptTokens) && Number(result.promptTokens) >= 0 && Number.isFinite(result.completionTokens) && Number(result.completionTokens) >= 0) llmTotalTokens += Number(result.promptTokens) + Number(result.completionTokens);
+      const effectiveResult = forcedLlmSettlementError && result.status === 'success'
+        ? { ...result, status: 'error' as const, error: forcedLlmSettlementError }
+        : result;
+      if (Number.isFinite(effectiveResult.promptTokens) && Number(effectiveResult.promptTokens) >= 0) llmPromptTokens += Number(effectiveResult.promptTokens);
+      if (Number.isFinite(effectiveResult.completionTokens) && Number(effectiveResult.completionTokens) >= 0) llmCompletionTokens += Number(effectiveResult.completionTokens);
+      if (Number.isFinite(effectiveResult.totalTokens) && Number(effectiveResult.totalTokens) >= 0) llmTotalTokens += Number(effectiveResult.totalTokens);
+      else if (Number.isFinite(effectiveResult.promptTokens) && Number(effectiveResult.promptTokens) >= 0 && Number.isFinite(effectiveResult.completionTokens) && Number(effectiveResult.completionTokens) >= 0) llmTotalTokens += Number(effectiveResult.promptTokens) + Number(effectiveResult.completionTokens);
       const browserLog = browserMetrics.snapshot();
       await finishGenerationLog(llmLogId, {
-        status: result.status,
+        status: effectiveResult.status,
         mode: 'llm',
         taskKind: 'llm',
         source: sourceForLog,
@@ -915,7 +921,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ...(llmPromptTokens ? { promptTokens: llmPromptTokens } : {}),
         ...(llmCompletionTokens ? { completionTokens: llmCompletionTokens } : {}),
         ...(llmTotalTokens ? { totalTokens: llmTotalTokens } : {}),
-        responseChars: result.responseChars,
+        responseChars: effectiveResult.responseChars,
         webSearchStatus: llmWebSearchStatus,
         ...(webSearchRequestCount ? { webSearchRequestCount } : {}),
         routeLane: requestRoute.policy.lane,
@@ -926,7 +932,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         ...(webSearchMs ? { searchMs: webSearchMs } : {}),
         ...(browserMetrics.hasActivity() ? browserLog : {}),
         ...(body.task ? { task: String(body.task).slice(0, 100) } : {}),
-        ...(result.error ? { error: result.error } : {}),
+        ...(effectiveResult.error ? { error: effectiveResult.error } : {}),
       }).catch(() => undefined);
     };
     const streamResult = (
@@ -1400,7 +1406,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       || fileGenerationRequest
       || routeArtifactRequest
       || artifactFollowUpRequest
-      || (requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && likelyArtifactGenerationRequest(latestInstruction)));
+      || (requestModeAllowsExecution && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion && requestRoute.tools.useNativeArtifact));
     const effectiveWebMode = webMode;
     const webSearchEnabled = effectiveWebMode !== 'off';
     llmWebSearchStatus = effectiveWebMode === 'off' ? 'disabled' : 'not-needed';
@@ -1410,6 +1416,17 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const tabbitAvailable = browserAutomationRequest && isTabbitCliAvailable();
     const filesystemRequest = !isCanvasNodeExecution && (requestRoute.filesystem || likelyFilesystemRequest(latestInstruction, previousAssistantText));
     const filesystemActionRequest = filesystemRequest && !/(?:可以吗|能不能|怎么|如何|[?？]$)/.test(latestInstruction);
+    const requestedFilesystemRoots = filesystemActionRequest ? listFilesystemRoots() : [];
+    if (requestModeAllowsExecution && filesystemActionRequest && !requestedFilesystemRoots.length) {
+      requestedDeliverable = 'CLARIFY';
+      intentPreviewMode = 'ask';
+      const clarification = '我还不能查看本地源码：请先在工具面板的“本地文件”中添加包含项目的文件夹，然后重试。此请求不会读取或写入文件。';
+      requestedIntentReason = '请求需要读取本地文件，但当前没有已授权的本地文件夹。';
+      llmResponseChars = clarification.length;
+      return wantsStream
+        ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
+        : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: requestedDeliverable });
+    }
     const searchExcludedTask = isReversePromptTask || isOneTakeVideoPromptTask || isCinematicDirectorTask || isSmartVariantPlanningTask || isPromptOptimizationTask || identityQuestion || browserAutomationRequest || filesystemRequest || imageGenerationRequest || videoDownloadRequest;
     const rawWebDecision = requestRoute.web;
     // Keep the legacy call shape documented for canvas integrations; the
@@ -1966,9 +1983,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
 
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
 // 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
-const mcpFilesystemRoots = mcpAllowedThisTurn ? listFilesystemRoots() : [];
+const mcpFilesystemRoots = mcpAllowedThisTurn ? requestedFilesystemRoots : [];
 // 「勾了写入」的目录是另一份：只读授权只换到读权限，写工具按这份清单把关。
 const mcpFilesystemWriteRoots = mcpAllowedThisTurn ? listFilesystemWriteRoots() : [];
+const filesystemEditScope = { roots: mcpFilesystemRoots, writeRoots: mcpFilesystemWriteRoots, get dataDir() { return localDataDir; } };
+const requestedFilesystemEditMode = mcpAllowedThisTurn ? filesystemEditRequestMode(latestInstruction) : null;
+const callMcpForTurn: typeof callMcpTool = (server, toolName, args, options) => isFilesystemEditCall(server, toolName)
+  ? callFilesystemEdit(args, filesystemEditScope, { signal: options?.signal })
+  : isFilesystemTextSearchCall(server, toolName)
+    ? searchFilesystemText(args, { roots: mcpFilesystemRoots, dataDir: localDataDir }, { signal: options?.signal })
+    : callMcpTool(server, toolName, args, options);
 const localDataDir = mcpAllowedThisTurn ? resolveLocalDataDir() : '';
 // 浏览器下载只收这一轮开始之后写下的文件：上一轮的产物不该在这一轮又冒出来一次。
 const agentTurnStartedAt = Date.now();
@@ -2004,7 +2028,7 @@ const auditMcpCall = (
     const toolSelectionText = toolSelectionIsolated ? '' : `${mcpTurnText}\n${priorityServerIds.join(' ')}`;
     const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);
     if (isCanvasNodeExecution) callableTools.splice(0, callableTools.length);
-    // Text/code delivery is a hard file lane. Do not expose Office or archive
+    // Text/code delivery is a hard file lane.  Do not expose Office or archive
     // tools for an HTML/SVG/JSON/etc. request: a visual description inside an
     // HTML request must never let the model route the turn to DOCX/PPTX/ZIP.
     const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
@@ -2013,6 +2037,16 @@ const auditMcpCall = (
       : textFileFallbackRequested
         ? callableTools.filter((tool) => tool.function.name === 'file_generate')
         : callableTools;
+    const commandExecutionRequest = requestModeAllowsExecution
+      && !isCanvasNodeExecution
+      && isExplicitCommandExecutionRequest(latestInstruction);
+    const commandExecutionToolAvailable = initialCallableTools.some((tool) => isCommandExecutionToolName(tool?.function?.name));
+    if (commandExecutionRequest && !commandExecutionToolAvailable) {
+      const message = '能力缺失：当前下发工具中没有受控命令执行器，因此没有运行请求中的命令，也没有真实退出码、stdout 或 stderr。';
+      llmResponseChars = message.length;
+      await settleLlmLog?.({ status: 'error', responseChars: message.length, error: message });
+      return applicationJson({ ok: false, error: message, message, model: agentRuntime.model.displayName, deliverable: requestedDeliverable }, { status: 501 });
+    }
     /**
      * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
      * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
@@ -2023,6 +2057,18 @@ const auditMcpCall = (
       .filter((server) => server.catalogId === 'playwright')
       .map((server) => `${server.id}${MCP_TOOL_SEPARATOR}`);
     const tabbitBrowserToolAvailable = callableTools.some((tool: any) => tool?.function?.name === 'tabbit_browser');
+    const callableFilesystemEdit = mcpTools.some((tool) => tool.mcp && !tool.mcp.blocked && isFilesystemEditCall(mcpServerById.get(tool.mcp.serverId), tool.mcp.toolName)
+      && callableTools.some((schema) => schema.function.name === tool.name));
+    // 只读代码追踪常见地需要“搜索正文 → 读命中行 → 追下一文件”多次往返。
+    // 写入、浏览器和其他 MCP 任务继续沿用原来的 8 轮上限；只把已识别为本地文件、且没有可调用写工具的追踪任务放宽到 12 轮。
+    const callableFilesystemRead = filesystemRequest && !callableFilesystemEdit && mcpTools.some((tool) => {
+      if (!tool.mcp || mcpServerById.get(tool.mcp.serverId)?.catalogId !== 'filesystem') return false;
+      return callableTools.some((schema) => schema.function.name === tool.name);
+    });
+    if (agentSystemPromptInUse && callableFilesystemEdit) {
+      system += '\n\n本地文件编辑：用户要先看差异、确认后再写时，用 edit_file 的 dryRun=false 提交审批，应用会生成差异和“允许本次”按钮。只看预览且不准备应用时才用 dryRun=true，这个调用不会生成按钮或写入文件。以审批卡为准，不要要求用户回复“确认”，不要把预览当成写入。';
+      llmMessages[0] = { role: 'system', content: system };
+    }
     if (agentSystemPromptInUse && browserToolPrefixes.some((prefix) => callableTools.some((tool: any) => String(tool?.function?.name || '').startsWith(prefix)))) {
       system += `\n\n${BROWSER_TOOL_GUIDE}`;
       llmMessages[0] = { role: 'system', content: system };
@@ -2046,7 +2092,7 @@ const auditMcpCall = (
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
     if (textFileFallbackRequested) {
-      system += '\\n\\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
+      system += '\n\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
       llmMessages[0] = { role: 'system', content: system };
     }
     let artifactFallbackUsed = false;
@@ -2259,7 +2305,7 @@ const auditMcpCall = (
           } else {
             throw new Error('当前请求的 Office 文件无法生成。');
           }
-       } else {
+        } else {
          // A failed provider request is not evidence that the model cannot use
          // tools. Preserve its status, request ID and cause for the error UI.
          if (!isCinematicDirectorTask && (filesystemRequest || browserAutomationRequest || artifactGenerationRequest || mcpExecutionRequest)) throw error;
@@ -2459,9 +2505,16 @@ const auditMcpCall = (
         if (artifactGenerationRequest) {
           throw new Error('本轮没有生成可下载文件。请重试，或切换到支持文件工具的对话模型。');
         }
-        plainMessage = filesystemActionRequest || browserAutomationRequest || mcpExecutionRequest || artifactGenerationRequest || hasInlineToolCallMarkup(plainMessage)
-          ? '本次操作尚未执行，模型没有成功调用所需工具。请检查对应服务是否已启用、目录是否已授权，或切换支持工具调用的模型。'
-          : cleanedMessage || '当前对话模型没有返回内容。';
+        const operationWasNotExecuted = filesystemActionRequest || browserAutomationRequest || mcpExecutionRequest || artifactGenerationRequest || hasInlineToolCallMarkup(plainMessage);
+        if (operationWasNotExecuted) {
+          const failure = commandExecutionRequest
+            ? '命令未执行：本轮已提供命令执行工具，但模型没有调用它；没有真实退出码、stdout 或 stderr。'
+            : '本次操作尚未执行，模型没有调用本轮所需工具。请检查对应工具是否已启用；如果已启用，请重试。';
+          llmResponseChars = failure.length;
+          await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
+          return applicationJson({ ok: false, error: failure, message: failure, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable }, { status: 422 });
+        }
+        plainMessage = cleanedMessage || '当前对话模型没有返回内容。';
         llmResponseChars = plainMessage.length;
         return wantsStream ? streamResult(null, { fallback: plainMessage, images: [], files: [], generations: [], model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() }) : applicationJson({ ok: true, message: plainMessage, images: [], files: [], model: actualModel || agentRuntime.model.displayName, deliverable: requestedDeliverable, ...oneTakeResponseFields, toolSupport: true, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata() });
       }
@@ -2478,7 +2531,7 @@ const auditMcpCall = (
     const toolOutcomes: ToolOutcome[] = [];
     const usedSkills: Array<{ id: string; name: string }> = [];
     /** 这一轮真正落到外部 MCP 服务上的调用，回给前端做审计展示。 */
-    type UsedMcpTool = { server: string; name: string; readOnly: boolean; ok: boolean };
+    type UsedMcpTool = { server: string; name: string; readOnly: boolean; ok: boolean; preview?: boolean };
     const usedMcpTools: UsedMcpTool[] = [];
     const desktopInstructionDeniedUses = new WeakSet<UsedMcpTool>();
     const desktopInstructionDeniedCallIds = new Set<string>();
@@ -2522,8 +2575,10 @@ const auditMcpCall = (
     let mcpToolCallCount = 0;
     const extendedMcpRequest = browserAutomationRequest || desktopAutomationRequest;
     const mcpTurnBudgetLimit = extendedMcpRequest ? MCP_BROWSER_TURN_TIME_BUDGET_MS : MCP_TURN_TIME_BUDGET_MS;
-    const mcpToolCallLimit = extendedMcpRequest ? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN : MCP_TOOL_MAX_CALLS_PER_TURN;
-    const mcpFollowupMaxRounds = extendedMcpRequest ? MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS : MCP_TOOL_FOLLOWUP_MAX_ROUNDS;
+    const mcpToolCallLimit = extendedMcpRequest
+      ? MCP_BROWSER_TOOL_MAX_CALLS_PER_TURN
+      : callableFilesystemRead ? Math.max(MCP_TOOL_MAX_CALLS_PER_TURN, 30) : MCP_TOOL_MAX_CALLS_PER_TURN;
+    const mcpFollowupMaxRounds = extendedMcpRequest ? MCP_BROWSER_TOOL_FOLLOWUP_MAX_ROUNDS : callableFilesystemRead ? 12 : MCP_TOOL_FOLLOWUP_MAX_ROUNDS;
     let mcpTurnBudget = mcpTurnBudgetLimit;
 
     const executionCalls = [...toolCalls].sort((left: any, right: any) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right)));
@@ -2628,7 +2683,7 @@ const auditMcpCall = (
         ARTIFACT_MAX_PER_TURN,
         appendPageContext,
         reportProgress,
-        mcpCall: callMcpTool,
+        mcpCall: callMcpForTurn,
         mcpCallTimeoutMs: MCP_CALL_TIMEOUT_MS,
         importBrowserArtifacts,
         shouldImportBrowserArtifacts,
@@ -2663,7 +2718,8 @@ const auditMcpCall = (
       authorize: async ({ call, policy, args }) => {
         const meta = policy.tool?.mcp;
         if (!meta) return 'allow';
-        if (mcpServerById.get(meta.serverId)?.catalogId === 'windows-mcp') {
+        const server = mcpServerById.get(meta.serverId);
+        if (server?.catalogId === 'windows-mcp') {
           if (desktopInputExplicitlyForbidden && isDesktopTextInputTool(meta.toolName, args)) {
             return denyDesktopInstructionTool(call.id, meta, policy.tool?.risk, '用户明确禁止输入文字，因此桌面输入工具没有执行。请勿改用其他工具输入或粘贴文字。');
           }
@@ -2675,10 +2731,20 @@ const auditMcpCall = (
         const guard = guardMcpCall(meta, args);
         if (!guard.ok) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'guard', ok: false, summary: guard.error }); return { deny: guard.error }; }
         const rememberedToolPolicy = policy.tool?.id ? toolApprovalPolicy(policy.tool.id) : 'ask';
-        const assessment = assessToolApproval({ definition: policy.tool, args: guard.args, pageText: recentPageText, sensitiveHint: guard.approval || '', policy: executionPublicState.settings.mcpApprovalPolicy, toolPolicy: rememberedToolPolicy });
+        const localEdit = isFilesystemEditCall(server, meta.toolName);
+        if (requestedFilesystemEditMode && server?.catalogId === 'filesystem' && server.transport === 'stdio' && !meta.readOnly && !localEdit) {
+          const reason = '这轮要求先核对差异，本次没有写入。请用 edit_file 为现有文件生成差异。';
+          usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: false, ok: false });
+          auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'block', ok: false, summary: reason });
+          return { deny: reason };
+        }
+        const editArgs = localEdit && requestedFilesystemEditMode === 'preview' ? { ...guard.args, dryRun: true } : guard.args;
+        const reviewBeforeWrite = localEdit && requestedFilesystemEditMode === 'review';
+        const filesystemEditPreview = localEdit && !reviewBeforeWrite && editArgs.dryRun === true && !guard.approval;
+        const assessment = assessToolApproval({ definition: policy.tool, args: editArgs, pageText: recentPageText, sensitiveHint: guard.approval || '', policy: executionPublicState.settings.mcpApprovalPolicy, toolPolicy: rememberedToolPolicy, filesystemEditPreview });
         if (assessment.blocked) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'block', ok: false, summary: assessment.reason }); return { deny: assessment.reason }; }
-        if (assessment.required) return 'defer';
-        return { allow: true, args: guard.args };
+        if (assessment.required || reviewBeforeWrite) return 'defer';
+        return { allow: true, args: editArgs };
       },
       execute: async ({ call, policy, args, executionContext }) => executeToolCallAdapter({ call, policy, args, executionContext }),
       onExecuted: async ({ call, result }) => {
@@ -2727,7 +2793,47 @@ const auditMcpCall = (
         for (const message of result.results) {
           if (message.tool_call_id !== call.id) continue;
           if (call.id && desktopInstructionDeniedCallIds.has(call.id)) continue;
-          try { const outcome = JSON.parse(String(message.content || '')); if (typeof outcome.ok === 'boolean') toolOutcomes.push({ name: String(call.function.name), key: toolOutcomeKey(String(call.function.name), call.function.arguments, outcome), ok: outcome.ok, error: outcome.error || (!outcome.ok ? outcome.content : undefined) }); } catch {}
+          try {
+             const outcome = JSON.parse(String(message.content || ''));
+             if (typeof outcome.ok === 'boolean') {
+               const outcomeMeta = mcpDefinition?.mcp;
+               const outcomeServer = outcomeMeta ? mcpServerById.get(outcomeMeta.serverId) : undefined;
+               // The executor adds this envelope to returned MCP results.
+               // Guard denials and transport failures use a separate error shape.
+               const isFilesystemTextRead = outcomeServer?.catalogId === 'filesystem' && outcomeServer.transport === 'stdio' && outcomeMeta?.readOnly
+                 && ['read_text_file', 'read_file'].includes(outcomeMeta.toolName)
+                 && outcome.source === `MCP · ${outcomeMeta.serverName}`;
+               const readText = typeof outcome.content === 'string' ? outcome.content.trim() : '';
+               const readKind = !isFilesystemTextRead ? undefined
+                 : !outcome.ok && /^(?:Error:\s*)?ENOENT\b/.test(readText) ? 'missing'
+                 : !outcome.ok && outcomeMeta.toolName === 'read_text_file' && outcome.errorCode === 'FILESYSTEM_INVALID_TEXT_RANGE' ? 'invalid-range'
+                 : outcome.ok && outcome.fileTextEvidence !== false && readText && readText !== '（该工具没有返回文本内容）' ? 'content' : undefined;
+               const readArgs = readKind ? parseToolArguments(String(call.function.arguments || '{}')) : undefined;
+               const readPath = readArgs && typeof readArgs === 'object' && 'path' in readArgs && typeof readArgs.path === 'string'
+                 ? readArgs.path.trim() : undefined;
+               const editArgs = parseToolArguments(String(call.function.arguments || '{}'));
+               const editPath = editArgs && typeof editArgs === 'object' && !Array.isArray(editArgs)
+                 && 'path' in editArgs && typeof editArgs.path === 'string' ? editArgs.path.trim() : '';
+               const isLocalFilesystemTool = outcomeServer?.catalogId === 'filesystem' && outcomeServer.transport === 'stdio'
+                 && outcomeMeta?.toolName && editPath;
+               const filesystemEditRecovery = !isLocalFilesystemTool || requestedFilesystemEditMode !== 'preview' ? undefined
+                 : outcomeMeta.toolName === 'edit_file' && outcome.ok && typeof outcome.content === 'string'
+                   ? { kind: 'preview' as const, path: editPath, diff: outcome.content }
+                   : !outcome.ok && !outcome.source
+                     && outcome.error === '这轮要求先核对差异，本次没有写入。请用 edit_file 为现有文件生成差异。'
+                     && outcomeMeta.toolName !== 'edit_file'
+                       ? { kind: 'blocked-write' as const, path: editPath }
+                       : undefined;
+               toolOutcomes.push({
+                 name: String(call.function.name),
+                 key: toolOutcomeKey(String(call.function.name), call.function.arguments, outcome),
+                 ok: outcome.ok,
+                 error: outcome.error || (!outcome.ok ? outcome.content : undefined),
+                 ...(filesystemEditRecovery ? { filesystemEditRecovery } : {}),
+                 ...(readKind && outcomeMeta ? { filesystemTextRead: { serverId: outcomeMeta.serverId, kind: readKind, path: readPath } } : {}),
+               });
+             }
+           } catch {}
 
         }
       },
@@ -2781,7 +2887,10 @@ const auditMcpCall = (
           settled.add(call.id);
           continue;
         }
-        deferredArgs = deferredGuard.args;
+        const localEdit = isFilesystemEditCall(mcpServerById.get(deferredMeta.serverId), deferredMeta.toolName);
+        deferredArgs = localEdit && requestedFilesystemEditMode
+          ? { ...deferredGuard.args, dryRun: requestedFilesystemEditMode === 'preview' }
+          : deferredGuard.args;
       const deferredAssessment = assessToolApproval({
           definition: deferredPolicy.tool,
           args: deferredArgs,
@@ -2799,6 +2908,18 @@ const auditMcpCall = (
           settled.add(call.id);
           continue;
         }
+        let filesystemEdit: PendingToolCall['filesystemEdit'];
+        if (localEdit) {
+          const prepared = prepareFilesystemEdit(deferredGuard.args, filesystemEditScope);
+          if (!prepared.ok) {
+            usedMcpTools.push({ server: deferredMeta.serverName, name: deferredMeta.toolName, readOnly: deferredMeta.readOnly, ok: false });
+            auditMcpCall(deferredMeta, { risk: deferredPolicy.tool.risk, allowed: false, decision: 'guard', ok: false, summary: prepared.error });
+            push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: prepared.error }) });
+            settled.add(call.id);
+            continue;
+          }
+          filesystemEdit = prepared.approval;
+        }
         pending.push({
           callId: call.id,
           name: deferredPolicy.tool.name,
@@ -2807,9 +2928,10 @@ const auditMcpCall = (
           serverName: deferredMeta.serverName,
           toolName: deferredMeta.toolName,
           readOnly: deferredMeta.readOnly,
-          risk: deferredAssessment.risk,
-          reason: deferredAssessment.reason || '这一步需要你确认',
+          risk: filesystemEdit ? 'write' : deferredAssessment.risk,
+          reason: filesystemEdit ? '请核对下方差异，确认后只修改这个文件。' : deferredAssessment.reason || '这一步需要你确认',
           args: deferredArgs,
+          ...(filesystemEdit ? { filesystemEdit } : {}),
         });
       }
       return { pending, settled };
@@ -2948,6 +3070,7 @@ const auditMcpCall = (
       toolTrace.push(...followups.trace);
     }
     let mcpFollowupText = '';
+    let filesystemReadSettlement: 'answer' | 'stopped' | undefined;
     let mcpFollowupFailure = '';
     const mcpFollowupTools = callableTools.filter((tool: any) => ['mcp', 'tabbit'].includes(toolExecutionKind(tool?.function?.name, mcpTools) || ''));
     /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */
@@ -2972,6 +3095,7 @@ const auditMcpCall = (
           }, requestController.signal).catch((error) => {
             if (requestController.signal.aborted) throw requestController.signal.reason || error;
             if (desktopAutomationRequest) mcpFollowupFailure = error instanceof Error ? error.message : String(error);
+            else if (!browserAutomationRequest) mcpFollowupFailure = error instanceof AgentContextBudgetExceededError ? 'context_budget' : 'provider_error';
             return null;
           });
           const rawReply = reply?.choices?.[0]?.message || null;
@@ -3017,7 +3141,43 @@ const auditMcpCall = (
       });
       const { stepMessages, stepReply } = mcpLoop;
       mcpFollowupText = mcpLoop.text;
+      if (!desktopAutomationRequest && !browserAutomationRequest && mcpLoop.text.trim()) filesystemReadSettlement = 'answer';
       toolTrace.push(...mcpLoop.trace);
+      let mcpStop = mcpFollowupFailure === 'context_budget' ? 'context_budget' : mcpLoop.stopReason;
+      if (mcpStop === 'stopped' && !desktopAutomationRequest && !browserAutomationRequest && !deferredCalls.length && !stalledMcpReason) {
+        if (mcpTurnBudget <= 0) mcpStop = 'deadline';
+        else if (mcpToolCallCount >= mcpToolCallLimit) mcpStop = 'max_calls';
+      }
+      const mcpLoopHitResponseLimit = ['max_steps', 'max_calls', 'context_budget', 'deadline'].includes(mcpStop);
+      if (!mcpFollowupText && !deferredCalls.length && !desktopAutomationRequest && !browserAutomationRequest && mcpFollowupFailure !== 'provider_error' && mcpLoopHitResponseLimit) {
+        try {
+          const summaryPrompt = mcpFollowupSummaryPrompt(mcpStop, mcpLoop.trace.length);
+          // Shorten only tool results in the summary request. Keep call IDs,
+          // the user's request and the original tool messages for execution.
+          const summaryMessages = mcpStop === 'context_budget' ? secondMessages.map((message) =>
+            message.role === 'tool' && typeof message.content === 'string'
+              ? { ...message, content: boundToolResult(message.content, 2_000) }
+              : message) : secondMessages;
+          const summaryPayload = boundChatPayload({
+            messages: [...summaryMessages, { role: 'user', content: summaryPrompt }],
+            tool_choice: 'none',
+          }, agentRuntime.model);
+          const summaryReply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, summaryPayload, requestController.signal);
+          const summary = stripToolCallMarkup(String(summaryReply?.choices?.[0]?.message?.content || '')).trim();
+          mcpFollowupText = mcpFollowupPartialMessage(mcpStop, mcpLoop.trace.length, usedMcpTools.length, summary);
+        } catch (error) {
+          if (requestController.signal.aborted) throw requestController.signal.reason || error;
+          console.error('[Agent] 工具续轮后的受限总结失败：', error instanceof Error ? error.name : 'UnknownError');
+        }
+      }
+      if (!mcpFollowupText && !deferredCalls.length && !desktopAutomationRequest && !browserAutomationRequest) {
+        mcpFollowupText = mcpFollowupIncompleteMessage(mcpStop, mcpLoop.trace.length, usedMcpTools.length, mcpFollowupFailure === 'provider_error');
+      }
+      if (!mcpLoop.text && !deferredCalls.length && !desktopAutomationRequest && !browserAutomationRequest && mcpFollowupText) {
+        const stopReason = mcpFollowupFailure === 'provider_error' ? '模型续轮请求失败' : mcpFollowupStopMessage(mcpStop, mcpLoop.trace.length);
+        forcedLlmSettlementError = `任务未完成：${stopReason || '工具续轮未返回最终答案'}`;
+        if (toolOutcomes.some((outcome) => outcome.filesystemTextRead && outcome.filesystemTextRead.kind !== 'content')) filesystemReadSettlement = 'stopped';
+      }
       if (desktopAutomationRequest && !deferredCalls.length) {
         const stopReasons: Record<string, string> = {
           deadline: '桌面操作达到总时长上限',
@@ -3034,7 +3194,10 @@ const auditMcpCall = (
           : stalledMcpReason || mcpFollowupFailure || stopReasons[mcpLoop.stopReason]
           || (failedDesktopTool ? '桌面工具调用失败，结果尚未核验' : '')
           || (!mcpLoop.text ? '模型未能继续或核验剩余桌面操作' : '');
-        if (reason) mcpFollowupText = `${reason}。任务未完成；已执行 ${usedMcpTools.filter((tool) => tool.ok).length} 次桌面工具调用，剩余步骤尚未确认。`;
+        if (reason) {
+          mcpFollowupText = `${reason}。任务未完成；已执行 ${usedMcpTools.filter((tool) => tool.ok).length} 次桌面工具调用，剩余步骤尚未确认。`;
+          forcedLlmSettlementError = `任务未完成：${reason}`;
+        }
       }
       if (browserAutomationRequest && !deferredCalls.length) {
         const blocker = browserExternalBlocker(browserUses);
@@ -3053,6 +3216,7 @@ const auditMcpCall = (
           const remaining = gap === 'input' ? '评论尚未输入' : gap === 'submit' ? '评论尚未提交' : gap === 'verify' ? '评论提交结果尚未确认，请勿重复发送' : mutationObservationGap ? '最近一次页面变更后尚未重新观察页面状态' : '尚未确认全部目标完成';
           // Keep the executor's reason: a tool-free model summary must not hide it.
           mcpFollowupText = `${reason}。任务未完成：${remaining}。${blocker ? '请处理后继续。' : ''}`;
+          forcedLlmSettlementError = `任务未完成：${reason}；${remaining}`;
         }
       }
       if (deferredCalls.length) {
@@ -3164,15 +3328,24 @@ const auditMcpCall = (
     const authorizationStatus = videoDownloadRequest && requestedVideoUrl && !authorizedBrowserSession && latestVideoDownloadOutcome && !latestVideoDownloadOutcome.ok
       ? videoDownloadAuthorizationStatus(latestVideoDownloadOutcome.error)
       : undefined;
-    const verifiedFailure = authorizationStatus
+    const filesystemEditRecoveryText = filesystemEditPreviewRecoveryText(toolOutcomes);
+    const outcomeFailure = authorizationStatus
       ? videoDownloadSessionConsentQuestion(requestedVideoUrl, authorizationStatus, latestVideoDownloadOutcome?.error)
       : toolOutcomeText('', fileGenerationRequest && generatedFiles.length
         ? toolOutcomes.filter((outcome) => !(isImageToolCall({ function: { name: outcome.name } }) && !outcome.ok))
-        : toolOutcomes);
+        : toolOutcomes, filesystemReadSettlement);
+    const verifiedFailure = outcomeFailure && (filesystemReadSettlement === 'stopped' || mcpFollowupFailure === 'context_budget')
+      ? `${mcpFollowupText}\n\n${outcomeFailure}` : outcomeFailure;
     if (verifiedFailure) {
-      await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
-      if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
-      return applicationJson({ ok: true, message: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
+      const message = filesystemEditRecoveryText ? `${verifiedFailure}\n\n${filesystemEditRecoveryText}` : verifiedFailure;
+      await settleLlmLog?.({ status: 'error', responseChars: message.length, error: message });
+      if (wantsStream) return streamResult(null, { fallback: message, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
+      return applicationJson({ ok: true, message, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
+    }
+    if (filesystemEditRecoveryText) {
+      await settleLlmLog?.({ status: 'success', responseChars: filesystemEditRecoveryText.length });
+      if (wantsStream) return streamResult(null, { fallback: filesystemEditRecoveryText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });
+      return applicationJson({ ok: true, message: filesystemEditRecoveryText, images: generated, batchItems, files: generatedFiles, generations, deliverable: requestedDeliverable, mcpTools: usedMcpTools, toolTrace });
     }
     if (wantsStream) {
       if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });

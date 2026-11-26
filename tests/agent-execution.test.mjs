@@ -44,6 +44,31 @@ test('successful image delivery survives a malformed caption', async () => {
 test('failed tool evidence overrides model success and unrelated successes do not erase failures', () => {
   assert.match(outcome.toolOutcomeText('已经成功', [{ name: 'move', key: 'a', ok: false, error: 'denied' }, { name: 'move', key: 'b', ok: true }]), /denied/);
   assert.equal(outcome.toolOutcomeText('完成', [{ name: 'read', key: 'a', ok: false }, { name: 'read', key: 'a', ok: true }]), '完成');
+
+});
+
+test('a successful same-file preview settles a write blocked by the preview policy only', () => {
+  const diff = '--- a/file.txt\n+++ b/file.txt\n-initial line\n+corrected line';
+  const blocked = { name: 'write_file', ok: false, error: '这轮要求先核对差异，本次没有写入。', filesystemEditRecovery: { kind: 'blocked-write', path: 'C:\\work\\file.txt' } };
+  const preview = { name: 'edit_file', ok: true, filesystemEditRecovery: { kind: 'preview', path: 'C:\\work\\file.txt', diff } };
+  const reply = outcome.filesystemEditPreviewRecoveryText([blocked, preview]);
+  assert.match(reply, /原文件没有修改/);
+  assert.match(reply, /直接写入调用已.*拦截/);
+  assert.ok(reply.includes(diff), 'the authoritative preview includes the exact diff returned by the filesystem tool');
+  assert.equal(outcome.toolOutcomeText('预览完成，文件仍未落盘。', [blocked, preview]), '预览完成，文件仍未落盘。');
+  assert.match(outcome.toolOutcomeText('预览完成。', [blocked, { ...preview, filesystemEditRecovery: { kind: 'preview', path: 'C:\\work\\other.txt', diff } }]), /要求先核对差异/);
+  assert.match(outcome.toolOutcomeText('预览完成。', [blocked, { ...preview, ok: false, filesystemEditRecovery: { kind: 'preview', path: blocked.filesystemEditRecovery.path, diff: '' } }]), /要求先核对差异/);
+  assert.match(outcome.toolOutcomeText('修改完成。', [blocked, { name: 'edit_file', ok: true, filesystemEditRecovery: { kind: 'write', path: blocked.filesystemEditRecovery.path } }]), /要求先核对差异/);
+});
+
+test('a later content read from the same Filesystem can settle a lookup miss', () => {
+  const missing = { name: 'read_text_file', key: 'read:missing', ok: false, error: 'ENOENT', filesystemTextRead: { serverId: 'local', kind: 'missing' } };
+  const content = { name: 'read_text_file', key: 'read:source', ok: true, filesystemTextRead: { serverId: 'local', kind: 'content' } };
+  assert.equal(outcome.toolOutcomeText('已完成定位。', [missing, content], 'answer'), '已完成定位。');
+  assert.match(outcome.toolOutcomeText('已完成定位。', [missing], 'answer'), /ENOENT/);
+  assert.match(outcome.toolOutcomeText('已完成定位。', [content, missing], 'answer'), /ENOENT/);
+  assert.match(outcome.toolOutcomeText('已完成定位。', [missing, { ...content, filesystemTextRead: { serverId: 'other', kind: 'content' } }], 'answer'), /ENOENT/);
+  assert.match(outcome.toolOutcomeText('', [missing, { name: 'write_file', ok: false, error: 'write denied' }, content], 'answer'), /write denied/);
 });
 
 test('file content repairs replace only the result for the same filename targets', () => {

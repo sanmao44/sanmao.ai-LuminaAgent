@@ -1,5 +1,5 @@
 import { classifyAgentDeliverable, inferAgentRequestMode, isCapabilityQuestion, type AgentDeliverable, type AgentIntentContext, type AgentIntentDecision, type AgentIntentMessage } from '@/lib/agent-intent';
-import { classifyBrowserAutomation, classifyDesktopAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
+import { classifyBrowserAutomation, classifyDesktopAutomation, likelyArtifactGenerationRequest, likelyFileGenerationRequest, likelyFilesystemRequest, likelyMcpManagementRequest, prohibitsFileDelivery, shouldUseAgentWebSearch, type AgentWebDecision, type AgentWebMode, type BrowserAutomationIntent } from '@/lib/agent-web';
 import { classifyAgentInformationSource } from '@/packages/agent-core/information-routing';
 import type { AgentInformationDecision, AgentRequestDecision as ContractAgentRequestDecision } from '@/packages/contracts/planning';
 import type { SkillRouteDecision } from '@/packages/contracts/skill';
@@ -35,7 +35,7 @@ const filePattern = /(?:文件|附件|csv|tsv|json|markdown|\.md\b|\.txt\b|\.htm
 const contextReferencePattern = /(?:刚才|上一条|上面|之前|此前|继续|再来|再写|再做|基于|按照|按刚才|这个|这张|这份|该|它|他|她|同上|沿用|保持|换成|改成|第[一二三四五六七八九十\d]+张)/i;
 const selfContainedPattern = /(?:只根据这句话|只看本句|不要结合上下文|无需上下文|独立回答|不参考历史|不用参考之前)/i;
 const externalServiceActionPattern = /(?:mcp|model context protocol|接入|连接|调用|同步|提交|发送|发到|创建|更新|删除|读取|查看|列出|搜索|查询).{0,24}(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器|api)|(?:github|gitlab|notion|slack|飞书|钉钉|云盘|数据库|仓库|远程服务|外部服务|连接器).{0,24}(?:接入|连接|调用|同步|提交|发送|创建|更新|删除|读取|查看|列出|搜索|查询)/i;
-const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
+const githubRepositoryEntityPattern = /(?:github(?:\.com)?|仓库|项目|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i;
 const githubRepositoryQueryActionPattern = /(?:我的|当前|这个|该|本|上述|上面|最近|最新|多少|几个|哪些|列表|列出|查看|看看|查询|搜索|状态|详情|有|谁|合并)/i;
 const contextualBrowserActionPattern = /^(?:(?:please|then|now|next)\s+)?(?:click|tap|select|choose|scroll|type|fill|submit|like|comment|reply|play)\b/i;
 const contextualBrowserActionZhPattern = /^(?:(?:请|麻烦|帮我|然后|接着|再)\s*)?(?:点击|点一下|点开|选择|选中|滚动|输入|填写|提交|点赞|收藏|评论|回复|播放)(?=\s|第|这|那|上|下|一|\d|[\u4e00-\u9fff])/i;
@@ -69,7 +69,7 @@ function recentBrowserContinuation(input: string, messages: AgentIntentMessage[]
 
 function isGithubRepositoryQuery(text: string, messages: AgentIntentMessage[]) {
   if (!githubRepositoryEntityPattern.test(text) || !githubRepositoryQueryActionPattern.test(text)) return false;
-  const hasRepositoryEntity = /(?:仓库|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i.test(text);
+  const hasRepositoryEntity = /(?:仓库|项目|repo|pull request|\bpr\b|issue|commit|提交|分支|branch|release)/i.test(text);
   if (/github(?:\.com)?/i.test(text)) return hasRepositoryEntity;
   // “这个仓库最近的 PR/Issue”常见于用户先给出 GitHub 地址、下一轮再追问。
   // 只有明确的远端 PR/Issue 等实体才在没有当前轮 GitHub 字样时沿用该上下文，
@@ -78,6 +78,12 @@ function isGithubRepositoryQuery(text: string, messages: AgentIntentMessage[]) {
   return messages.some((message) => /github(?:\.com)?/i.test(String(message.content || '')));
 }
 function artifactKindFor(text: string, fileDeliveryRequested: boolean) {
+  // A local file edit can mention both an extension and "write" in a
+  // prohibition (for example, "do not write before I confirm"). Treat that
+  // as a filesystem operation unless the user explicitly requests a
+  // downloadable deliverable.
+  if (prohibitsFileDelivery(text) && !/(?:word|docx|excel|xlsx|pptx?|zip|压缩包|报告|方案|合同|简历|周报|日报|月报|纪要|会议记录|汇报|论文|说明书|手册|表格|报表|台账|清单|数据表|幻灯片|演示文稿)/i.test(text)) return 'none' as const;
+  if (!fileDeliveryRequested && likelyFilesystemRequest(text)) return 'none' as const;
   if (!creationVerbPattern.test(text) && !fileDeliveryRequested) return 'none' as const;
   if (archivePattern.test(text)) return 'archive' as const;
   if (pptPattern.test(text)) return 'ppt' as const;
@@ -95,6 +101,29 @@ function contextDecision(text: string, messages: AgentIntentMessage[]) {
 
 function candidate(route: AgentRequestRoute, score: number, ...signals: string[]): AgentRouteCandidate {
   return { route, score, signals: signals.filter(Boolean) };
+}
+
+/** Detect an explicit command execution request, not discussion of a command. */
+export function isExplicitCommandExecutionRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  const command = /(?:`[^`]*(?:npm|pnpm|yarn|bun|node|npx|python|git|tsc|typecheck|lint|build|test)[^`]*`|\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+[\w:-]+|(?:test|lint|build|install|typecheck|check)\b)|\b(?:node|npx|python(?:3)?|git|tsc|bash|powershell|cmd(?:\.exe)?)\s+\S+|\b(?:typecheck|type-check|lint|build|test)\b)/i.exec(text);
+  if (!command) return false;
+
+  const match = command;
+  const beforeMatch = text.slice(0, match.index);
+  const action = [...beforeMatch.matchAll(/(?:运行|执行|跑|\b(?:run|execute)\b)(?:一次|一遍|一下)?(?:真实|实际)?/gi)].at(-1);
+  if (!action || beforeMatch.slice(action.index + action[0].length).trim().length > 32) return false;
+
+  const beforeAction = beforeMatch.slice(0, action.index);
+  return !/(?:不要|别|禁止|不必|无需|don't|do not|never)\s*$/i.test(beforeAction)
+    && !/(?:怎么|如何|怎样|为什么|解释|介绍|说明|教我|告诉我)\s*$/i.test(beforeAction);
+}
+
+/** Match an explicitly named command runner in this turn's offered tools. */
+export function isCommandExecutionToolName(value: unknown) {
+  const name = String(value || '').trim().toLowerCase();
+  const leaf = name.split('__').at(-1) || name;
+  return /^(?:(?:run|execute|exec)_)?(?:project_)?(?:command|(?:shell|terminal|bash|powershell|cmd)(?:_command)?)(?:_(?:run|execute|exec))?$/.test(leaf);
 }
 
 /**
@@ -219,7 +248,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   if (intent.deliverable === 'BOTH') candidates.push(candidate('both', intent.confidence === 'high' ? 106 : 76, ...intent.signals));
   if (intent.deliverable === 'TEXT') candidates.push(candidate('text', intent.confidence === 'high' ? 104 : 72, ...intent.signals));
   if (web.shouldSearch && !browserAutomation && !filesystem) candidates.push(candidate('web', 102, web.reason));
-  if (githubRepositoryQuery) candidates.push(candidate('chat', 116, 'GitHub 仓库数据查询'));
+  if (githubRepositoryQuery && !browserAutomation && !desktopAutomation) candidates.push(candidate('chat', 116, 'GitHub 仓库数据查询'));
   if (intent.deliverable === 'CLARIFY') candidates.push(candidate('clarify', 80, '交付形式不明确'));
   if (!candidates.length) candidates.push(candidate('chat', 60, '普通对话或问答'));
   candidates.sort((a, b) => b.score - a.score);
@@ -233,7 +262,7 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const useFilesystemMcp = filesystem;
   const useSkills = !browserAutomation && !filesystem && !intent.deliverable.toString().match(/^(IMAGE|BOTH)$/) && (skillActivation || skillInstallation);
   const useNativeWeb = web.shouldSearch && !browserAutomation && !filesystem && route === 'web';
-  const useNativeArtifact = !skillInstallation && (artifactRouteIsGenerated(route) || fileDeliveryRequested || likelyArtifactGenerationRequest(text));
+  const useNativeArtifact = !skillInstallation && (artifactRouteIsGenerated(route) || artifactKind !== 'none' || fileDeliveryRequested || (!filesystem && likelyArtifactGenerationRequest(text)));
   const reason = useMcp ? '检测到外部服务或本地执行动作，优先使用受控 MCP。'
     : useSkills ? '检测到流程/模板/规范需求，先按需检索技能。'
       : useNativeWeb ? '检测到需要外部事实，先联网再回答。'

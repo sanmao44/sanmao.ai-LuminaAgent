@@ -177,6 +177,149 @@ test('capability discovery is not limited to a list of application names', () =>
   }
 });
 
+test("read-only source tracing with a file-write prohibition stays out of the artifact lane", () => {
+  const input = "请只读追踪这个问题：`update.json` 中 SHA-256 校验失败时，用户从界面触发更新，到下载校验失败并向用户显示错误的完整调用链在哪？请从 `update.json` 出发，在当前授权目录内进行追踪。优先使用正文搜索和带行号的原文读取工具。每个环节都给出相对路径:行号，并附能证明该环节的原文片段；核对 UI 触发、API 路由、预期 SHA-256 的取得、下载后的实际哈希计算与比较、失败信息返回链。只读；严禁写入文件或触发任何更新 API。";
+  const decision = routing.classifyAgentRequest(input);
+
+  assert.equal(modules.web.exports.likelyFileGenerationRequest(input), false);
+  assert.equal(decision.filesystem, true);
+  assert.equal(decision.artifactKind, "none");
+  assert.equal(decision.route, "filesystem");
+  assert.equal(decision.tools.useNativeArtifact, false);
+});
+test('routes concrete source-file evidence questions to the filesystem lane', () => {
+  const decision = routing.classifyAgentRequest('update.json 里 sha256 校验失败的完整调用链在哪？给出文件路径、行号和对应代码原文');
+  assert.equal(decision.intent.mode, 'execute');
+  assert.equal(decision.filesystem, true);
+  assert.equal(decision.route, 'filesystem');
+  assert.equal(decision.tools.useFilesystemMcp, true);
+});
+
+test('explicit browser targets win over incidental file extensions in mixed requests', () => {
+  const repositoryTask = routing.classifyAgentRequest('update.json 里 sha256 校验失败的完整调用链在哪？给出文件路径、行号和对应代码原文');
+  assert.equal(repositoryTask.route, 'filesystem');
+  assert.equal(repositoryTask.browserAutomation, false);
+
+  const namedWebsite = routing.classifyAgentRequest('打开 GitHub 仓库并搜索 issue');
+  assert.equal(namedWebsite.route, 'browser');
+  assert.equal(namedWebsite.browserAutomation, true);
+
+  const mixedLocalAndExternal = routing.classifyAgentRequest('检查 update.json，然后打开 https://example.com/foo.ts 并搜索 issue');
+  assert.equal(mixedLocalAndExternal.filesystem, true);
+  assert.equal(mixedLocalAndExternal.browserAutomation, true);
+  assert.equal(mixedLocalAndExternal.route, 'browser');
+  assert.equal(mixedLocalAndExternal.browserIntent.destination, 'https://example.com/foo.ts');
+});
+
+test("local project content and named remote project searches route separately", () => {
+  const local = routing.classifyAgentRequest("请搜索项目里的 API Key 配置");
+  const remote = routing.classifyAgentRequest("帮我搜索 GitHub 项目列表并说明查到什么", {}, { webMode: "off" });
+  assert.equal(local.filesystem, true);
+  assert.equal(remote.filesystem, false);
+  assert.equal(remote.tools.useMcp, true);
+});
+test('local source inspection does not pick up incidental browser navigation verbs', () => {
+  const decision = routing.classifyAgentRequest('只在授权代码库里工作，定位 update.json 的 SHA-256 校验调用链；进入实现后搜索并给出路径、行号和原文。');
+  assert.equal(decision.filesystem, true);
+  assert.equal(decision.route, 'filesystem');
+  assert.equal(decision.browserAutomation, false);
+  assert.equal(decision.tools.useBrowserMcp, false);
+});
+
+test('explicit command execution is distinct from filesystem discovery and command discussion', () => {
+  for (const input of [
+    '请在项目目录运行一次 npm run typecheck，贴出退出码。',
+    '第 3 题第二轮：在只读隔离目录 C:\\Temp\\repo 中执行一次真实 `npm run typecheck`。',
+    '跑一下 typecheck',
+    '请在项目目录运行 npm test。',
+  ]) {
+    assert.equal(routing.isExplicitCommandExecutionRequest(input), true, input);
+  }
+  for (const input of [
+    'update.json 里 sha256 校验失败的完整调用链在哪？给出文件路径和行号。',
+    'typecheck 是什么？',
+    '不要运行 npm run typecheck。',
+    '怎么运行 npm run typecheck？',
+  ]) {
+    assert.equal(routing.isExplicitCommandExecutionRequest(input), false, input);
+  }
+  assert.equal(routing.isCommandExecutionToolName('filesystem-test__run_command'), true);
+  assert.equal(routing.isCommandExecutionToolName('execute_project_command'), true);
+  assert.equal(routing.isCommandExecutionToolName('run_shell_command'), true);
+  assert.equal(routing.isCommandExecutionToolName('filesystem-test__read_text_file'), false);
+  assert.equal(routing.isCommandExecutionToolName('windows-mcp__App'), false);
+});
+
+test('keeps local file preview requests out of downloadable-file generation', () => {
+  const prompt = '请在隔离夹具中把 C:\\Temp\\fixture\\qa-edit-target.txt 第一行的 `initial line` 改成 `corrected line`。本轮只做预览：使用本地文件编辑工具的 dry-run/预览能力，返回准确 diff，不要落盘，也不要调用真实写入。展示 diff 后停止并等待我明确确认。';
+  const decision = routing.classifyAgentRequest(prompt);
+  assert.equal(decision.intent.mode, 'execute');
+  assert.equal(decision.filesystem, true);
+  assert.equal(decision.route, 'filesystem');
+  assert.equal(decision.artifactKind, 'none');
+  assert.equal(decision.tools.useFilesystemMcp, true);
+  assert.equal(decision.tools.useNativeArtifact, false);
+});
+
+test('routes a requested local edit with diff review without requiring tool names', () => {
+  for (const prompt of [
+    '请把 qa-edit-target.txt 里的 initial line 改成 corrected line，先生成可核对的 diff，等我确认后落盘。',
+    '请把 qa-edit-target.txt 里的 initial line 替换为 corrected line，先返回 qa-edit-target.txt 的 diff，确认后再写入文件。',
+    '帮我把 qa-edit-target.txt 里的 typo 改掉，先给 diff 让我确认，再落盘。',
+    '请把 qa-edit-target.txt 里的错字改了，先生成可核对的 diff，等我确认再改。',
+    '请修正 qa-edit-target.txt 的拼写，先返回 qa-edit-target.txt 的 diff，等我确认再改。',
+  ]) {
+    const decision = routing.classifyAgentRequest(prompt);
+    assert.equal(decision.route, 'filesystem', prompt);
+    assert.equal(decision.artifactKind, 'none', prompt);
+    assert.equal(decision.tools.useFilesystemMcp, true, prompt);
+    assert.equal(decision.tools.useNativeArtifact, false, prompt);
+    assert.equal(modules.web.exports.likelyFileGenerationRequest(prompt), false, prompt);
+  }
+});
+
+test('keeps explicit diff file delivery requests even when a local edit is also requested', () => {
+  for (const prompt of [
+    '请导出一份可下载的 diff 附件。',
+    '请修改 qa-edit-target.txt，并另生成一个 change.diff 文件。',
+    '请修改 qa-edit-target.txt，并生成差异报告文件。',
+  ]) {
+    assert.equal(modules.web.exports.likelyFileGenerationRequest(prompt), true, prompt);
+  }
+  const exportDiff = routing.classifyAgentRequest('请导出一份可下载的 diff 附件。');
+  assert.equal(exportDiff.route, 'file');
+  assert.equal(exportDiff.tools.useNativeArtifact, true);
+});
+
+test('negative file-delivery instructions do not activate artifact generation', () => {
+  const prompt = '请在项目目录运行一次 npm run typecheck，贴出退出码、stdout 和 stderr，不要创建或下载任何文件。';
+  const decision = routing.classifyAgentRequest(prompt);
+  assert.equal(modules.web.exports.likelyFileGenerationRequest(prompt), false);
+  assert.equal(modules.web.exports.likelyArtifactGenerationRequest(prompt), false);
+  assert.equal(decision.filesystem, true);
+  assert.equal(decision.route, 'filesystem');
+  assert.equal(decision.artifactKind, 'none');
+  assert.equal(decision.tools.useNativeArtifact, false);
+
+  const prohibition = '不要创建或下载任何文件。';
+  const prohibitionDecision = routing.classifyAgentRequest(prohibition);
+  assert.equal(prohibitionDecision.artifactKind, 'none');
+  assert.equal(prohibitionDecision.tools.useNativeArtifact, false);
+
+  const q3RoundOne = '第 3 题第一轮：只在隔离只读仓库 C:\\Users\\wc103\\AppData\\Local\\Temp\\sanmao-agent-qa-20261125-015438\\repo 目录请求执行一次 `npm run typecheck`。请返回真实退出码、stdout 与 stderr；不要把猜测或模拟输出当结果，也不要修改任何文件。如果当前工具集没有受控命令执行器，请明确报告能力缺失并停止。';
+  const q3RoundTwo = '第 3 题第二轮：在只读隔离目录 C:\\Users\\wc103\\AppData\\Local\\Temp\\sanmao-agent-qa-20261125-015438\\repo 中执行一次真实 `npm run typecheck`。这是命令执行能力测试，不是文档、浏览器或文件生成任务：不要创建或下载任何文件，不要调用文档工具，不要模拟结果。只返回执行器实际的退出码，以及分开的 stdout 和 stderr；如果工具清单没有受控 shell/命令执行器，就明确说“能力缺失”，不要改做别的任务。';
+  for (const prompt of [q3RoundOne, q3RoundTwo]) {
+    const request = routing.classifyAgentRequest(prompt);
+    assert.equal(request.route, 'filesystem');
+    assert.equal(request.filesystem, true);
+    assert.equal(request.artifactKind, 'none');
+    assert.equal(request.tools.useNativeArtifact, false);
+  }
+
+  const explicitDelivery = routing.classifyAgentRequest('请生成一个 Word 文档，另外不要下载任何文件。');
+  assert.equal(explicitDelivery.route, 'word');
+  assert.equal(explicitDelivery.tools.useNativeArtifact, true);
+});
 test('chooses bounded artifact routes before generic text or visual nouns', () => {
   assert.equal(routing.classifyAgentRequest('做一份项目周报').route, 'word');
   assert.equal(routing.classifyAgentRequest('生成一个销售数据 Excel 表格').route, 'excel');
@@ -296,6 +439,7 @@ test('GitHub repository data questions use read-only MCP instead of chat or nati
   ]) {
     const decision = routing.classifyAgentRequest(input, {}, { webMode: 'auto' });
     assert.equal(decision.tools.useMcp, true, input);
+    assert.equal(decision.filesystem, false, input);
     assert.equal(decision.policy.allowMcp, true, input);
     assert.equal(decision.policy.discoverMcp, true, input);
     assert.equal(decision.tools.useNativeWeb, false, input);
@@ -306,6 +450,10 @@ test('GitHub repository data questions use read-only MCP instead of chat or nati
   assert.equal(currentInfo.tools.useNativeWeb, true);
 });
 
+test("GitHub project searches are not local Filesystem requests", () => {
+  const decision = routing.classifyAgentRequest("帮我搜索 GitHub 项目列表并说明查到什么", {}, { webMode: "off" });
+  assert.equal(decision.filesystem, false);
+});
 test('explicit skill selection takes priority over automatic web search', () => {
   for (const input of [
     '用「luxun-voice」技能：秋天到了，如果鲁迅在海南，他会怎么说',

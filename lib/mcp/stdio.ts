@@ -24,6 +24,8 @@ import {
   type McpRequestOptions,
 } from './protocol';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
+import { filesystemTextRange, formatFilesystemTextRange, usesFilesystemTextRange } from './filesystem-text-lines';
+import type { McpCallResult } from '@/packages/contracts/mcp';
 import type { McpRemoteTool, McpServerConfig } from './types';
 
 /** 空闲多久回收子进程。浏览器 MCP 常驻是有意义的，但闲着还占内存就没必要。 */
@@ -390,12 +392,19 @@ export async function callStdioTool(
   toolName: string,
   args: Record<string, unknown>,
   options: McpRequestOptions = {},
-): Promise<{ text: string; isError: boolean }> {
+): Promise<McpCallResult> {
+  const range = usesFilesystemTextRange(server, toolName) ? filesystemTextRange(args) : null;
+  if (range && 'error' in range) return { text: range.error, isError: true, errorCode: 'FILESYSTEM_INVALID_TEXT_RANGE' };
   return withStdioSession(server, options, async (session) => {
-    const result = await request(session, 'tools/call', { name: toolName, arguments: args }, {
+    const result = await request(session, 'tools/call', { name: toolName, arguments: range?.args ?? args }, {
       timeoutMs: options.timeouts?.call ?? MCP_CALL_TIMEOUT_MS,
       signal: options.signal,
     });
+    if (range && !result?.isError) {
+      const content: unknown = result?.structuredContent?.content;
+      if (typeof content !== 'string') return { text: '文件工具未返回可标记行号的文本。', isError: true };
+      return formatFilesystemTextRange(content, range);
+    }
     return { text: resultText(result), isError: Boolean(result?.isError) };
   });
 }

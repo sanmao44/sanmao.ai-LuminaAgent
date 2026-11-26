@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent as ReactClipboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import AgentApprovalCard, { type AgentApprovalOutcome } from "@/components/AgentApprovalCard";
+import AgentApprovalResult from "@/components/AgentApprovalResult";
 import ModelPicker from "@/components/ModelPicker";
 import { isCanvasAgentDockCompositionEvent, shouldSubmitCanvasAgentDockEnter } from "@/components/canvas/agent-dock-keyboard";
 import SkillManager from "@/components/SkillManager";
@@ -15,7 +16,7 @@ import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import type { AgentWebMode } from "@/lib/creation/settings";
-import type { AgentApproval, AgentApprovalCall, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
+import type { AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
 import { pollAgentProgress } from "@/lib/agent-client";
 import { classifyAgentDeliverable, resolveCreativeRoute } from "@/lib/agent-intent";
 import { generateCanvasAgent, uploadCanvasAsset } from "@/lib/canvas/api";
@@ -107,6 +108,7 @@ export type CanvasAgentDockMessage = {
   approval?: AgentApproval;
   /** 用户处理过确认之后的结果文案：刷新后继续显示结果，而不是又冒出按钮。 */
   approvalResult?: string;
+  filesystemUndos?: AgentFilesystemUndo[];
   /** 这一轮真正落到外部服务上的调用：让用户看得见助手用了哪个外部工具。 */
   mcpTools?: AgentMcpToolUse[];
   /** 这一轮生成的文件产物：只存元数据与取件地址，二进制不进本地会话。 */
@@ -381,6 +383,7 @@ function readStoredApproval(value: unknown): AgentApproval | undefined {
       risk: String(call.risk || ""),
       reason: String(call.reason || ""),
       ...(call.argsPreview ? { argsPreview: String(call.argsPreview) } : {}),
+      ...(typeof call.filesystemDiff === "string" ? { filesystemDiff: call.filesystemDiff } : {}),
     }));
   return { id, expiresAt: Number(approval.expiresAt || 0) || 0, message: String(approval.message || ""), calls };
 }
@@ -479,8 +482,12 @@ function readStoredMessageExtras(message: unknown): Partial<CanvasAgentDockMessa
   const mcpTools = readStoredMcpTools(source.mcpTools);
   const files = readStoredFiles(source.files);
   const canvasPatch = readStoredCanvasPatch(source.canvasPatch);
+  const filesystemUndos = (Array.isArray(source.filesystemUndos) ? source.filesystemUndos : [])
+    .filter((undo): undo is AgentFilesystemUndo => Boolean(undo) && typeof undo.id === "string"
+      && typeof undo.path === "string" && Number.isFinite(undo.expiresAt));
   return {
     ...(approval ? { approval } : {}),
+    ...(filesystemUndos.length ? { filesystemUndos } : {}),
     ...(mcpTools.length ? { mcpTools } : {}),
     ...(files.length ? { files } : {}),
     ...(canvasPatch ? { canvasPatch } : {}),
@@ -1513,6 +1520,7 @@ export default function CanvasAgentDock({
       const next: CanvasAgentDockMessage = {
         ...item,
         approvalResult: String(outcome.message || (outcome.rejected ? "已取消这一步操作，没有执行。" : "已执行完成。")),
+        filesystemUndos: outcome.filesystemUndos,
       };
       delete next.approval;
       if (outcome.mcpTools?.length) next.mcpTools = [...(item.mcpTools || []), ...outcome.mcpTools];
@@ -2017,7 +2025,13 @@ export default function CanvasAgentDock({
                 onResolved={(outcome) => resolveMessageApproval(message.id, outcome)}
               />
             ) : null}
-            {message.approvalResult ? <div className="message-approval-result">{message.approvalResult}</div> : null}
+            {message.approvalResult ? (
+              <AgentApprovalResult
+                message={message.approvalResult}
+                filesystemUndos={message.filesystemUndos}
+                onResolved={(outcome) => resolveMessageApproval(message.id, outcome)}
+              />
+            ) : null}
             {message.images?.length ? (
               message.images.some((image) => image.batchId) || message.batchItems?.length ? (
                 <div className="canvas-agent-dock-batch-summary">

@@ -265,6 +265,41 @@ test('标准信任档不放过非浏览器的写工具、dangerous 与页面内�
   assert.equal(assess(mcpTool('browser_run_code_unsafe', 'external_side_effect')).required, true);
 });
 
+test('Filesystem edit request mode separates preview, reviewed write, and ordinary edit', () => {
+  const mode = approval.filesystemEditRequestMode;
+
+  assert.equal(mode('先展示差异，我确认后再写文件'), 'review');
+  assert.equal(mode('先给 diff 让我确认，再落盘'), 'review');
+  assert.equal(mode('等我确认再改'), 'review');
+  assert.equal(mode('本轮只做预览，等我确认再改'), 'preview');
+  assert.equal(mode('只给我看差异，别改文件'), 'preview');
+  assert.equal(mode('本轮只做预览：调用 edit_file dryRun=true，不要落盘。'), 'preview');
+  assert.equal(mode('先生成 diff，不要落盘。'), 'preview');
+  assert.equal(mode('先给我一份 diff，确认前不要修改文件。'), 'review');
+  assert.equal(mode('在我确认之前，不要写入文件。'), 'review');
+  assert.equal(mode('改掉错字，但不要修改文件名。'), null);
+  assert.equal(mode('把这个 typo 改掉'), null);
+});
+
+test('Filesystem edit previews skip side-effect approval only after explicit application authorization', () => {
+  const edit = mcpTool('edit_file', 'external_side_effect', '本地文件');
+  const assess = (overrides = {}) => approval.assessToolApproval({
+    definition: edit,
+    args: { path: 'C:\\Temp\\fixture\\note.txt', dryRun: true },
+    policy: 'always',
+    ...overrides,
+  });
+
+  assert.equal(assess({ filesystemEditPreview: true }).required, false, 'a verified local preview has no side effect to approve');
+  assert.equal(assess().required, true, 'an edit_file request without the internal preview signal still needs approval');
+  assert.equal(assess({ filesystemEditPreview: true, toolPolicy: 'block' }).blocked, true, 'the per-tool block decision remains authoritative');
+  assert.equal(approval.assessToolApproval({
+    definition: mcpTool('write_file', 'external_side_effect', '本地文件'),
+    args: { path: 'C:\\Temp\\fixture\\note.txt', dryRun: true },
+    policy: 'always',
+    filesystemEditPreview: true,
+  }).required, true, 'the exception is limited to edit_file previews');
+});
 test('读本机敏感文件在任何档位都要确认，只有完全访问不拦', () => {
   const read = (policy) => approval.assessToolApproval({ definition: mcpTool('read_text_file', 'read'), args: { path: '.env' }, sensitiveHint: '要读取敏感配置文件 .env', policy });
   assert.equal(read('always').required, true);

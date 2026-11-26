@@ -3,10 +3,10 @@
  *
  * 审批不能靠「一个 HTTP 请求挂着等用户点确认」：用户可能几分钟后才回来，也可能直接关掉窗口。
  * 所以 approve 是重新进一次请求：服务端把当时存下来的对话、模型和待执行调用读回来，
- * 只执行用户点过的那几个调用，再把结果交回模型收尾。
+ * 只执行用户点过的那几个调用。已核对预览的本地编辑直接报告执行结果，其余流程可由模型收尾。
  *
  * 三条硬规则：
- * - 只执行审批记录里存的调用。请求体里只能带 approve / reject，前端伪造不出新调用。
+ * - 只执行审批记录里存的调用。approve / reject 只用审批记录，undo 只用已写入编辑的服务端撤销记录。
  * - 认领记录用原子改名，连点两下「允许」也只会真的执行一次（重复下单撤不回来）。
  * - 续跑只继续给只读工具：确认一次只换来一次写入，写工具绝不在续跑里再下发；
  *   模型想「再看看结果」时可以继续读，不需要用户再补一句需求。
@@ -20,8 +20,11 @@ import { runToolLoop } from '@/packages/tool-runtime/tool-loop';
 import { toModelToolSchema } from '@/lib/tools/registry';
 import { selectToolsForTurn } from '@/lib/tools/selector';
 import { resolveToolPolicy } from '@/lib/tools/policy';
-import { claimApproval, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
+import { claimApproval, claimFilesystemEditUndo, discardFilesystemEditUndo, saveFilesystemEditUndo, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
+import { callFilesystemEdit, isFilesystemEditCall, undoFilesystemEdit } from '@/lib/mcp/filesystem-edit';
+import { listMcpServers } from '@/lib/mcp/store';
+import type { AgentFilesystemUndo } from '@/packages/contracts/agent';
 import { listFilesystemRoots, listFilesystemWriteRoots } from '@/lib/mcp/filesystem-roots';
 import { recordMcpCall, type McpAuditDecision } from '@/lib/mcp/audit';
 import { resolveLocalDataDir } from '@/lib/data-paths';
@@ -44,6 +47,14 @@ export type AgentResumeMcpToolUse = { server: string; name: string; readOnly: bo
 
 function toolFailure(call: PendingToolCall, error: string): ChatMessage {
   return { role: 'tool', tool_call_id: call.callId, content: JSON.stringify({ ok: false, error }) };
+}
+
+function readApprovalToolOutcome(message: ChatMessage) {
+  try {
+    const value = JSON.parse(String(message.content || '')) as { ok?: boolean; error?: string; content?: string };
+    if (typeof value.ok !== 'boolean') return null;
+    return { name: message.tool_call_id || '操作', ok: value.ok, error: value.error || (!value.ok ? value.content : undefined) };
+  } catch { return null; }
 }
 
 /**
@@ -78,9 +89,35 @@ function lastUserInstruction(messages: unknown) {
   return '';
 }
 
+async function resumeFilesystemUndo(id: unknown, signal?: AbortSignal): Promise<AgentResumeOutcome> {
+  const dataDir = resolveLocalDataDir();
+  const record = claimFilesystemEditUndo(id, { dataDir });
+  if (!record) return { status: 404, body: { error: '这条撤销记录已用过或已过期。', consumed: true } };
+  const startedAt = Date.now();
+  const roots = listFilesystemRoots({ dataDir });
+  const writeRoots = listFilesystemWriteRoots({ dataDir });
+  const server = listMcpServers({ dataDir, roots }).find((candidate) => candidate.id === record.serverId);
+  const scope = { dataDir, roots, writeRoots };
+  const toolEnabled = server?.enabled === true && server.allowWrite && isFilesystemEditCall(server, 'edit_file')
+    && toolApprovalPolicy(record.toolId, { dataDir }) !== 'block';
+  const guard = toolEnabled ? guardMcpServerCall(server, 'edit_file', { path: record.change.target }, scope) : null;
+  const denied = !guard ? '本地文件工具已停用或写入已被禁止，撤销没有执行。'
+    : !guard.ok ? guard.error : guard.approval || '';
+  const result = denied
+    ? { isError: true, text: denied }
+    : await undoFilesystemEdit(record.change, scope, signal);
+  auditResumeCall({ serverId: record.serverId, serverName: server?.name || '本地文件', toolName: 'undo_edit_file', readOnly: false }, 'write', {
+    allowed: !denied, decision: denied ? 'guard' : 'approval', ok: !result.isError, durationMs: Date.now() - startedAt, summary: result.text,
+  });
+  return result.isError
+    ? { status: 409, body: { error: result.text, consumed: true } }
+    : { status: 200, body: { ok: true, message: result.text } };
+}
+
 export async function resumeAgentRun(input: { id: unknown; action: unknown; signal?: AbortSignal }): Promise<AgentResumeOutcome> {
+  if (input.action === 'undo') return resumeFilesystemUndo(input.id, input.signal);
   const action = input.action === 'approve' ? 'approve' : input.action === 'reject' ? 'reject' : null;
-  if (!action) return { status: 400, body: { error: '未知操作，只支持 approve 或 reject。' } };
+  if (!action) return { status: 400, body: { error: '未知操作，只支持 approve、reject 或 undo。' } };
 
   // 认领即销毁：上面两条分支都先拿到「唯一执行权」，拿不到就说明这条已经用过或过期了。
   const record = claimApproval(input.id);
@@ -104,8 +141,10 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
     return { status: 200, body: { ok: true, rejected: true, message: '已取消这一步操作，没有执行。' } };
   }
 
-  const runtime = await getRuntimeModel(record.model, 'chat').catch(() => null);
-  if (!runtime) return { status: 409, body: { error: '这轮用的模型已被移除或停用，请重新发一次请求。' } };
+  const reviewedFilesystemEditsOnly = record.pending.length > 0
+    && record.pending.every((pending) => pending.toolName === 'edit_file' && pending.filesystemEdit);
+  const runtime = reviewedFilesystemEditsOnly ? null : await getRuntimeModel(record.model, 'chat').catch(() => null);
+  if (!reviewedFilesystemEditsOnly && !runtime) return { status: 409, body: { error: '这轮用的模型已被移除或停用，请重新发一次请求。' } };
 
   // 等待期间用户可能改过 MCP 配置（地址、凭据、允许写入），所以这里重新读一次，按现在的配置判断。
   const mcpRuntime = await loadMcpToolRuntime({ signal: input.signal }).catch(() => ({ servers: [], tools: [] as const }));
@@ -171,7 +210,9 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   // 写权限清单和读清单分开：用户点「允许」只代表同意这一次，不代表那个目录可以写。
   const guardOptions = { roots: listFilesystemRoots(), writeRoots: listFilesystemWriteRoots(), dataDir: resolveLocalDataDir() };
   const executed: ChatMessage[] = Array.isArray(record.executed) ? (record.executed as ChatMessage[]) : [];
+  const firstApprovedOutcome = executed.length;
   const usedMcpTools: AgentResumeMcpToolUse[] = [];
+  const filesystemUndos: AgentFilesystemUndo[] = [];
   const browserUses: Array<{ name: string; ok: boolean; args: Record<string, unknown> }> = [];
   const recordBrowserUse = (server: { catalogId?: string } | undefined, meta: { serverId: string; toolName: string }, args: Record<string, unknown>, ok: boolean) => {
     if (server?.catalogId === 'playwright') {
@@ -200,11 +241,32 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   const executeResumeMcp = async (pending: PendingToolCall, server: NonNullable<typeof mcpRuntime.servers[number]>, meta: { serverId: string; serverName: string; toolName: string; readOnly: boolean; blocked: boolean }, args: Record<string, unknown>) => {
     const startedAt = Date.now();
     const browserUse = recordBrowserUse(server, meta, args, false);
+    const filesystemEdit = isFilesystemEditCall(server, meta.toolName);
     const outcome = await executeMcpTool({
       callId: pending.callId, server, meta: meta!, args, signal: input.signal,
       timeoutMs: Math.max(5_000, budget), decision: 'approval', retry: meta.readOnly,
       dependencies: {
-        call: callMcpTool,
+        call: async (callServer, toolName, callArgs, options) => {
+          if (filesystemEdit) {
+            let receipt: AgentFilesystemUndo | undefined;
+            try {
+              const result = await callFilesystemEdit(callArgs, guardOptions, {
+                approved: pending.filesystemEdit, requirePreview: true, signal: options.signal,
+                captureUndo: (change) => { receipt = saveFilesystemEditUndo(change, pending, { dataDir: guardOptions.dataDir }); },
+              });
+              if (!result.isError && receipt) {
+                filesystemUndos.push(receipt);
+                receipt = undefined;
+              }
+              return result;
+            } finally {
+              if (receipt) discardFilesystemEditUndo(receipt.id, { dataDir: guardOptions.dataDir });
+            }
+          }
+          if (pending.filesystemEdit) return { isError: true, text: '本地文件工具已变更，这份编辑预览不能继续使用。请重新发起。' };
+
+          return callMcpTool(callServer, toolName, callArgs, options);
+        },
         guard: (guardServer, guardMeta, guardArgs) => {
           const guard = guardMcpServerCall(guardServer, guardMeta.toolName, guardArgs, guardOptions);
           return guard.ok ? { ok: true, args: guard.args } : { ok: false, error: guard.error };
@@ -272,7 +334,31 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       auditResumeCall(meta, pending.risk, { allowed: false, decision: 'block', ok: false, durationMs: 0, summary: reason });
       continue;
     }
-    executed.push(await executeResumeMcp(pending, server, meta!, args));
+    try {
+      executed.push(await executeResumeMcp(pending, server, meta, args));
+    } catch (error) {
+      if (!input.signal?.aborted || !filesystemUndos.length) throw error;
+      executed.push(toolFailure(pending, '续跑超时，请核对这一步实际结果。已经完成的文件编辑仍可撤销。'));
+    }
+  }
+
+  // The local adapter has already checked the exact bytes and recorded any undo.
+  // Model narration or another read cannot improve the accuracy of this outcome.
+  if (!runtime) {
+    const resultLines: string[] = [];
+    if (filesystemUndos.length === 1) resultLines.push('已写入本次文件修改，可点击下方按钮撤销。');
+    if (filesystemUndos.length > 1) resultLines.push(`已写入 ${filesystemUndos.length} 项文件修改，可分别撤销。`);
+    executed.slice(firstApprovedOutcome).forEach((message, index) => {
+      const outcome = readApprovalToolOutcome(message);
+      if (outcome?.ok) return;
+      const target = record.pending.length > 1 ? record.pending[index]?.filesystemEdit?.target : undefined;
+      const reason = outcome?.error || '未能确认文件修改结果。';
+      resultLines.push(target ? `${target}：${reason}` : reason);
+    });
+    return { status: 200, body: {
+      ok: true, message: resultLines.join('\n') || '已生成文件修改预览。', mcpTools: usedMcpTools,
+      ...(filesystemUndos.length ? { filesystemUndos } : {}),
+    } };
   }
 
   const messages: ChatMessage[] = [
@@ -411,7 +497,7 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
       finalText: (reply) => stripToolCallMarkup(String(reply?.content || '')).trim(),
     }).catch((error) => {
       // 只读补读失败不影响已经执行完的那一步：下面还有一次不带工具的收尾。
-      if (input.signal?.aborted) throw error;
+      if (input.signal?.aborted && !filesystemUndos.length) throw error;
       if (error instanceof AgentContextBudgetExceededError) contextBudgetFailure = error.message;
       console.error('[Agent] 确认后续跑补读失败：', error);
       return null;
@@ -425,13 +511,13 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   const desktopGap = getDesktopCompletionGap();
   if (desktopGap) text = `${desktopCompletionPrompt(desktopGap)} 任务未完成，结果尚未确认。`;
 
-  if (!text) {
+  if (!text && !(input.signal?.aborted && filesystemUndos.length)) {
     try {
       const reply = await completeResume({ messages, tool_choice: 'none' });
       text = stripToolCallMarkup(String(reply?.choices?.[0]?.message?.content || '')).trim();
       if (text) contextBudgetFailure = '';
     } catch (error) {
-      if (input.signal?.aborted) throw error;
+      if (input.signal?.aborted && !filesystemUndos.length) throw error;
       if (error instanceof AgentContextBudgetExceededError) contextBudgetFailure = error.message;
       // 工具已经真的执行过了，这里只是没能写出说明文字：如实告诉用户，别让它看起来像没执行。
       console.error('[Agent] 确认后续跑整理回答失败：', error);
@@ -439,17 +525,15 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   }
 
   const fallback = usedMcpTools.length ? '已按你的确认调用工具，请核对实际结果。' : '这一步没有执行。';
-  const outcomes = executed.flatMap((message) => {
-    try {
-      const value = JSON.parse(String(message.content || '')) as { ok?: boolean; error?: string; content?: string };
-      return typeof value.ok === 'boolean' ? [{ name: message.tool_call_id || '操作', ok: value.ok, error: value.error || (!value.ok ? value.content : undefined) }] : [];
-    } catch { return []; }
-  });
+  const outcomes = executed.map(readApprovalToolOutcome).filter((outcome) => outcome !== null);
   const outcomeText = toolOutcomeText(text || `${fallback}（这轮没能整理出说明文字，可以继续追问细节。）`, outcomes);
   // Approval has already been consumed and its calls may have had side effects.
   // A model budget failure must not make those calls look safe to repeat.
   const budgetGuidance = contextBudgetFailure
     ? `${contextBudgetFailure}\n已批准步骤的执行结果已保留，但本次未能继续完成模型整理或结果核验。请先核对实际结果，避免重复执行。`
     : '';
-  return { status: 200, body: { ok: true, message: [outcomeText, budgetGuidance].filter(Boolean).join('\n\n'), mcpTools: usedMcpTools } };
+  return { status: 200, body: {
+    ok: true, message: [outcomeText, budgetGuidance].filter(Boolean).join('\n\n'), mcpTools: usedMcpTools,
+    ...(filesystemUndos.length ? { filesystemUndos } : {}),
+  } };
 }

@@ -2,6 +2,9 @@ import { MCP_MAX_TOOLS_PER_SERVER, listMcpServers } from './store';
 import { listMcpServerTools } from './client';
 import type { McpTimeouts } from './client';
 import type { McpRemoteTool, McpServerConfig } from './types';
+import { filesystemTextRangeProperties, usesFilesystemTextRange } from './filesystem-text-lines';
+import { isFilesystemEditCall } from './filesystem-edit';
+import { filesystemTextSearchSchema } from './filesystem-search';
 import { catalogWritePolicy, catalogWriteToolProblem, findCatalogEntry } from './catalog';
 import { isValidToolName, type ToolDefinition } from '@/lib/tools/registry';
 
@@ -49,7 +52,17 @@ function mcpToolDescription(server: McpServerConfig, tool: McpRemoteTool) {
     : isWindowsMcp && tool.name === 'Type'
       ? 'Windows-MCP Type requires text and either loc=[x,y] or label from a fresh Snapshot. It cannot type into the focused window without a target. Refresh Snapshot after changing windows, then choose the editor target before typing. '
       : '';
-  return `[MCP · ${server.name}] ${guidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
+  let filesystemGuidance = '';
+  if (usesFilesystemTextRange(server, tool.name)) {
+    filesystemGuidance = 'Open known paths directly. Use findText with a short symbol or diagnostic to locate numbered evidence. Follow references to the next unverified file. Request independent reads of known paths in the same response and avoid repeating directory scans. Use one selection: findText, startLine + endLine (inclusive, at most 100 lines), head, or tail. ';
+  } else if (server.catalogId === 'filesystem' && tool.name === 'search_text') {
+    filesystemGuidance = 'Searches file contents inside authorized folders and returns path:line evidence with source excerpts. Use a literal short query; results can be partial when limits are reached. ';
+  } else if (server.catalogId === 'filesystem' && tool.name === 'search_files') {
+    filesystemGuidance = 'Matches file and directory paths only. Does not search file contents. ';
+  } else if (isFilesystemEditCall(server, tool.name)) {
+    filesystemGuidance = 'If the user says to show the diff and apply it after approval, use dryRun=false. SANMAO shows a diff with an Allow button before writing. Use dryRun=true only when the user wants a preview only. Do not ask for approval in chat or invent an undo action. ';
+  }
+  return `[MCP · ${server.name}] ${guidance}${filesystemGuidance}${upstream}`.slice(0, MCP_MAX_TOOL_DESCRIPTION_CHARS);
 }
 
 /** 注册表里的运行时 id，和模型看到的名字分开记：名字是给人看的，id 给审计用。 */
@@ -96,7 +109,12 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
     : null;
   // 写操作策略一次读盘、按需取：没有写权限分项的条目根本不会去读配置。
   let writePolicy: ReturnType<typeof catalogWritePolicy> | undefined;
-  const selected = tools
+  const sourceTools = server.catalogId === 'filesystem'
+    && server.transport === 'stdio'
+    && !tools.some((tool) => tool.name === 'search_text')
+    ? [...tools, { name: 'search_text', title: 'Search authorized file contents', inputSchema: filesystemTextSearchSchema, annotations: { readOnlyHint: true } } satisfies McpRemoteTool]
+    : tools;
+  const selected = sourceTools
     // 名字要能直接当 function name 下发：上游只接受 [A-Za-z0-9_-]，服务公布怪名字就直接跳过，
     // 否则这一轮整个工具表都会被服务商判成非法请求。
     .filter((tool) => !isForbiddenMcpTool(server, tool.name)
@@ -117,11 +135,18 @@ export function mcpToolDefinitions(server: McpServerConfig, tools: readonly McpR
         blockedReason = problem;
       }
     }
+    const upstreamSchema = inputSchemaOf(tool);
+    const properties = upstreamSchema.properties as Record<string, unknown> | undefined;
+    const schema = usesFilesystemTextRange(server, tool.name)
+      ? { ...upstreamSchema, properties: { ...properties, ...filesystemTextRangeProperties } }
+      : isFilesystemEditCall(server, tool.name)
+        ? { ...upstreamSchema, properties: { ...properties, dryRun: { type: 'boolean', description: 'Set true for a preview only. If asked to apply an edit after approval, set false so SANMAO can show the approval card.' } } }
+        : upstreamSchema;
     return {
       id: mcpRuntimeToolId(server.id, tool.name),
       name: mcpToolId(server.id, tool.name),
       description: mcpToolDescription(server, tool),
-      schema: inputSchemaOf(tool),
+      schema,
       permissions: readOnly ? ['network'] : ['network', 'external:write'],
       tags: ['mcp'],
       source: 'mcp',

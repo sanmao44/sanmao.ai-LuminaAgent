@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createTsRequire } from './ts-require.mjs';
@@ -10,6 +10,8 @@ const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.ur
 const realSkills = requireTs('./skills');
 const realBrowserGuidance = requireTs('./mcp/browser-guidance');
 const realApproval = requireTs('./agent/approval');
+const filesystemEdit = requireTs('./mcp/filesystem-edit');
+const filesystemPolicy = requireTs('./mcp/filesystem-policy');
 const { createProviderCoordinator } = requireTs('../packages/model-runtime/provider-coordinator');
 const { createAgentModelInvoker } = requireTs('../packages/model-runtime/agent-invoker');
 function harness(options = {}) {
@@ -34,6 +36,7 @@ function harness(options = {}) {
   const transcriptionCalls = [];
   const savedSubtitleArtifacts = [];
   const generationLogFinishes = [];
+  const testFilesystemRoots = options.filesystemRoots ?? (options.mcpServers?.some((server) => server.catalogId === 'filesystem') ? ['C:\Temp\repo'] : []);
   const model = { id: 'test-chat', rawId: 'test-chat', displayName: 'Test', capabilities: options.chatCapabilities || [], kind: 'chat', ...(options.contextWindow ? { contextWindow: options.contextWindow } : {}) };
   const imageModel = { ...model, id: 'test-image', rawId: 'test-image', kind: 'image', enabled: true, published: true, capabilities: options.imageCapabilities || ['generate'], providerId: 'test' };
   const provider = { id: 'test', name: 'Test', platform: 'openai', enabled: true };
@@ -162,7 +165,7 @@ function harness(options = {}) {
               return { isError: true, text: 'test MCP tool unavailable' };
             },
             MCP_CALL_TIMEOUT_MS: 30_000,
-            MCP_TOOL_MAX_CALLS_PER_TURN: 8,
+            MCP_TOOL_MAX_CALLS_PER_TURN: options.mcpToolMaxCallsPerTurn ?? 8,
             MCP_TURN_TIME_BUDGET_MS: 120_000,
             MCP_TOOL_SEPARATOR: '__',
             lazyMcpGroupKeywords: mcpToolsApi.lazyMcpGroupKeywords,
@@ -175,7 +178,7 @@ function harness(options = {}) {
             browserExternalBlocker: options.browserExternalBlocker || (() => ''),
             browserTextNeedsContinuation: () => false,
             browserTextSubmissionGap: options.browserTextSubmissionGap || (() => ''),
-            guardMcpServerCall: (_server, _toolName, args) => ({ ok: true, args }),
+            guardMcpServerCall: options.guardMcpServerCall || ((_server, _toolName, args) => ({ ok: true, args })),
             importBrowserArtifacts: async () => [],
             shouldImportBrowserArtifacts: () => false,
             noteRemoteCatalogCallFailure: () => {},
@@ -203,6 +206,12 @@ function harness(options = {}) {
             importLocalImage: async () => null,
             isLocalImageRead: () => false,
             verifyFilesystemMove: async () => ({ ok: false }),
+            isFilesystemEditCall: filesystemEdit.isFilesystemEditCall,
+            prepareFilesystemEdit: filesystemEdit.prepareFilesystemEdit,
+            callFilesystemEdit: (args, scope, input) => {
+              mcpCalls.push({ toolName: 'edit_file', args });
+              return filesystemEdit.callFilesystemEdit(args, scope, input);
+            },
           },
           skills: {
             buildAgentSkillContext: skillsApi.buildAgentSkillContext,
@@ -325,7 +334,7 @@ function harness(options = {}) {
         return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
       },
       getRuntimeImageModelCandidates: async () => imageModelCandidates,
-      getPublicState: async () => ({ settings: {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
+      getPublicState: async () => ({ settings: options.publicSettings || {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
     '@/lib/runtime-operation': { beginRuntimeRequest: async () => noOp, RuntimeDrainingError: class extends Error {} },
@@ -358,7 +367,10 @@ function harness(options = {}) {
     '@/lib/mcp/filesystem-policy': {},
     '@/lib/mcp/browser-downloads': {},
     '@/lib/mcp/catalog-remote': {},
-    '@/lib/mcp/filesystem-roots': { listFilesystemRoots: () => [], listFilesystemWriteRoots: () => [] },
+    '@/lib/mcp/filesystem-roots': {
+      listFilesystemRoots: () => testFilesystemRoots,
+      listFilesystemWriteRoots: () => options.filesystemWriteRoots ?? testFilesystemRoots,
+    },
     '@/lib/mcp/admin': {
       runMcpManageAction: async (...args) => {
         manageCalls.push(args);
@@ -367,6 +379,7 @@ function harness(options = {}) {
     },
     '@/lib/mcp/runtime-admin': {},
     '@/lib/agent/approval': {
+      filesystemEditRequestMode: realApproval.filesystemEditRequestMode,
       toolApprovalPolicy: () => 'ask',
       assessToolApproval: () => ({ required: false, blocked: false }),
       appendPageContext: (current, source, text) => `${current || ''}\n${source}: ${text}`.trim(),
@@ -653,6 +666,570 @@ test('GitHub 仓库只读查询会发现并下发 MCP 工具', async () => {
   assert.ok(agent.discoveryCalls.length > 0);
   assert.ok(agent.calls.some((call) => call.tools?.some((tool) => tool.function.name === 'github__list_repositories')));
   assert.deepEqual(agent.mcpCalls, [{ server: 'github', toolName: 'list_repositories', args: {} }]);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+
+const filesystemReadTestServer = { id: 'filesystem-test', name: '本地文件', catalogId: 'filesystem', transport: 'stdio', enabled: true, allowWrite: false, lazy: false };
+const filesystemReadTestTools = ['read_text_file', 'list_directory'].map((name) => ({
+  id: `mcp:filesystem-test:${name}`, name: `filesystem-test__${name}`, source: 'mcp',
+  description: name, schema: { type: 'object', properties: { path: { type: 'string' } } }, tags: ['mcp'], risk: 'read',
+  gating: () => true,
+  mcp: { serverId: 'filesystem-test', serverName: '本地文件', toolName: name, readOnly: true, blocked: false },
+}));
+const blockedFilesystemEditTestTool = {
+  id: 'mcp:filesystem-test:edit_file', name: 'filesystem-test__edit_file', source: 'mcp',
+  description: 'edit_file', schema: { type: 'object', properties: { path: { type: 'string' }, dryRun: { type: 'boolean' } } },
+  tags: ['mcp'], risk: 'external_side_effect', gating: () => true,
+  mcp: { serverId: 'filesystem-test', serverName: '本地文件', toolName: 'edit_file', readOnly: false, blocked: true },
+};
+const filesystemReadTestMessage = { role: 'user', content: '请检查 update.ts 并说明 SHA-256 的来源。' };
+const filesystemReadTestReply = (id, name, filename, range = {}) => ({ content: null, tool_calls: [{
+  id, type: 'function', function: { name: `filesystem-test__${name}`, arguments: JSON.stringify({ path: `C:\\Temp\\repo\\${filename}`, ...range }) },
+}] });
+
+test("source tracing without an authorized folder asks for access and performs no work", async () => {
+  const agent = harness({
+    filesystemRoots: [],
+    filesystemWriteRoots: [],
+    reply: () => { throw new Error("the model must not be asked to invent a source trace"); },
+  });
+  const result = await agent.post([{
+    role: "user",
+    content: "请只读追踪这个问题：`update.json` 中 SHA-256 校验失败时，用户从界面触发更新，到下载校验失败并向用户显示错误的完整调用链在哪？请从 `update.json` 出发，在当前授权目录内进行追踪。优先使用正文搜索和带行号的原文读取工具。每个环节都给出相对路径:行号，并附能证明该环节的原文片段；核对 UI 触发、API 路由、预期 SHA-256 的取得、下载后的实际哈希计算与比较、失败信息返回链。只读；严禁写入文件或触发任何更新 API。",
+  }]);
+
+  assert.equal(result.deliverable, "CLARIFY");
+  assert.match(result.message, /还不能查看本地源码/);
+  assert.match(result.message, /添加包含项目的文件夹/);
+  assert.match(result.message, /不会读取或写入文件/);
+  assert.deepEqual(result.files, []);
+  assert.equal(agent.modelCalls.length, 0);
+  assert.equal(agent.mcpCalls.length, 0);
+  assert.equal(agent.runtimeLoads.length, 0);
+});
+test('read-only Filesystem lookup errors stay in the trace but do not block a later completed answer', async () => {
+  const agent = harness({
+    mcpServers: [filesystemReadTestServer],
+    mcpTools: filesystemReadTestTools,
+    callMcpTool: async (_server, _name, args) => args.path.endsWith('missing.ts')
+      ? { isError: true, text: 'Error: ENOENT: missing.ts' }
+      : { isError: false, text: 'export const sha256 = manifest.sha256;' },
+    reply: (_payload, count) => count === 1
+      ? filesystemReadTestReply('missing-read', 'read_text_file', 'missing.ts')
+      : count === 2
+        ? filesystemReadTestReply('source-read', 'read_text_file', 'update.ts')
+        : { content: 'The expected SHA-256 is read from manifest.sha256 in update.ts.' },
+  });
+
+  const result = await agent.post([filesystemReadTestMessage]);
+
+  assert.match(result.message, /expected SHA-256 is read from manifest.sha256/);
+  assert.deepEqual(agent.mcpCalls.map((call) => call.args.path), ['C:\\Temp\\repo\\missing.ts', 'C:\\Temp\\repo\\update.ts']);
+  assert.equal(result.mcpTools.some((item) => item.ok === false), true, 'the failed read remains visible in MCP evidence');
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+
+test('Filesystem source answers require a successful content read and cannot override path policy', async () => {
+  for (const { firstFailure, followupTool, expected } of [
+    { firstFailure: 'ENOENT: missing.ts', expected: /ENOENT/ },
+    { firstFailure: 'ENOENT: missing.ts', followupTool: 'list_directory', expected: /ENOENT/ },
+    { firstFailure: 'ENOENT: missing.ts', followupTool: 'read_text_file', expected: /ENOENT/ },
+    { firstFailure: '路径不在授权文件夹里', followupTool: 'read_text_file', expected: /不在授权文件夹/ },
+  ]) {
+    const denied = !firstFailure.startsWith('ENOENT');
+    const agent = harness({
+      mcpServers: [filesystemReadTestServer],
+      mcpTools: filesystemReadTestTools,
+      guardMcpServerCall: (_server, _toolName, args) => denied && args.path.endsWith('missing.ts')
+        ? { ok: false, error: firstFailure } : { ok: true, args },
+      callMcpTool: async (_server, name, args) => args.path.endsWith('missing.ts')
+        ? { isError: true, text: firstFailure }
+        : { isError: false, text: name === 'list_directory' ? '[FILE] update.ts' : denied ? 'export const sha256 = manifest.sha256;' : '' },
+      reply: (payload, count) => {
+        const toolResults = payload.messages.filter((message) => message.role === 'tool');
+        if (!toolResults.length && count === 1) return filesystemReadTestReply('missing-read', 'read_text_file', 'missing.ts');
+        if (followupTool && toolResults.length === 1 && payload.tool_choice === 'auto') return filesystemReadTestReply('followup', followupTool, 'update.ts');
+        return { content: '已确认哈希来自 manifest.sha256。' };
+      },
+    });
+    const result = await agent.post([filesystemReadTestMessage]);
+    assert.match(result.message, expected);
+    assert.doesNotMatch(result.message, /已确认哈希/);
+    assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+    assert.equal(agent.mcpCalls.some((call) => call.args.path.endsWith('missing.ts')), !denied);
+  }
+});
+
+test('an invalid line range only recovers after a nonempty read of the same file from the local service', async () => {
+  for (const { filename, transport, body, withCode, guarded, recovered } of [
+    { filename: 'update.ts', body: '18: const sha256 = manifest.sha256;', withCode: true, recovered: true },
+    { filename: 'other.ts', body: '18: const sha256 = manifest.sha256;', withCode: true },
+    { filename: 'update.ts', body: '', withCode: true },
+    { filename: 'update.ts', body: '18: const sha256 = manifest.sha256;', withCode: false },
+    { filename: 'update.ts', body: '18: const sha256 = manifest.sha256;', withCode: true, transport: 'http' },
+    { filename: 'update.ts', body: '18: const sha256 = manifest.sha256;', withCode: true, guarded: true },
+  ]) {
+    const failure = '请同时提供有效的 startLine 和 endLine';
+    const agent = harness({
+      mcpServers: [transport ? { ...filesystemReadTestServer, transport } : filesystemReadTestServer],
+      mcpTools: filesystemReadTestTools,
+      guardMcpServerCall: (_server, _tool, args) => guarded && args.endLine === 180
+        ? { ok: false, error: '路径不在授权文件夹里' } : { ok: true, args },
+      callMcpTool: async (_server, _name, args) => args.endLine === 180
+        ? { isError: true, text: failure, ...(withCode ? { errorCode: 'FILESYSTEM_INVALID_TEXT_RANGE' } : {}) }
+        : { isError: false, text: body },
+      reply: (payload, count) => {
+        if (count === 1) return filesystemReadTestReply('invalid-range', 'read_text_file', 'update.ts', { startLine: 1, endLine: 180 });
+        if (count === 2) return filesystemReadTestReply('corrected-range', 'read_text_file', filename, { startLine: 18, endLine: 18 });
+        return { content: '已核对 update.ts:18 的 SHA-256 原文。' };
+      },
+    });
+    const result = await agent.post([filesystemReadTestMessage]);
+    assert.match(result.message, recovered ? /已核对 update\.ts:18/ : guarded ? /不在授权文件夹/ : /startLine 和 endLine/, JSON.stringify({ filename, transport, body, withCode, guarded }));
+    assert.equal(result.mcpTools.some((tool) => tool.ok === false), true);
+    assert.equal(agent.generationLogFinishes.at(-1).status, recovered ? 'success' : 'error');
+  }
+});
+
+test('recoverable Filesystem read errors do not hide why a continuation stopped', async () => {
+  for (const { invalidRange, providerError } of [
+    { invalidRange: false, providerError: false },
+    { invalidRange: false, providerError: true },
+    { invalidRange: true, providerError: false },
+  ]) {
+    const agent = harness({
+      mcpToolMaxCallsPerTurn: 18,
+      mcpServers: [filesystemReadTestServer],
+      mcpTools: filesystemReadTestTools,
+      callMcpTool: async (_server, _name, args) => {
+        if (args.endLine === 180) return { isError: true, text: '行号超出有效范围', errorCode: 'FILESYSTEM_INVALID_TEXT_RANGE' };
+        if (args.path.endsWith('missing.ts')) return { isError: true, text: 'ENOENT: missing.ts' };
+        return { isError: false, text: 'export const sha256 = manifest.sha256;' };
+      },
+      reply: (payload, count) => {
+        if (count === 1) return invalidRange
+          ? filesystemReadTestReply('bad-range', 'read_text_file', 'update.ts', { startLine: 1, endLine: 180 })
+          : filesystemReadTestReply('missing-read', 'read_text_file', 'missing.ts');
+        if (providerError) throw new Error('provider unavailable in continuation');
+        if (payload.tool_choice === 'none') return { content: '只验证了部分代码。' };
+        return filesystemReadTestReply(`read-${count}`, 'read_text_file', `source-${count}.ts`);
+      },
+    });
+    const result = await agent.post([filesystemReadTestMessage]);
+    const stop = providerError ? /^任务未完成：模型续轮请求失败/ : /^任务未完成：达到工具续轮上限/;
+    assert.match(result.message, stop);
+    assert.doesNotMatch(result.message, /ENOENT|行号超出有效范围/);
+    assert.equal(result.mcpTools[0].ok, false);
+    assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+    assert.match(agent.generationLogFinishes.at(-1).error, stop);
+  }
+});
+
+test('MCP continuation limit gets one tool-free summary and settles as incomplete for JSON and SSE', async () => {
+  for (const stream of [false, true]) {
+    const agent = harness({
+      mcpToolMaxCallsPerTurn: 18,
+      mcpServers: [{ id: 'github', name: 'GitHub', enabled: true, allowWrite: false, catalogId: 'github' }],
+      mcpTools: [{
+        id: 'mcp:github:search_repositories', name: 'github__search_repositories', source: 'mcp',
+        description: 'Search repositories', schema: { type: 'object', properties: { query: { type: 'string' } } }, tags: ['mcp'], risk: 'read',
+        gating: () => true,
+        mcp: { serverId: 'github', serverName: 'GitHub', toolName: 'search_repositories', readOnly: true, blocked: false },
+      }],
+      callMcpTool: async (_server, _toolName, args) => ({ isError: false, text: JSON.stringify({ ok: true, query: args.query, repositories: ['one'] }) }),
+      reply: (payload, count) => payload.tool_choice === 'none'
+        ? { content: '已根据工具结果读取到仓库记录。' }
+        : { content: null, tool_calls: [{ id: 'github-call-' + count, type: 'function', function: { name: 'github__search_repositories', arguments: JSON.stringify({ query: 'round-' + count }) } }] },
+    });
+    const request = new Request('http://localhost/api/agent', {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'user', content: '帮我搜索 GitHub 项目列表并说明查到什么' }], webMode: 'off', ...(stream ? { stream: true } : {}) }),
+    });
+    const output = await agent.postRaw(request);
+    let message;
+    if (stream) {
+      assert.equal(output.kind, 'stream');
+      const events = (await new Response(output.body).text()).trim().split(/\r?\n\r?\n/).map((frame) => JSON.parse(frame.slice(6)));
+      message = events.find((event) => event.type === 'final')?.message;
+    } else {
+      assert.equal(output.kind, 'json');
+      message = output.body.message;
+    }
+    assert.match(message, /^任务未完成：达到工具续轮上限（8 轮）/);
+    assert.match(message, /已根据工具结果读取到仓库记录/);
+    const summaries = agent.modelCalls.filter((call) => call.payload.tool_choice === 'none');
+    assert.equal(summaries.length, 1);
+    assert.equal('tools' in summaries[0].payload, false);
+    assert.ok(summaries[0].payload.messages.some((entry) => entry.role === 'tool'));
+    assert.ok(summaries[0].payload.messages.at(-1).content.includes('明确说明用户请求仍未完成'));
+    assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+    assert.match(agent.generationLogFinishes.at(-1).error, /达到工具续轮上限/);
+  }
+});
+
+test('a Filesystem turn at the raised call cap reports the cap and summarizes the last evidence', async () => {
+  const filesystemCallLimit = 30;
+  const agent = harness({
+    mcpToolMaxCallsPerTurn: filesystemCallLimit,
+    mcpServers: [filesystemReadTestServer],
+    mcpTools: filesystemReadTestTools,
+    callMcpTool: async (_server, _name, args) => args.path.endsWith('missing.ts')
+      ? { isError: true, text: 'ENOENT: missing.ts' }
+      : { isError: false, text: args.path.endsWith('last.ts') ? '23: verifyPackage(bytes);' : '3: readManifest();' },
+    reply: (payload, count) => {
+      if (payload.tool_choice === 'none') {
+        assert.ok(payload.messages.some((message) => message.role === 'tool' && String(message.content).includes('23: verifyPackage(bytes);')));
+        return { content: '已核对 last.ts:23 与对应原文。' };
+      }
+      if (count === 1) return filesystemReadTestReply('read-missing', 'read_text_file', 'missing.ts');
+      assert.equal(count, 2, 'the raised call budget is reached in one batched continuation');
+      const calls = Array.from({ length: filesystemCallLimit - 1 }, (_unused, index) => {
+        const filename = index === filesystemCallLimit - 2 ? 'last.ts' : `manifest-${index + 1}.ts`;
+        return {
+          id: 'read-' + (index + 2),
+          type: 'function',
+          function: {
+            name: 'filesystem-test__read_text_file',
+            arguments: JSON.stringify({ path: `C:\\Temp\\repo\\${filename}` }),
+          },
+        };
+      });
+      return { content: null, tool_calls: calls };
+    },
+  });
+
+  const result = await agent.post([filesystemReadTestMessage]);
+
+  assert.equal(agent.mcpCalls.length, filesystemCallLimit);
+  assert.equal(agent.modelCalls.filter((call) => call.payload.tool_choice === 'none').length, 1);
+  assert.match(result.message, /^任务未完成：达到工具调用次数上限/);
+  assert.match(result.message, /已核对 last.ts:23/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+});
+
+test('read-only Filesystem trace keeps its extended budget when edit tools are blocked', async () => {
+  const batchSize = 2;
+  const batches = 10;
+  const expectedTools = batchSize * batches;
+  const agent = harness({
+    mcpToolMaxCallsPerTurn: 30,
+    mcpServers: [filesystemReadTestServer],
+    mcpTools: [...filesystemReadTestTools, blockedFilesystemEditTestTool],
+    callMcpTool: async (_server, _name, args) => ({ isError: false, text: 'verified evidence from ' + path.basename(args.path) }),
+    reply: (_payload, count) => count <= batches
+      ? {
+        content: null,
+        tool_calls: Array.from({ length: batchSize }, (_unused, index) => ({
+          id: 'trace-' + count + '-' + index,
+          type: 'function',
+          function: {
+            name: 'filesystem-test__read_text_file',
+            arguments: JSON.stringify({ path: 'C:\\Temp\\repo\\source-' + count + '-' + index + '.ts', findText: 'verified evidence' }),
+          },
+        })),
+      }
+      : { content: '已根据 20 次本地文件读取完成了跨文件追踪，并逐项引用核验结果。' },
+  });
+
+  const result = await agent.post([{ role: 'user', content: '请在代码库 C:\\Temp\\repo 中只读追踪 update.json 的校验失败调用链，并核对关联文件。' }]);
+
+  assert.equal(agent.mcpCalls.length, expectedTools);
+  assert.match(result.message, /已根据 20 次本地文件读取完成了跨文件追踪/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+test('a local MCP context budget stop returns bounded evidence and settles as incomplete for JSON and SSE', async () => {
+  for (const stream of [false, true]) {
+    for (const canSummarize of [false, true]) {
+      const agent = harness({
+        contextWindow: 12_000,
+        describeProviderFailure: (error) => error.message,
+        mcpServers: [filesystemReadTestServer],
+        mcpTools: filesystemReadTestTools,
+        callMcpTool: async () => ({ isError: false, text: `const digest = manifest.sha256;\n${'x'.repeat(32_000)}` }),
+        reply: (payload) => {
+          if (payload.tool_choice !== 'none') return filesystemReadTestReply('oversized-source', 'read_text_file', 'update.ts');
+          if (!canSummarize) throw new Error('summary unavailable');
+          return { content: '已核验一条证据：const digest = manifest.sha256。' };
+        },
+      });
+      const output = await agent.postRaw(new Request('http://localhost/api/agent', {
+        method: 'POST',
+        body: JSON.stringify({ messages: [filesystemReadTestMessage], webMode: 'off', ...(stream ? { stream: true } : {}) }),
+      }));
+      const response = stream
+        ? (await new Response(output.body).text()).trim().split(/\r?\n\r?\n/).map((frame) => JSON.parse(frame.slice(6))).find((event) => event.type === 'final')
+        : output.body;
+      const { message, mcpTools } = response;
+      assert.equal(output.kind, stream ? 'stream' : 'json', JSON.stringify(output.body));
+      assert.match(message, /^任务未完成：本轮内容超过模型上下文预算/, JSON.stringify(output.body));
+      assert.match(message, canSummarize ? /已核验一条证据/ : /尚未得到最终答案/);
+      assert.equal(mcpTools[0].ok, true);
+      assert.equal(agent.mcpCalls.length, 1);
+      assert.equal(agent.modelCalls.filter(({ payload }) => payload.tools?.length).length, 1, 'the overflowing continuation must never reach the provider');
+      const summaries = agent.modelCalls.filter(({ payload }) => payload.tool_choice === 'none');
+      assert.equal(summaries.length, 1);
+      const summary = summaries[0].payload;
+      assert.equal('tools' in summary, false);
+      assert.ok(summary.messages.some((message) => message.role === 'user' && message.content === filesystemReadTestMessage.content));
+      assert.ok(summary.messages.some((message) => message.role === 'assistant' && message.tool_calls?.some((call) => call.id === 'oversized-source')));
+      const evidence = summary.messages.find((message) => message.role === 'tool' && message.tool_call_id === 'oversized-source');
+      assert.match(evidence.content, /manifest\.sha256/);
+      assert.match(evidence.content, /工具结果已截断/);
+      assert.ok(evidence.content.length <= 2_000);
+      assert.equal(agent.generationLogFinishes.length, 1);
+      assert.equal(agent.generationLogFinishes[0].status, 'error');
+      assert.match(agent.generationLogFinishes[0].error, /^任务未完成：本轮内容超过模型上下文预算/);
+    }
+  }
+});
+
+test('MCP provider continuation failure skips fallback summary and settles as incomplete for JSON and SSE', async () => {
+  for (const stream of [false, true]) {
+    const agent = harness({
+      mcpToolMaxCallsPerTurn: 18,
+      mcpServers: [{ id: 'github', name: 'GitHub', enabled: true, allowWrite: false, catalogId: 'github' }],
+      mcpTools: [{
+        id: 'mcp:github:search_repositories', name: 'github__search_repositories', source: 'mcp',
+        description: 'Search repositories', schema: { type: 'object', properties: { query: { type: 'string' } } }, tags: ['mcp'], risk: 'read',
+        gating: () => true,
+        mcp: { serverId: 'github', serverName: 'GitHub', toolName: 'search_repositories', readOnly: true, blocked: false },
+      }],
+      callMcpTool: async (_server, _toolName, args) => ({ isError: false, text: JSON.stringify({ ok: true, query: args.query, repositories: ['one'] }) }),
+      reply: (_payload, count) => {
+        if (count === 1) return { content: null, tool_calls: [{ id: 'github-call', type: 'function', function: { name: 'github__search_repositories', arguments: JSON.stringify({ query: 'sanmao-ai' }) } }] };
+        throw new Error('test provider continuation failure');
+      },
+    });
+    const request = new Request('http://localhost/api/agent', {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'user', content: '帮我搜索 GitHub 项目列表并说明查到什么' }], webMode: 'off', ...(stream ? { stream: true } : {}) }),
+    });
+    const output = await agent.postRaw(request);
+    let message;
+    if (stream) {
+      assert.equal(output.kind, 'stream');
+      const events = (await new Response(output.body).text()).trim().split(/\r?\n\r?\n/).map((frame) => JSON.parse(frame.slice(6)));
+      message = events.find((event) => event.type === 'final')?.message;
+    } else {
+      assert.equal(output.kind, 'json');
+      message = output.body.message;
+    }
+
+    assert.deepEqual(agent.mcpCalls, [{ server: 'github', toolName: 'search_repositories', args: { query: 'sanmao-ai' } }]);
+    const failedContinuation = agent.modelCalls.find((call) => call.payload.tool_choice === 'auto' && call.payload.messages.some((entry) => entry.role === 'tool'));
+    assert.ok(failedContinuation, 'the failing continuation must occur after the MCP result was returned');
+    assert.equal(agent.modelCalls.filter((call) => call.payload.tool_choice === 'none').length, 0, 'provider failures must not trigger a fallback summary');
+    assert.match(message, /^任务未完成：模型续轮请求失败/);
+    assert.match(message, /尚未得到最终答案/);
+    assert.doesNotMatch(message, /任务已完成|已成功完成/);
+    assert.equal(agent.generationLogFinishes.length, 1);
+    assert.equal(agent.generationLogFinishes[0].status, 'error');
+    assert.match(agent.generationLogFinishes[0].error, /模型续轮请求失败/);
+  }
+});
+test('command requests without a command executor return a capability error and do not run', async () => {
+  const server = { id: 'filesystem-test', name: '本地文件', catalogId: 'filesystem', enabled: true, allowWrite: false, lazy: false };
+  const tool = (name) => ({
+    id: 'mcp:filesystem-test:' + name, name: 'filesystem-test__' + name, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: 'read', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly: true, blocked: false },
+  });
+  const prompts = [
+    '第 3 题第一轮：只在隔离只读仓库 C:\\Temp\\repo 目录请求执行一次 `npm run typecheck`。请返回真实退出码、stdout 与 stderr；不要把猜测或模拟输出当结果，也不要修改任何文件。如果当前 Agent 没有受控命令执行器，请明确报告能力缺失并停止。',
+    '第 3 题第二轮：在只读隔离目录 C:\\Temp\\repo 中执行一次真实 `npm run typecheck`。这是命令执行能力测试，不是文档、浏览器或文件生成任务：不要创建或下载任何文件，不要调用文档工具，不要模拟结果。只返回执行器实际的退出码，以及分开的 stdout 和 stderr；如果工具清单没有受控 shell/命令执行器，就明确说“能力缺失”，不要改做别的任务。',
+  ];
+
+  for (const prompt of prompts) {
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool('read_text_file'), tool('search_files')],
+      callMcpTool: async () => { throw new Error('no tool should execute'); },
+      reply: () => { throw new Error('the model must not be asked to invent an execution result'); },
+    });
+    const request = new Request('http://localhost/api/agent', {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], webMode: 'off', stream: true }),
+    });
+    const output = await agent.postRaw(request);
+
+    assert.equal(output.kind, 'json');
+    assert.equal(output.status, 501);
+    assert.equal(output.body.ok, false);
+    assert.match(output.body.message, /能力缺失/);
+    assert.match(output.body.message, /没有运行请求中的命令/);
+    assert.match(output.body.message, /没有真实退出码、stdout 或 stderr/);
+    assert.doesNotMatch(output.body.message, /检查对应服务|目录是否已授权/);
+    assert.equal(agent.modelCalls.length, 0);
+    assert.equal(agent.mcpCalls.length, 0);
+    assert.equal(agent.spreadsheetCalls.length, 0);
+    assert.equal(agent.presentationCalls.length, 0);
+    assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+    assert.match(agent.generationLogFinishes.at(-1).error, /能力缺失/);
+  }
+});
+
+test('an offered command executor that the model skips is reported as not used', async () => {
+  const server = { id: 'filesystem-test', name: '本地文件', catalogId: 'filesystem', enabled: true, allowWrite: true, lazy: false };
+  const commandTool = {
+    id: 'mcp:filesystem-test:run_command', name: 'filesystem-test__run_command', source: 'mcp',
+    description: 'Run an approved project command in the selected workspace.', schema: { type: 'object', properties: { command: { type: 'string' } } }, tags: ['mcp'],
+    risk: 'dangerous', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: 'run_command', readOnly: false, blocked: false },
+  };
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [commandTool],
+    callMcpTool: async () => { throw new Error('the model did not call the command executor'); },
+    reply: () => ({ content: '我会先检查项目配置。' }),
+  });
+  const output = await agent.postRaw(new Request('http://localhost/api/agent', {
+    method: 'POST',
+    body: JSON.stringify({ messages: [{ role: 'user', content: '请在项目目录运行一次 npm run typecheck，贴出真实退出码。' }], webMode: 'off', stream: true }),
+  }));
+  const offeredNames = agent.calls.flatMap((call) => (call.tools || []).map((tool) => tool.function.name));
+
+  assert.ok(offeredNames.includes('filesystem-test__run_command'));
+  assert.equal(agent.mcpCalls.length, 0);
+  assert.equal(output.kind, 'json');
+  assert.equal(output.status, 422);
+  assert.equal(output.body.ok, false);
+  assert.match(output.body.message, /本轮已提供命令执行工具，但模型没有调用它/);
+  assert.match(output.body.message, /没有真实退出码、stdout 或 stderr/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+});
+
+function filesystemEditFixture(t, userFile = 'qa-edit-target.txt') {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'sanmao-filesystem-approval-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const target = path.join(root, userFile);
+  const original = 'initial line\r\nkeep this line\r\n';
+  writeFileSync(target, original);
+  return { root, target, original, dataDir: path.join(root, 'app-data') };
+}
+
+function filesystemFixtureTool(server, name, readOnly = false) {
+  return {
+    id: `mcp:${server.id}:${name}`, name: `${server.id}__${name}`, source: 'mcp',
+    description: name, schema: { type: 'object', properties: {} }, tags: ['mcp'],
+    risk: readOnly ? 'read' : 'external_side_effect', gating: () => true,
+    mcp: { serverId: server.id, serverName: server.name, toolName: name, readOnly, blocked: false },
+  };
+}
+
+test('Filesystem no-write instructions force dry-run even with full access', async (t) => {
+  const { root, target, original } = filesystemEditFixture(t);
+  const server = { id: 'filesystem-test', name: '本地文件', catalogId: 'filesystem', transport: 'stdio', enabled: true, allowWrite: true, lazy: false };
+  const readTool = filesystemFixtureTool(server, 'read_text_file', true);
+  const editTool = filesystemFixtureTool(server, 'edit_file');
+  const writeTool = filesystemFixtureTool(server, 'write_file');
+  let expectedDiff = '';
+  const toolCall = (id, tool, args) => ({ content: null, tool_calls: [{ id, type: 'function', function: { name: tool.name, arguments: JSON.stringify(args) } }] });
+  const agent = harness({
+    mcpServers: [server],
+    mcpTools: [readTool, editTool, writeTool],
+    filesystemRoots: [root],
+    guardMcpServerCall: (_server, toolName, args, scope) => filesystemPolicy.guardFilesystemCall(args, { ...scope, toolName }),
+    publicSettings: { mcpApprovalPolicy: 'full' },
+    approvalOverrides: {
+      ...realApproval,
+      toolApprovalPolicy: () => 'always_allow',
+      createApproval: () => { throw new Error('dry-run preview must not create an approval request'); },
+    },
+    callMcpTool: async (_server, name) => {
+      assert.equal(name, 'read_text_file', 'the built-in edit should use the local adapter');
+      return { isError: false, text: readFileSync(target, 'utf8') };
+    },
+    reply: (payload, count) => {
+      if (count === 1) return toolCall('filesystem-read', readTool, { path: target });
+      if (count === 2) {
+        const write = toolCall('filesystem-write', writeTool, { path: target, content: 'must not be written' });
+        const edit = toolCall('filesystem-edit', editTool, { path: target, edits: [{ oldText: 'initial line', newText: 'corrected line' }], dryRun: false });
+        return { content: null, tool_calls: [...write.tool_calls, ...edit.tool_calls] };
+      }
+      const blocked = JSON.parse(payload.messages.find((message) => message.tool_call_id === 'filesystem-write').content);
+      assert.equal(blocked.ok, false);
+      assert.match(blocked.error, /先核对差异/);
+      const preview = JSON.parse(payload.messages.findLast((message) => message.role === 'tool').content);
+      assert.equal(preview.ok, true);
+      assert.match(preview.content, /-initial line\n\+corrected line/);
+      expectedDiff = preview.content;
+      return { content: '预览完成，文件仍未落盘。' };
+    },
+  });
+  const result = await agent.post([{
+    role: 'user',
+    content: `请把 ${target} 第一行的 initial line 改成 corrected line，先生成 diff，不要落盘。`,
+  }]);
+  assert.match(result.message, /只读文件差异预览/);
+  assert.match(result.message, /原文件没有修改/);
+  assert.match(result.message, /直接写入调用已.*拦截/);
+  assert.ok(result.message.includes(expectedDiff), 'the final user-visible reply contains the exact filesystem diff');
+  assert.equal(result.approval, undefined);
+  assert.ok(result.mcpTools.some((tool) => tool.name === 'write_file' && tool.ok === false), 'the blocked write remains visible in the tool audit');
+  assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['read_text_file', 'edit_file']);
+  assert.equal(agent.mcpCalls[1].args.dryRun, true);
+  assert.equal(readFileSync(target, 'utf8'), original);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
+
+test('Filesystem writes and non-Filesystem edit_file dry-runs still require approval', async (t) => {
+  const { root, target, original, dataDir } = filesystemEditFixture(t);
+  const cases = [
+    { catalogId: 'filesystem', toolName: 'edit_file', dryRun: false, diff: true },
+    { catalogId: 'filesystem', toolName: 'edit_file', dryRun: true, diff: true, review: true },
+    { catalogId: 'filesystem', toolName: 'edit_file', dryRun: false, diff: true, review: true, fullAccess: true },
+    { catalogId: 'filesystem', toolName: 'edit_file', dryRun: false, diff: true, review: true, fullAccess: true, confirmation: '先给我一份 diff，确认前不要修改文件。' },
+    { catalogId: 'external-test', toolName: 'edit_file', dryRun: true, diff: false },
+    { catalogId: 'filesystem', toolName: 'write_file', dryRun: true, diff: false },
+  ];
+
+  for (const scenario of cases) {
+    const server = { id: 'filesystem-test', name: '本地文件', catalogId: scenario.catalogId, transport: 'stdio', enabled: true, allowWrite: true };
+    const tool = filesystemFixtureTool(server, scenario.toolName);
+    const agent = harness({
+      mcpServers: [server],
+      mcpTools: [tool],
+      filesystemRoots: [root],
+      guardMcpServerCall: (_server, toolName, args, scope) => filesystemPolicy.guardFilesystemCall(args, { ...scope, toolName }),
+      publicSettings: { mcpApprovalPolicy: scenario.fullAccess ? 'full' : 'always' },
+      approvalOverrides: {
+        ...realApproval,
+        toolApprovalPolicy: () => scenario.fullAccess ? 'always_allow' : 'ask',
+        createApproval: (record) => realApproval.createApproval(record, { dataDir }),
+      },
+      callMcpTool: async () => ({ isError: false, text: 'unexpected execution' }),
+      reply: () => ({ content: null, tool_calls: [{
+        id: 'filesystem-write', type: 'function', function: {
+          name: tool.name,
+          arguments: JSON.stringify({ path: target, edits: [{ oldText: 'initial line', newText: 'corrected line' }], dryRun: scenario.dryRun }),
+        },
+      }] }),
+    });
+    const content = scenario.fullAccess
+      ? `帮我把 qa-edit-target.txt 里的 initial line 改成 corrected line，${scenario.confirmation ?? '先生成可核对的 diff，等我确认再改。'}`
+      : scenario.review
+        ? '使用本地文件编辑工具，先显示改动 diff 并等待我确认，再落盘。'
+        : '请在隔离夹具中使用本地文件 MCP 的 edit_file 工具处理该文件，并先展示预览。';
+    const result = await agent.post([{ role: 'user', content }]);
+
+    assert.equal(result.needsApproval, true, JSON.stringify(scenario));
+    assert.equal(agent.mcpCalls.length, 0, 'approval-gated calls must not execute');
+    assert.equal(readFileSync(target, 'utf8'), original);
+    if (scenario.diff) {
+      const publicCall = result.approval.calls[0];
+      const stored = realApproval.readApproval(result.approval.id, { dataDir });
+      assert.equal(stored.pending[0].args.dryRun, false);
+      assert.equal(publicCall.filesystemDiff, stored.pending[0].filesystemEdit.diff);
+      assert.match(publicCall.filesystemDiff, /-initial line\n\+corrected line/);
+      assert.equal(publicCall.argsPreview, '');
+      assert.equal(publicCall.risk, 'write');
+      assert.match(result.approval.message, /核对文件差异/);
+    } else {
+      assert.equal(result.approval.calls[0].filesystemDiff, undefined);
+    }
+    assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+  }
 });
 
 test('纯问候仍调用当前选择的模型，不返回固定本地文案', async () => {
@@ -1046,6 +1623,8 @@ test('desktop Agent does not report success when requested typing is still missi
   assert.deepEqual(agent.mcpCalls.map((call) => call.toolName), ['App']);
   assert.match(result.message, /任务未完成/);
   assert.match(result.message, /还没有成功的 Type/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+  assert.match(agent.generationLogFinishes.at(-1).error, /还没有成功的 Type/);
 });
 
 test('desktop Agent requires a requested screenshot after the final action', async () => {
@@ -2006,6 +2585,7 @@ test('filesystem success prose is rejected when no tool has executed', async () 
   const data = await agent.post([{ role: 'user', content: '把项目中的 INTJ.png 改名为 INTJ_极简风.png' }]);
   assert.match(data.message, /尚未执行/);
   assert.doesNotMatch(data.message, /已经完成/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
 });
 
 test('ordinary chat keeps the standard provider response deadline', async () => {
@@ -2058,7 +2638,7 @@ test('HTML delivery recovers from a context-size 413 with the minimal fenced-doc
       assert.equal(payload.tool_choice, 'none');
       assert.equal(payload.tools, undefined);
       const fence = String.fromCharCode(96).repeat(3);
-      return { content: fence + 'html\n' + content + '\n' + fence };
+      return { content: `${fence}html\n${content}\n${fence}` };
     },
   });
   const data = await agent.post([{ role: 'user', content: '生成一个 HTML 交互页面，命名为 context-recovery.html' }]);
@@ -2154,14 +2734,35 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(agent.modelTimeouts[0].timeoutMs, 180_000);
 });
 
-test('HTML interactive page exposes only the text-file lane, never Office or image tools', async () => {
+test('explicit HTML delivery does not expose the image tool even when the request describes a visual scene', async () => {
+  const content = '<!doctype html><html><body><main>file-only route</main></body></html>';
+  const agent = harness({
+    reply: (payload) => {
+      const offered = (payload.tools || []).map((tool) => tool.function.name);
+      assert.ok(offered.includes('file_generate'));
+      assert.equal(offered.includes('image_generate'), false, JSON.stringify(offered));
+      for (const forbidden of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
+        assert.equal(offered.includes(forbidden), false, `${forbidden} must not be offered`);
+      }
+      return { tool_calls: [{ id: 'html-file-only', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'file-only.html', content }] }) } }] };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的 SVG 动画，HTML 交付，带交互控件！' }]);
+
+  assert.equal(data.error, undefined);
+  assert.equal(data.files?.length || 0, 1);
+  assert.equal(agent.images.length, 0);
+});
+
+test('HTML interactive page wording stays on the file lane and does not fall into image generation', async () => {
   const content = '<!doctype html><html><body><button id="go">Go</button></body></html>';
   const agent = harness({
     reply: (payload) => {
       const offered = (payload.tools || []).map((tool) => tool.function.name);
       assert.ok(offered.includes('file_generate'), JSON.stringify(offered));
-      for (const forbidden of ['image_generate', 'document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
-        assert.equal(offered.includes(forbidden), false, 'must not offer ' + forbidden);
+      assert.equal(offered.includes('image_generate'), false, JSON.stringify(offered));
+      for (const forbidden of ['document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
+        assert.equal(offered.includes(forbidden), false, `${forbidden} must not be offered`);
       }
       return { tool_calls: [{ id: 'html-interactive', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'interactive.html', content }] }) } }] };
     },
