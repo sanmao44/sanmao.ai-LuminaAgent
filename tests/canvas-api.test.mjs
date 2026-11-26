@@ -410,6 +410,57 @@ test('canvas upload keeps small images and videos unchanged', async () => {
   }
 });
 
+test('portable project package images upload their original bytes into destination storage', async () => {
+  const originalFetch = globalThis.fetch;
+  const uploads = [];
+  const images = [
+    { id: 'image-1', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' },
+    { id: 'image-2', dataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' },
+  ];
+  const result = await withFetch(async (input, options) => {
+    if (String(input).startsWith('data:')) return originalFetch(input, options);
+    const body = options.body;
+    uploads.push({ input, options, bytes: new Uint8Array(await body.arrayBuffer()) });
+    return jsonResponse({
+      id: `destination-${uploads.length}`,
+      kind: 'image',
+      name: `project-image-${uploads.length}`,
+      url: `/api/storage/file?name=destination-${uploads.length}.png`,
+      storageKey: `images/destination-${uploads.length}.png`,
+      mime: options.headers['Content-Type'],
+      size: body.size,
+    });
+  }, () => api.uploadCanvasProjectPackageImages(images));
+
+  assert.equal(uploads.length, 2);
+  assert.deepEqual(uploads.map((item) => item.input), ['/api/canvas/assets', '/api/canvas/assets']);
+  assert.deepEqual(uploads.map((item) => item.options.headers['Content-Type']), ['image/png', 'image/svg+xml']);
+  assert.deepEqual(uploads.map((item) => item.options.headers['X-File-Name']), [
+    'project-image-image-1.png',
+    'project-image-image-2.svg',
+  ]);
+  assert.deepEqual([...uploads[0].bytes], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.deepEqual([...uploads[1].bytes], [60, 115, 118, 103, 62, 60, 47, 115, 118, 103, 62]);
+  assert.deepEqual([...result.entries()], [
+    ['image-1', { url: '/api/storage/file?name=destination-1.png', storageKey: 'images/destination-1.png' }],
+    ['image-2', { url: '/api/storage/file?name=destination-2.png', storageKey: 'images/destination-2.png' }],
+  ]);
+});
+
+test('portable project package validates every image before writing any asset', async () => {
+  const originalFetch = globalThis.fetch;
+  const uploads = [];
+  await assert.rejects(() => withFetch(async (input, options) => {
+    if (String(input).startsWith('data:')) return originalFetch(input, options);
+    uploads.push(input);
+    return jsonResponse({ url: '/api/storage/file?name=unexpected.png' });
+  }, () => api.uploadCanvasProjectPackageImages([
+    { id: 'image-1', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' },
+    { id: 'image-2', dataUrl: 'data:image/png;base64,UE5H' },
+  ])), /MIME 类型与文件内容不匹配/);
+  assert.deepEqual(uploads, []);
+});
+
 test('canvas upload compresses oversized images, preserves ratio, and fixes extension', async () => {
   const mocks = withImageCanvas({ width: 12000, height: 6000, outputBytes: 2048 });
   try {

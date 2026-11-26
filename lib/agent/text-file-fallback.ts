@@ -26,8 +26,13 @@ function requestedExtension(instruction: string) {
 
   // Prefer the format adjacent to a delivery verb: e.g. “SVG 动画，HTML 交付”.
   const deliveryFormat = instruction.match(/(?:html?|css|svg|xml|ya?ml|json|csv|tsv|markdown|md|txt|jsx?|tsx?|py|java|sql|sh|ps1)\s*(?:格式|交付|文件|附件|输出|下载|保存|导出)/iu)?.[0];
-  const deliveredExtension = deliveryFormat?.match(/^(html?|css|svg|xml|ya?ml|json|csv|tsv|markdown|md|txt|jsx?|tsx?|py|java|sql|sh|ps1)/iu)?.[1]?.toLowerCase() || '';
+  const deliveredExtension = deliveryFormat?.match(/^(html?|css|svg|xml|ya?ml|json|csv|tsv|markdown|md|txt|jsx?|tsx?|py|java|sql|sh|ps1)/iu)?.[0]?.toLowerCase() || '';
   if (deliveredExtension) return deliveredExtension;
+
+  // A page is an HTML deliverable even when its visual is described as an SVG
+  // animation. Prefer the container format when the request explicitly asks
+  // for an HTML page, rather than mistaking the embedded graphic for the file.
+  if (/\bhtml\b[^\n]{0,32}(?:交互|网页|页面|网站)/iu.test(instruction)) return 'html';
 
   const mentionedExtension = instruction.match(/(?:^|[^a-z0-9])(?:markdown|html?|yaml|yml|json|csv|tsv|svg|css|xml|txt|jsx|tsx|js|ts|py|java|sql|sh|ps1)(?:$|[^a-z0-9])/iu)?.[0]
     ?.replace(/[^a-z]/giu, '').toLowerCase();
@@ -46,6 +51,10 @@ export function isTextFileFallbackRequested(instruction: string) {
     || /(?:生成|创建|制作|导出|下载|保存|交付|输出)[^。！？\n]{0,40}(?:markdown|html?|yaml|yml|json|csv|tsv|svg|css|xml|txt|jsx|tsx|js|ts|py|java|sql|sh|ps1)(?:$|[^a-z0-9])/iu.test(instruction);
   const requestsHtmlPage = /(?:生成|创建|制作|导出|下载|保存|交付|输出)[^。！？\n]{0,48}(?:网页|网站页面|网页文件|交互页面|HTML页面)/iu.test(instruction);
   return requestsFile && (requestsTextFormat || requestsHtmlPage);
+}
+
+export function isHtmlFileGenerationRequested(instruction: string) {
+  return isTextFileFallbackRequested(instruction) && ['html', 'htm'].includes(requestedExtension(instruction));
 }
 
 function requestedFilename(instruction: string, extension: string, modelFilename: unknown) {
@@ -108,7 +117,7 @@ export function textFileFallbackSystemPrompt() {
     '当前阶段没有可调用工具；不要声称文件已保存、已生成或已下载。',
     '只根据最近一条用户请求生成完整、可直接保存的文件内容；需要上下文时仅把较早对话作为资料。',
     'HTML/HTM/SVG 文件优先只输出一个完整的 html 或 svg fenced 文档（例如 ```html\\n...\\n```），不要 JSON 转义；其他文本/代码文件只输出一个 JSON 对象，字段为 filename 和 content。两种格式都不要解释、路径或其他文字。',
-    'filename 使用短文件名并带正确扩展名；content 或 fenced 文档必须是完整 UTF-8 文件正文，不得省略、截断或用占位符。',
+    'filename 使用短文件名并带正确扩展名；content 或 fenced 文档必须是完整 UTF-8 文件正文，不得拆分、简化、遗漏、截断或用占位符。必须一次性满足用户提出的视觉、动画和交互要求。',
   ].join('\n');
 }
 

@@ -352,7 +352,7 @@ export function pollAgentProgress(
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
         if (seconds >= 3 && seconds !== elapsed) {
           elapsed = seconds;
-          options.onProgress({ stage, message: `${message}（已 ${seconds}s）` });
+          options.onProgress({ stage, message: `${message}（本轮已 ${seconds}s）` });
         }
       }
     }

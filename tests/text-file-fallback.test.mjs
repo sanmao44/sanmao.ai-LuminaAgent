@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createTsRequire } from './ts-require.mjs';
 
 const requireTs = createTsRequire(fileURLToPath(new URL('../lib', import.meta.url)));
-const { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackUserPrompt, isTextFileContextSizeFailure } = requireTs('./agent/text-file-fallback');
+const { isHtmlFileGenerationRequested, isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackUserPrompt, isTextFileContextSizeFailure } = requireTs('./agent/text-file-fallback');
 
 test('text file fallback validates and converts a complete HTML envelope', () => {
   const result = makeTextFileFallbackCall({
@@ -69,6 +69,22 @@ test('text file fallback classification distinguishes text deliverables from Off
   assert.equal(isTextFileFallbackRequested('生成 Word 文档并导出'), false);
   assert.equal(isTextFileFallbackRequested('请打包成 ZIP，命名为 demo.zip'), false);
   assert.equal(isTextFileFallbackRequested('如何制作 CSV 文件'), false);
+});
+
+test('an HTML page remains an HTML file when its animation uses SVG', () => {
+  const instruction = '生成一个小丑骑单轮车的 SVG 动画 HTML 交互页面，要求具备交互功能，设计要精致，并加入一些小巧思。';
+  assert.equal(isHtmlFileGenerationRequested(instruction), true);
+  assert.match(textFileFallbackUserPrompt(instruction), /完整的 \.html 文件/);
+
+  const content = '<!doctype html><html><body><svg aria-label="小丑动画"></svg></body></html>';
+  const result = makeTextFileFallbackCall({
+    response: `\x60\x60\x60html\n${content}\n\x60\x60\x60`,
+    instruction,
+    callId: 'clown-html',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(JSON.parse(result.call.function.arguments).files[0].filename, 'SANMAO-交付物.html');
+  assert.equal(JSON.parse(result.call.function.arguments).files[0].content, content);
 });
 
 test('text file fallback only retries a context-size 413, not a bare request-size 413 or rate limit', () => {

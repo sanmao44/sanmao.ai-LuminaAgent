@@ -116,7 +116,7 @@ export function CanvasSettingsPanel({ theme, connectionStyle, edgesVisible, dept
     <section className="canvas-setting-section"><b>自动检查点间隔</b><SelectMenu value={autoCheckpointIntervalMinutes} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onAutoCheckpointIntervalMinutesChange} ariaLabel="自动检查点间隔" options={AUTO_PROJECT_CHECKPOINT_INTERVAL_OPTIONS} /></section>
     <section className="canvas-setting-section"><b>深度图性能</b><SelectMenu value={depthQuality} portalZIndex={CANVAS_Z_INDEX.modalPopover} onChange={onDepthQualityChange} ariaLabel="深度图性能档位" options={DEPTH_QUALITY_OPTIONS} /></section>
     <section className="canvas-setting-section"><b>导出工作流</b><button type="button" onClick={onExportWorkflow}>导出 JSON</button></section>
-    <section className="canvas-setting-section"><b>导出项目包</b><small>包含项目设定、当前画布和素材来源索引</small><button type="button" onClick={onExportProjectPackage}>导出项目包</button></section>
+    <section className="canvas-setting-section"><b>导出项目包</b><small>包含项目设定、当前画布、历史版本和图片本体</small><button type="button" onClick={onExportProjectPackage}>导出项目包</button></section>
     <section className="canvas-setting-section"><b>导入工作流</b><small>同时支持项目包 JSON</small><button type="button" onClick={onImportWorkflow}>选择 JSON 文件</button></section>
   </CanvasPanelShell>;
 }
