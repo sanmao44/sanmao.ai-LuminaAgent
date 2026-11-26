@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -142,6 +142,85 @@ test('FlaUI 运行包支持断点续传、SHA 校验和暂存安装', async () =
     assert.deepEqual([...await readFile(path.join(installRoot, asset.executable))], [77, 90, 1, 2]);
     assert.deepEqual(JSON.parse(await readFile(path.join(installRoot, '.sanmao-install.json'), 'utf8')), { version: '0.2.1', sha256: asset.sha256 });
     assert.ok(progress.length >= 2);
+    assert.equal(mcp.isCatalogInstalled(entry, { dataDir }), true);
+  });
+});
+
+test('FlaUI 运行包替换已有目录时保留可回滚提交', async () => {
+  const makeArchive = (marker) => Buffer.from(zipSync({
+    'FlaUI.Mcp.exe': new Uint8Array([77, 90, marker, 2]),
+    'runtime.dll': new Uint8Array([marker, 9, 8, 7]),
+  }, { level: 0 }));
+  const makeEntry = (bytes) => ({
+    ...mcp.findCatalogEntry('windows-mcp'),
+    archive: {
+      assets: {
+        x64: {
+          url: 'https://example.test/FlaUI.zip',
+          size: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          executable: 'FlaUI.Mcp.exe',
+        },
+      },
+    },
+  });
+  await withDataDir(async (dataDir) => {
+    const first = makeArchive(1);
+    const second = makeArchive(2);
+    await archiveInstaller.installCatalogArchive(makeEntry(first), { dataDir }, {
+      fetchBytes: async (_url, request) => ({
+        url: 'https://example.test/FlaUI.zip',
+        data: first.subarray(request.range.start, request.range.end + 1),
+        rangeTotalBytes: first.byteLength,
+      }),
+    });
+    await archiveInstaller.installCatalogArchive(makeEntry(second), { dataDir }, {
+      fetchBytes: async (_url, request) => ({
+        url: 'https://example.test/FlaUI.zip',
+        data: second.subarray(request.range.start, request.range.end + 1),
+        rangeTotalBytes: second.byteLength,
+      }),
+    });
+    const installRoot = path.join(dataDir, 'mcp', 'windows-mcp', 'runtime-0.2.1');
+    assert.deepEqual([...await readFile(path.join(installRoot, 'FlaUI.Mcp.exe'))], [77, 90, 2, 2]);
+    assert.equal(mcp.isCatalogInstalled(makeEntry(second), { dataDir }), true);
+  });
+});
+
+test('Windows 运行包提交遇到瞬时 EPERM 会退避重试', async () => {
+  const bytes = Buffer.from(zipSync({ 'FlaUI.Mcp.exe': new Uint8Array([77, 90, 3, 2]) }, { level: 0 }));
+  const entry = {
+    ...mcp.findCatalogEntry('windows-mcp'),
+    archive: {
+      assets: {
+        x64: {
+          url: 'https://example.test/FlaUI.zip',
+          size: bytes.byteLength,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          executable: 'FlaUI.Mcp.exe',
+        },
+      },
+    },
+  };
+  await withDataDir(async (dataDir) => {
+    let renameAttempts = 0;
+    await archiveInstaller.installCatalogArchive(entry, { dataDir }, {
+      fetchBytes: async (_url, request) => ({
+        url: 'https://example.test/FlaUI.zip',
+        data: bytes.subarray(request.range.start, request.range.end + 1),
+        rangeTotalBytes: bytes.byteLength,
+      }),
+      renamePath: async (source, target) => {
+        renameAttempts += 1;
+        if (renameAttempts === 1) {
+          const error = new Error('simulated Windows lock');
+          Object.assign(error, { code: 'EPERM' });
+          throw error;
+        }
+        await rename(source, target);
+      },
+    });
+    assert.equal(renameAttempts, 2);
     assert.equal(mcp.isCatalogInstalled(entry, { dataDir }), true);
   });
 });

@@ -288,6 +288,9 @@ export async function installCatalogServer(
   if (current && !current.finished) throw new Error('这个服务正在安装中，请稍候');
   const controller = new AbortController();
   installs.set(entry.id, { child: null, controller, log: '', error: null, finished: false });
+  // 旧的本地 MCP 进程可能在 Windows 上持有可执行文件；替换运行目录前先收掉它，
+  // 但保留用户的启用设置，后续正常启动流程会使用新可执行文件。
+  closeStdioServer(entry.id);
   let failure: Error | null = null;
   let archiveTimer: ReturnType<typeof setTimeout> | null = null;
   try {
