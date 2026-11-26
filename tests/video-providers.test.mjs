@@ -238,6 +238,28 @@ test('legacy OpenAI transport on a Cangyuan connection submits the documented fi
   assert.equal(requests[0].init.headers['Idempotency-Key'], 'idem-gf1-first-frame');
 });
 
+test('Muse Video 20s image-to-video submission maps its canvas first frame to Cangyuan first_image_url', async () => {
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(JSON.stringify({ id: 'task-muse-first-frame', status: 'queued' }), { status: 202 });
+  };
+
+  const result = await video.submitRemoteVideo(provider({
+    platform: 'cangyuan', baseUrl: 'https://gateway.example/v1', videoBaseUrl: '', videoTransport: 'cangyuan-videos',
+  }), 'mu1-muse-video-20s', {
+    prompt: 'animate the connected first frame', seconds: 20, aspectRatio: '9:16',
+    firstFrame: 'https://assets.example/canvas-first-frame.png', referenceImages: [],
+  }, 'idem-muse-first-frame');
+
+  assert.equal(result.status, 'pending');
+  assert.equal(request.url, 'https://gateway.example/v1/videos');
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'mu1-muse-video-20s', prompt: 'animate the connected first frame', duration: 20,
+    aspect_ratio: '9:16', first_image_url: 'https://assets.example/canvas-first-frame.png',
+  });
+});
+
 test('Cangyuan connections with legacy OpenAI transport preserve reference-image input', async () => {
   let request;
   globalThis.fetch = async (url, init) => {

@@ -567,6 +567,34 @@ test('canvas Cangyuan first-frame generation preserves the picture and does not 
   }
 });
 
+test('Muse Video 20s canvas requests preserve the selected model and connected first frame', async () => {
+  const mocks = withImageCanvas();
+  try {
+    let request;
+    await withFetch(async (input, options) => {
+      request = { input, options };
+      return jsonResponse({ task: { id: 'muse-canvas-first-frame', status: 'pending' } });
+    }, () => api.generateCanvasVideo({
+      prompt: 'animate the connected first frame',
+      model: 'selected-cangyuan-model',
+      modelRawId: 'mu1-muse-video-20s',
+      videoTransport: 'cangyuan-videos',
+      inputMode: 'first-frame',
+      firstFrame: 'data:image/png;base64,CANVAS_SOURCE',
+      duration: 20,
+      aspect: '9:16',
+    }));
+
+    const payload = JSON.parse(request.options.body);
+    assert.equal(request.input, '/api/video/generate');
+    assert.equal(payload.model, 'selected-cangyuan-model');
+    assert.equal(payload.input.firstFrame, 'data:image/png;base64,CANVAS_SOURCE');
+    assert.deepEqual(payload.input.referenceImages, []);
+  } finally {
+    mocks.restore();
+  }
+});
+
 test('canvas Cangyuan video generation forwards non-default controls through the shared primary contract', async () => {
   let request;
   await withFetch(async (input, options) => {

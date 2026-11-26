@@ -2046,7 +2046,7 @@ const auditMcpCall = (
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
     if (textFileFallbackRequested) {
-      system += '\\n\\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
+      system += '\n\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
       llmMessages[0] = { role: 'system', content: system };
     }
     let artifactFallbackUsed = false;

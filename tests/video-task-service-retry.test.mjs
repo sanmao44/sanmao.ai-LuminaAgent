@@ -9,7 +9,7 @@ const { canRecoverVideoTaskResult } = createTsRequire(process.cwd(), {
   './repositories/task-repository': { createTaskRepository: () => ({}) },
 })('./lib/video-task-store');
 
-function createHarness(submissionErrors, videoTransport = 'openai-videos', rawModelId = 'fixture-video', mediaPreparer = async (value) => value, providerOverrides = {}, useRealLimits = false) {
+function createHarness(submissionErrors, videoTransport = 'openai-videos', rawModelId = 'fixture-video', mediaPreparer = async (value) => value, providerOverrides = {}, useRealLimits = false, runtimeResolver) {
   const finishedLogs = [];
   const tasks = new Map();
   let currentTask;
@@ -57,7 +57,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     './store': {
       getPublicState: async () => ({ settings: { videoStoragePath: '' } }),
       getProviderWithKey: async () => provider,
-      getRuntimeVideoModel: async () => runtime,
+      getRuntimeVideoModel: async (modelId) => runtimeResolver ? runtimeResolver(modelId, runtime) : runtime,
       markProviderCredentialFailure: async () => undefined,
     },
     './video-storage': { persistGeneratedVideos: async () => ({ videos: [], path: '' }) },
@@ -163,6 +163,24 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     patchTask,
   };
 }
+
+test('an unavailable explicitly selected video model fails before creating or submitting a task', async () => {
+  const requestedIds = [];
+  const harness = createHarness([], 'cangyuan-videos', 'mu1-muse-video-20s', undefined, {}, true, async (modelId) => {
+    requestedIds.push(modelId);
+    return null;
+  });
+
+  await assert.rejects(() => harness.service.createVideoGeneration({
+    modelId: 'stale-cangyuan-model',
+    idempotencyKey: 'stale-cangyuan-model',
+    input: { prompt: 'animate this frame', firstFrame: 'https://assets.example/first.png' },
+  }), /不会自动切换到其他模型/);
+
+  assert.deepEqual(requestedIds, ['stale-cangyuan-model']);
+  assert.equal(harness.task(), undefined);
+  assert.equal(harness.submitCount(), 0);
+});
 
 for (const rawModelId of ['kl1-kling-3.0', 'kl2-kling-3.0', 'kling-3.0-omni', 've1-veo-3.1-fast', 'veo-3.1-fast']) {
   test(`${rawModelId} accepts documented first/last frames without treating them as reference images`, async () => {
