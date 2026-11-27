@@ -80,7 +80,7 @@ test('search stops at its file-count budget and marks the result incomplete', as
     writeFileSync(path.join(root, `file-${String(index).padStart(3, '0')}.txt`), 'no match here\n');
   }
 
-  const result = await search(root, 'not-present', scope);
+  const result = await search(root, 'not-present', scope, { now: () => 0 });
   assert.equal(result.isError, false);
   assert.match(result.text, /文件数量已到搜索上限/);
   assert.match(result.text, /结果可能不完整/);
