@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SANMAO Taiji Web Chat Bridge
 // @namespace    sanmao.local
-// @version      1.1.2
+// @version      1.1.3
 // @description  Relays SANMAO chat and image requests through logged-in Taiji pages.
 // @match        https://ai.zhuangxiuyunying.xyz/chat*
 // @match        https://ai.zhuangxiuyunying.xyz/draw*
@@ -22,12 +22,13 @@
 
   const BRIDGE_ORIGIN = 'http://127.0.0.1:8787';
   const TOKEN_KEY = 'sanmao-taiji-web-bridge-token-v1';
+  const SCRIPT_VERSION = '1.1.3';
   const REQUEST_TIMEOUT_MS = 25_000;
   const GENERATION_TIMEOUT_MS = 180_000;
   const DRAW_TIMEOUT_MS = 30 * 60 * 1000;
   const DRAW_POLL_INTERVAL_MS = 1_800;
   const CATALOG_REFRESH_MS = 60_000;
-  const CHAT_ITEMS_SELECTOR = '#chat-content .chat-item';
+  const CHAT_ITEMS_SELECTOR = '.chat-items .chat-item, #chat-content .chat-item';
   // Taiji switches chat/draw views through client-side routing. The userscript
   // can survive that navigation, so resolve the queue kind at each poll/job
   // boundary instead of freezing the kind from the initial document URL.
@@ -56,8 +57,8 @@
       });
       document.documentElement.append(status);
     }
-    status.dataset.bridgeVersion = '1.1.2';
-    status.textContent = `SANMAO 桥接 v1.1.2：${message}`;
+    status.dataset.bridgeVersion = SCRIPT_VERSION;
+    status.textContent = `SANMAO 桥接 v${SCRIPT_VERSION}：${message}`;
     status.style.borderColor = isError ? '#c65b50' : '#b9c8cc';
     status.style.color = isError ? '#9d2f27' : '#20323a';
   }
@@ -384,7 +385,7 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
-  function waitForTaijiReply({ expectedPrompt, baselineMessageNodes, baselineMessageIds, sessionUrl, signal }) {
+  function waitForTaijiReply({ expectedPrompt, baselineMessageNodes, baselineMessageIds, signal }) {
     const expected = normalizeChatText(expectedPrompt);
     if (!expected) return Promise.reject(new Error('SANMAO 请求没有可用于匹配的聊天内容'));
     return new Promise((resolve, reject) => {
@@ -404,7 +405,9 @@
       const onAbort = () => finish(null);
       const check = () => {
         if (signal.aborted) return finish(null);
-        if (location.href !== sessionUrl) return finish(new Error('太极当前会话已切换'));
+        if (location.pathname !== '/chat' && !location.pathname.startsWith('/chat/')) {
+          return finish(new Error('太极当前页面已离开聊天页'));
+        }
 
         const items = [...document.querySelectorAll(CHAT_ITEMS_SELECTOR)];
         let userIndex = -1;
@@ -428,7 +431,7 @@
             ? !baselineMessageIds.has(messageId)
             : !baselineMessageNodes.has(item);
         });
-        const renderer = latestAssistant?.querySelector('.markdown-renderer');
+        const renderer = latestAssistant?.querySelector('.markdown-renderer, .chat-text .aa-markdown, .chat-text');
         const input = document.querySelector('.aa-chat-input');
         const stillGenerating = [...(input?.querySelectorAll('button') || [])]
           .some((button) => button.textContent.includes('停止'));
@@ -506,6 +509,7 @@
   async function processChatJob(token, job) {
     setStatus(`正在为 SANMAO 创建独立 ${job.label || job.model} 会话`);
     let submitted = false;
+    let stage = 'create_session';
     try {
       const textarea = await createTaijiSession(job);
       setTextareaValue(textarea, job.prompt);
@@ -518,23 +522,25 @@
       const baselineMessageIds = new Set([...baselineMessageNodes]
         .map((item) => item.getAttribute?.('data-message-id'))
         .filter((messageId) => typeof messageId === 'string' && messageId));
-      const sessionUrl = location.href;
       const observer = observeNextCompletion();
+      stage = 'submit_to_taiji';
       sendButton.click();
       submitted = true;
       setStatus('太极正在生成；本次不会自动重发');
+      stage = 'read_taiji_reply';
       const content = await waitForObservedCompletion(observer, {
         expectedPrompt: job.prompt,
         baselineMessageNodes,
         baselineMessageIds,
-        sessionUrl,
       });
+      stage = 'return_result_to_sanmao';
       await sendResult(token, job.id, { content });
       setStatus('回复已交给 SANMAO');
     } catch (error) {
+      const reason = error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180);
       const message = submitted
-        ? '请求可能已提交；请检查太极会话，本机桥不会自动重发'
-        : `会话或模型选择失败，未提交生成请求：${error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180)}`;
+        ? `太极已收到请求，但阶段 ${stage} 失败：${reason}；本机桥不会自动重发`
+        : `阶段 ${stage} 失败，未提交生成请求：${reason}`;
       try { await sendResult(token, job.id, { error: message }); } catch { /* The local request may already have timed out. */ }
       setStatus(message, true);
     }

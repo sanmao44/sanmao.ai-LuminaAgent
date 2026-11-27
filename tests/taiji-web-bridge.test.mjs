@@ -108,7 +108,7 @@ test('web worker handles legacy chat jobs that omit their kind', async () => {
     resultObserved,
     new Promise((_, reject) => setTimeout(() => reject(new Error('legacy job was not handled')), 1000)),
   ]);
-  assert.equal(body.error.startsWith('会话或模型选择失败，未提交生成请求：'), true);
+  assert.equal(body.error.startsWith('阶段 create_session 失败，未提交生成请求：'), true);
   assert.equal(body.error.includes('worker kind mismatch'), false);
 });
 
@@ -201,9 +201,9 @@ test('recovers a completed Taiji reply from the current conversation when SSE pa
     classList: { contains: (name) => role === name },
     innerText: text,
     getAttribute(name) { return name === 'data-message-id' ? messageId : null; },
-    querySelector: (selector) => selector === '.markdown-renderer' ? renderer : null,
+    querySelector: (selector) => selector === '.markdown-renderer, .chat-text .aa-markdown, .chat-text' ? renderer : null,
   });
-  const oldRenderer = { innerText: 'Stale conversation reply' };
+  const oldRenderer = { className: 'aa-markdown', innerText: 'Stale conversation reply' };
   chatItems.push(
     makeMessage('user', '<user>\nold prompt', null, 'old-user-id'),
     makeMessage('ai', 'Stale conversation reply', oldRenderer, 'old-assistant-id'),
@@ -242,7 +242,8 @@ test('recovers a completed Taiji reply from the current conversation when SSE pa
   plusButton.querySelector = (selector) => selector === '.fa-plus' ? {} : null;
   const sendButton = button('发送', () => {
     sendButton.textContent = '停止';
-    const renderer = { innerText: '' };
+    location.href = `${SITE_ORIGIN}/chat#new-user-id`;
+    const renderer = { className: 'aa-markdown', innerText: '' };
     chatItems.splice(0, chatItems.length);
     chatItems.push(
       makeMessage('user', textareaValue, null, 'new-user-id'),
@@ -276,10 +277,7 @@ test('recovers a completed Taiji reply from the current conversation when SSE pa
       if (selector === 'button.aa-sidebar-toolbar__btn') return [plusButton];
       if (selector === '.n-base-select-option') return drawerOpen ? [modelOption] : [];
       if (selector === 'button') return panelButtons;
-      if (selector === '#chat-content .chat-item') return chatItems;
-      if (selector === '#chat-content .chat-item.ai .markdown-renderer') {
-        return chatItems.filter((item) => item.classList.contains('ai')).map((item) => item.querySelector('.markdown-renderer')).filter(Boolean);
-      }
+      if (selector === '.chat-items .chat-item, #chat-content .chat-item') return chatItems;
       return [];
     },
   };
@@ -387,6 +385,8 @@ test('recovers a completed Taiji reply from the current conversation when SSE pa
     assert.equal(body.choices[0].message.content, reply);
     assert.equal(textareaValue, expectedPrompt);
     assert.equal(resultPosted, true);
+    assert.equal(location.href.endsWith('#new-user-id'), true);
+    assert.equal(currentStatusNode.dataset.bridgeVersion, '1.1.3');
   } finally {
     for (const timer of contextTimers) clearTimeout(timer);
     contextTimers.clear();
