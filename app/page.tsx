@@ -61,6 +61,7 @@ import { IMAGE_QUALITY_OPTIONS } from '@/lib/creation/settings';
 import { requestPromptOptimization } from '@/lib/creation/agent';
 import { acceptedGenerationGalleryItemId, acceptedGenerationTaskIdsForAutoCheck, inspectAcceptedGenerationLogs, isGenerateRetryBlocked, isProviderAcceptanceResponse, projectAcceptedGenerationRecovery } from '@/lib/creation/generation-recovery';
 import { cleanupGenerationLogs, getGenerationLog, listGenerationLogs, previewGenerationLogCleanup } from '@/lib/generation-log-client';
+import { changedTaskResultOutcomes, taskResultOutcomes, type TaskResultOutcome } from '@/lib/task-result-sound';
 import { deleteVideoTask as deleteVideoTaskRequest, listVideoTasksPage, patchVideoTask as patchVideoTaskRequest, saveVideoTaskLocally as saveVideoTaskLocallyRequest } from '@/lib/video-task-client';
 import { videoTaskStatus } from '@/lib/video-task-output';
 import { createManualStorageSnapshot, loadStorageMaintenance, restoreLocalStorageSnapshot } from '@/lib/storage-maintenance-client';
@@ -2358,8 +2359,14 @@ export default function Page() {
         supportOpen
     ]);
     const [theme, setTheme] = useState('light');
-    const [successSoundEnabled, setSuccessSoundEnabled] = useState(false);
-    const successAudioRef = useRef(null);
+    const [taskSoundEnabled, setTaskSoundEnabled] = useState(true);
+    const taskSoundEnabledRef = useRef(true);
+    const taskAudioRef = useRef(null);
+    const taskResultStatesRef = useRef(new Map<string, TaskResultOutcome>());
+    const taskResultMonitorReadyRef = useRef(false);
+    const generationLogsHydratedRef = useRef(false);
+    const cangyuanTaskResultStatesRef = useRef(new Map<string, TaskResultOutcome>());
+    const cangyuanTaskResultsHydratedRef = useRef(false);
     const [state, setState] = useState(emptyState);
     const [loadingState, setLoadingState] = useState(true);
     const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>('idle');
@@ -3297,7 +3304,9 @@ export default function Page() {
                 sectionRef.current = savedSection;
                 setSectionState(savedSection);
             }
-            setSuccessSoundEnabled(localStorage.getItem('sanmao-success-sound') === '1');
+            // Task-result sounds are enabled for new installs. Keep an explicit
+            // user opt-out from the existing preference key.
+            setTaskSoundEnabled(localStorage.getItem('sanmao-success-sound') !== '0');
             setProviderSetupDismissed(localStorage.getItem(PROVIDER_SETUP_DISMISSED_STORAGE_KEY) === '1');
             const savedWebMode = localStorage.getItem('sanmao-agent-web-mode');
             const savedWebSearch = localStorage.getItem('sanmao-agent-web-search');
@@ -3845,6 +3854,61 @@ export default function Page() {
         section
     ]);
     useEffect(()=>{
+        taskSoundEnabledRef.current = taskSoundEnabled;
+    }, [taskSoundEnabled]);
+    useEffect(()=>{
+        // Browsers only allow an AudioContext to resume after a user gesture.
+        // Prime it on the first interaction so a later background task result
+        // can still announce itself.
+        const unlock = ()=>{
+            if (!taskSoundEnabledRef.current) return;
+            primeTaskSound();
+        };
+        window.addEventListener('pointerdown', unlock, { passive: true });
+        window.addEventListener('keydown', unlock);
+        return ()=>{
+            window.removeEventListener('pointerdown', unlock);
+            window.removeEventListener('keydown', unlock);
+        };
+    }, []);
+    useEffect(()=>{
+        if (!generationLogsHydratedRef.current) return;
+        const current = taskResultOutcomes(generationLogs);
+        if (!taskResultMonitorReadyRef.current) {
+            taskResultStatesRef.current = current;
+            taskResultMonitorReadyRef.current = true;
+            return;
+        }
+        const changes = changedTaskResultOutcomes(taskResultStatesRef.current, current);
+        taskResultStatesRef.current = current;
+        for (const change of changes) playTaskResultSound(change.outcome);
+    }, [generationLogs]);
+    useEffect(()=>{
+        let refreshing = false;
+        const refreshTaskResults = async ()=>{
+            if (refreshing || document.visibilityState === 'hidden') return;
+            refreshing = true;
+            try {
+                await Promise.all([
+                    refreshGenerationLogs({ syncNotice: false }),
+                    refreshCangyuanTaskResults(),
+                ]);
+            } finally {
+                refreshing = false;
+            }
+        };
+        void refreshTaskResults();
+        const timer = window.setInterval(()=>void refreshTaskResults(), TASK_STATUS_REFRESH_INTERVAL_MS);
+        const refreshOnVisible = ()=>{
+            if (document.visibilityState === 'visible') void refreshTaskResults();
+        };
+        document.addEventListener('visibilitychange', refreshOnVisible);
+        return ()=>{
+            window.clearInterval(timer);
+            document.removeEventListener('visibilitychange', refreshOnVisible);
+        };
+    }, []);
+    useEffect(()=>{
         if (section !== 'logs' || recordTab !== 'tasks') return;
         let refreshing = false;
         const refreshTasks = async ()=>{
@@ -4170,12 +4234,12 @@ export default function Page() {
     function toggleTheme() {
         setThemePreference(theme === 'light' ? 'dark' : 'light');
     }
-    function setSuccessSoundPreference(enabled) {
-        setSuccessSoundEnabled(enabled);
+    function setTaskSoundPreference(enabled) {
+        setTaskSoundEnabled(enabled);
         try {
             localStorage.setItem('sanmao-success-sound', enabled ? '1' : '0');
         } catch  {}
-        if (enabled) primeSuccessSound();
+        if (enabled) primeTaskSound();
     }
     function setAgentWebModePreference(mode) {
         const nextMode = mode === 'always' || mode === 'off' ? mode : 'auto';
@@ -4186,32 +4250,38 @@ export default function Page() {
             localStorage.setItem('sanmao-agent-web-search', nextMode === 'off' ? '0' : '1');
         } catch  {}
     }
-    function getSuccessAudioContext() {
+    function getTaskAudioContext() {
         if (typeof window === 'undefined' || typeof window.AudioContext === 'undefined') return null;
-        if (!successAudioRef.current) successAudioRef.current = new window.AudioContext();
-        return successAudioRef.current;
+        if (!taskAudioRef.current) taskAudioRef.current = new window.AudioContext();
+        return taskAudioRef.current;
     }
-    function primeSuccessSound() {
-        const context = getSuccessAudioContext();
+    function primeTaskSound() {
+        const context = getTaskAudioContext();
         if (context?.state === 'suspended') void context.resume();
     }
-    function playSuccessSound() {
-        if (!successSoundEnabled) return;
-        const context = getSuccessAudioContext();
+    function playTaskResultSound(outcome: TaskResultOutcome = 'success') {
+        if (!taskSoundEnabledRef.current) return;
+        const context = getTaskAudioContext();
         if (!context) return;
-        const now = context.currentTime;
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(660, now);
-        oscillator.frequency.exponentialRampToValueAtTime(990, now + 0.16);
-        gain.gain.setValueAtTime(0.0001, now);
-        gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(now);
-        oscillator.stop(now + 0.4);
+        const play = ()=>{
+            if (context.state !== 'running') return;
+            const now = context.currentTime;
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            const success = outcome === 'success';
+            oscillator.type = success ? 'sine' : 'triangle';
+            oscillator.frequency.setValueAtTime(success ? 660 : 420, now);
+            oscillator.frequency.exponentialRampToValueAtTime(success ? 990 : 220, now + (success ? 0.16 : 0.2));
+            gain.gain.setValueAtTime(0.0001, now);
+            gain.gain.exponentialRampToValueAtTime(0.12, now + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + (success ? 0.38 : 0.42));
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.start(now);
+            oscillator.stop(now + (success ? 0.4 : 0.44));
+        };
+        if (context.state === 'suspended') void context.resume().then(play).catch(()=>undefined);
+        else play();
     }
     function persistNavNoticeState() {
         if (!navNoticeStateReadyRef.current) return;
@@ -4338,14 +4408,15 @@ export default function Page() {
             parent: source.item
         });
     }
-    async function refreshGenerationLogs() {
+    async function refreshGenerationLogs(options = {}) {
         if (generationLogsRefreshRef.current) return generationLogsRefreshRef.current;
         const request = (async () => {
             try {
                 const logs = await listGenerationLogs(200);
                 const uniqueLogs = logs.filter((log, index, all) => index === all.findIndex((candidate) => candidate.id === log.id));
+                generationLogsHydratedRef.current = true;
                 setGenerationLogs(uniqueLogs);
-                syncLogErrorNotice(uniqueLogs);
+                if (options.syncNotice !== false) syncLogErrorNotice(uniqueLogs);
             } catch {}
         })();
         generationLogsRefreshRef.current = request;
@@ -4354,6 +4425,39 @@ export default function Page() {
         } finally {
             if (generationLogsRefreshRef.current === request) generationLogsRefreshRef.current = null;
         }
+    }
+    async function refreshCangyuanTaskResults() {
+        try {
+            const kinds = ['music', '3d'];
+            const listed = await Promise.all(kinds.map(async (kind) => {
+                const response = await fetch(`/api/cangyuan/${kind}?limit=100`, { cache: 'no-store' });
+                if (!response.ok) throw new Error('读取媒体任务失败');
+                const data = await response.json();
+                return {
+                    kind,
+                    tasks: Array.isArray(data.tasks) ? data.tasks : []
+                };
+            }));
+            const tasks = listed.flatMap((entry) => entry.tasks.map((task) => ({ ...task, _kind: entry.kind })));
+            const activeTasks = tasks.filter((task) => ['pending', 'queued', 'running', 'waiting'].includes(String(task.status || ''))).slice(0, 24);
+            const refreshed = await Promise.all(activeTasks.map(async (task) => {
+                const response = await fetch(`/api/cangyuan/${task._kind}/tasks/${encodeURIComponent(String(task.id))}`, { cache: 'no-store' });
+                if (!response.ok) return task;
+                const data = await response.json();
+                return data.task || task;
+            }));
+            const latestById = new Map(tasks.map((task) => [String(task.id), task]));
+            for (const task of refreshed) latestById.set(String(task.id), task);
+            const current = taskResultOutcomes([...latestById.values()]);
+            if (!cangyuanTaskResultsHydratedRef.current) {
+                cangyuanTaskResultStatesRef.current = current;
+                cangyuanTaskResultsHydratedRef.current = true;
+                return;
+            }
+            const changes = changedTaskResultOutcomes(cangyuanTaskResultStatesRef.current, current);
+            cangyuanTaskResultStatesRef.current = current;
+            for (const change of changes) playTaskResultSound(change.outcome);
+        } catch {}
     }
     async function refreshVideoTasks(requestedPage = videoPage) {
         const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
@@ -6084,7 +6188,7 @@ export default function Page() {
         let imageSubmissionStarted = false;
         let imageResponseParsed = false;
         let imageResponseHasImages = false;
-        primeSuccessSound();
+        primeTaskSound();
         setGenerateTasks((old)=>[
                 {
                     id: taskId,
@@ -6173,7 +6277,6 @@ export default function Page() {
                     info,
                     items
                 });
-                if (items.length) playSuccessSound();
                 void refreshGenerationLogs();
                 setLastGenerateInfo(info);
                 return;
@@ -6293,7 +6396,6 @@ export default function Page() {
                             patchGenerateTask(taskId, {
                                 info: `${resolvedModelName} · 已返回 ${completedCount}/${taskCount} 张`
                             });
-                            if (items.length) playSuccessSound();
                             void refreshGenerationLogs();
                         } catch (error) {
                             if (!childResponseParsed || childResponseHasImages) {
@@ -6443,7 +6545,6 @@ export default function Page() {
                     setAngleSuppressAutoOpenId(items[0].id);
                 }
             }
-            if (items.length) playSuccessSound();
             setLastGenerateInfo(info);
             void refreshGenerationLogs();
         } catch (error) {
@@ -7098,7 +7199,6 @@ export default function Page() {
                     source: 'agent',
                     references: referenceRecords
                 });
-                if (images.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
@@ -7257,7 +7357,7 @@ export default function Page() {
         const requestController = new AbortController();
         const agentRequest = { requestId, controller: requestController, pendingId, partialText: '', stopped: false };
         agentRequestsRef.current.set(sessionId, agentRequest);
-        primeSuccessSound();
+        primeTaskSound();
         const nextMessages = [
             ...currentSessionMessages.filter((message)=>!message.pending),
             user
@@ -7436,7 +7536,6 @@ export default function Page() {
                     source: 'agent',
                     references: referenceRecords
                 });
-                if (items.length) playSuccessSound();
             }
             if (requestController.signal.aborted || !isCurrentRequest()) return;
             const files = Array.isArray(data.files) ? data.files.filter((file)=>file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file)=>({
@@ -8049,7 +8148,6 @@ export default function Page() {
                 items,
                 itemIds: items.map((item)=>item.id)
             });
-            if (items.length) playSuccessSound();
             void refreshGenerationLogs();
             notify(taskError || (currentEditor.mode === 'upscale' ? '后台超分已完成，结果已返回创作记录。' : '后台图片修改已完成，结果已返回创作记录。'));
         } catch (error) {
@@ -11617,21 +11715,21 @@ export default function Page() {
                                                                     /*#__PURE__*/ _jsx("span", {
                                                                         children: "通知"
                                                                     }),
-                                                                    /*#__PURE__*/ _jsx("h2", {
-                                                                        children: "出图成功音效"
+                                                                     /*#__PURE__*/ _jsx("h2", {
+                                                                         children: "任务结果提示音"
                                                                     })
                                                                 ]
                                                             }),
                                                             /*#__PURE__*/ _jsxs("label", {
-                                                                className: `settings-switch ${successSoundEnabled ? 'on' : ''}`,
+                                                                className: `settings-switch ${taskSoundEnabled ? 'on' : ''}`,
                                                                 children: [
                                                                     /*#__PURE__*/ _jsx("input", {
                                                                         type: "checkbox",
-                                                                        checked: successSoundEnabled,
+                                                                        checked: taskSoundEnabled,
                                                                         role: "switch",
-                                                                        "aria-label": "出图成功音效",
-                                                                        "aria-checked": successSoundEnabled,
-                                                                        onChange: (e)=>setSuccessSoundPreference(e.target.checked)
+                                                                         "aria-label": "任务结果提示音",
+                                                                        "aria-checked": taskSoundEnabled,
+                                                                        onChange: (e)=>setTaskSoundPreference(e.target.checked)
                                                                     }),
                                                                     /*#__PURE__*/ _jsx("span", {})
                                                                 ]
@@ -11640,19 +11738,19 @@ export default function Page() {
                                                     }),
                                                     /*#__PURE__*/ _jsx("p", {
                                                         className: "settings-card-note",
-                                                        children: "图片生成、超分或智能助手成功生成图片后播放一声短提示音。默认关闭，不会影响失败提示。"
+                                                         children: "任务成功或失败时播放提示音；取消任务不会提示。默认开启，可随时关闭。"
                                                     }),
                                                     /*#__PURE__*/ _jsxs("div", {
                                                         className: "settings-option-row",
                                                         children: [
                                                             /*#__PURE__*/ _jsx("span", {
-                                                                className: successSoundEnabled ? 'settings-state on' : 'settings-state',
-                                                                children: successSoundEnabled ? '已开启' : '已关闭'
+                                                                className: taskSoundEnabled ? 'settings-state on' : 'settings-state',
+                                                                children: taskSoundEnabled ? '已开启' : '已关闭'
                                                             }),
                                                             /*#__PURE__*/ _jsx("button", {
                                                                 type: "button",
                                                                 className: "ghost-button",
-                                                                onClick: ()=>successSoundEnabled ? playSuccessSound() : notify('请先打开出图成功音效'),
+                                                                 onClick: ()=>taskSoundEnabled ? playTaskResultSound() : notify('请先打开任务结果提示音'),
                                                                 children: "试听音效"
                                                             })
                                                         ]
