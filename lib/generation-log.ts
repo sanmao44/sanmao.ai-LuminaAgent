@@ -7,6 +7,7 @@ import type { GenerationSource } from './generation-source';
 import { resolveLocalDataDir } from './data-paths';
 import { projectResultStatus } from './task-result-projection';
 import type { UpscaleRetryDisposition } from './upscale-task-retry-policy';
+import type { CreativeReviewReport } from '@/packages/contracts/creative-review';
 
 export type GenerationLog = {
   id: string;
@@ -42,6 +43,8 @@ export type GenerationLog = {
   storageDurationMs?: number;
   imageCount?: number;
   imageUrls?: string[];
+  /** Internal artifact evidence; chat responses should expose only actionable failures. */
+  creativeReview?: CreativeReviewReport[];
   audioUrl?: string;
   /** Text returned by synchronous speech recognition. */
   textResult?: string;

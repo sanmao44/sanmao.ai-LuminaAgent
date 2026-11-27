@@ -49,6 +49,28 @@ export type ImageCapabilityInput = {
   ports: ImageCapabilityPorts;
 };
 
+function creativeReviewEvidence(report: CreativeReviewReport) {
+  return [...report.capability.evidence, ...report.safety.evidence];
+}
+
+function hasCreativeReviewFailure(report: CreativeReviewReport) {
+  return creativeReviewEvidence(report).some((item) => item.status === 'fail');
+}
+
+function summarizeCreativeReview(report: CreativeReviewReport) {
+  const evidence = creativeReviewEvidence(report);
+  const failed = evidence.filter((item) => item.status === 'fail').length;
+  const passed = evidence.filter((item) => item.status === 'pass').length;
+  const unknown = evidence.filter((item) => item.status === 'unknown').length;
+  return {
+    artifactRef: report.artifactRef,
+    status: failed > 0 ? 'fail' : unknown > 0 ? 'unknown' : 'pass',
+    failed,
+    passed,
+    unknown,
+  } as const;
+}
+
 export function normalizeImagePromptBatch(input: { args: Record<string, unknown>; latestInstruction: string; batchPlanContent?: string; fallbackImagePrompt: string; isBareImageExecution: (value: string) => boolean; extractBatchPrompts: (value: string) => string[] }) {
   const { args, latestInstruction, batchPlanContent, fallbackImagePrompt, isBareImageExecution, extractBatchPrompts } = input;
   const requestedPrompts = Array.isArray(args.prompts) ? args.prompts.map((value: unknown) => String(value || '').trim()).filter(Boolean).slice(0, 20) : [];
@@ -282,9 +304,14 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
             signal: requestController.signal,
           })))
           : [];
+        if (mediaLogId && creativeReviews.length) {
+          await finishGenerationLog(mediaLogId, { creativeReview: creativeReviews }).catch(() => undefined);
+        }
         creativeReviews.forEach((report, index) => {
-          if (generatedImageOutputs[index]) generatedImageOutputs[index].creativeReview = report;
+          if (generatedImageOutputs[index] && hasCreativeReviewFailure(report)) generatedImageOutputs[index].creativeReview = report;
         });
+        const creativeReviewSummary = creativeReviews.map(summarizeCreativeReview);
+        const failedCreativeReviews = creativeReviews.filter(hasCreativeReviewFailure);
         results.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -297,7 +324,8 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
             ...(storedRefs.length
               ? {
                 images: storedRefs.map((ref: string) => ({ ref })),
-                creativeReview: creativeReviews,
+                ...(creativeReviews.length ? { creativeReviewSummary } : {}),
+                ...(failedCreativeReviews.length ? { creativeReview: failedCreativeReviews } : {}),
                 instruction: '要把这些图放进 Word/PPT 时，把 ref 原样传给 document_generate 或 presentation_generate，不要自己编 ref。',
               }
               : {}),

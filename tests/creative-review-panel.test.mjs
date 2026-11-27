@@ -45,10 +45,9 @@ test('keeps failures concise and puts passed or unevaluated checks in a separate
   assert.doesNotMatch(html, /综合分|总分|score/i);
 });
 
-test('states explicitly when an older task has no saved review record', () => {
+test('does not add review noise when an older task has no saved review record', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, {}));
-  assert.match(html, /没有已保存的评审记录/);
-  assert.doesNotMatch(html, /已检查项符合/);
+  assert.equal(html, '');
 });
 
 

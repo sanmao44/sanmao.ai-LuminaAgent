@@ -331,6 +331,48 @@ test('image generation returns its structured creative review to the Agent', asy
   assert.deepEqual(generated.map((image) => image.creativeReview.artifactRef), artifactRefs, 'the Agent response images keep each matching review');
 });
 
+test('image generation summarizes non-failing creative reviews for the Agent', async () => {
+  const image = load('./packages/tool-runtime/image-capability');
+  const artifactRef = '/api/storage/file?name=generated-summary.png';
+  const generated = [];
+  let persistedReview;
+  const review = {
+    version: 'p1', mediaKind: 'image', artifactRef, checkedAt: '2026-11-26T00:00:00.000Z',
+    capability: { status: 'pass', evidence: [{ dimension: 'image_decode', status: 'pass', criterion: 'image decodes', observed: true, reason: 'decoded', source: 'rule' }] },
+    safety: { status: 'unknown', evidence: [{ dimension: 'content_safety', status: 'unknown', criterion: 'calibrated review required', reason: 'not calibrated', source: 'vision' }] },
+  };
+  const result = await image.executeImageCapability({
+    state: { generated, batchItems: [], generations: [] },
+    call: { id: 'image-review-summary-1', function: { name: 'image_generate' } },
+    args: { prompt: 'coffee product photo' },
+    results: [],
+    ports: {
+      requestController: new AbortController(), imageToolsAllowed: true,
+      isBareImageExecution: () => false, extractBatchPrompts: () => [], fallbackImagePrompt: 'fallback',
+      latestRefs: [], trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
+      agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
+      requestedAgentImageModelId: 'auto',
+      getRuntimeImageGenerationModel: async () => ({ provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } }),
+      getRuntimeImageModelForCapability: async () => null,
+      appendGenerationLog: async () => {}, sourceForLog: 'agent', taskContext: {},
+      startGenerationLog: async () => 'media-log-summary-1', referenceRecords: [],
+      getRuntimeImageModelCandidates: () => [], editImage: async () => [],
+      generateImage: async () => [{ url: 'data:image/png;base64,ZmFrZQ==' }],
+      persistGenerationResult: async () => ({ images: [{ url: artifactRef }] }),
+      reviewImageArtifact: async () => review,
+      imageDownloadAuth: () => undefined, finishGenerationLog: async (_id, patch) => { persistedReview = patch.creativeReview; }, skipCaption: true,
+      latestInstruction: '请生成咖啡广告图',
+      executionPublicState: { settings: {} },
+    },
+  });
+  const payload = JSON.parse(String(result.results[0].content));
+  assert.deepEqual(payload.images.map((entry) => entry.ref), [artifactRef]);
+  assert.deepEqual(payload.creativeReviewSummary, [{ artifactRef, status: 'unknown', failed: 0, passed: 1, unknown: 1 }]);
+  assert.equal('creativeReview' in payload, false, 'the Agent does not receive a long report without a concrete failure');
+  assert.equal('creativeReview' in generated[0], false, 'non-failing reports stay out of the user-visible image metadata');
+  assert.deepEqual(persistedReview, [review], 'the full report remains in the internal generation record');
+});
+
 test('Filesystem edit_file dry-runs are reported as previews in the MCP call summary', async () => {
   const { state, input } = createWindowsMcpTestContext({ mcpCall: async () => ({ isError: false, text: 'diff preview' }) });
   const server = { id: 'filesystem-test', name: '本地文件', url: 'stdio://filesystem', catalogId: 'filesystem', enabled: true, allowWrite: true };

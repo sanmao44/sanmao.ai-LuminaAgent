@@ -90,7 +90,7 @@ function ReviewSection({ title, evidence }: { title: string; evidence: readonly 
 }
 
 export default function CreativeReviewPanel({ reports }: Props) {
-  if (!reports?.length) return <p className="creative-review-empty">此任务没有已保存的评审记录。</p>;
+  if (!reports?.length) return null;
 
   const issues = reports.reduce((count, report) => count
     + report.capability.evidence.filter((item) => item.status === 'fail').length
