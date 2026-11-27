@@ -29,6 +29,7 @@ import { appendCanvasAudioTranscriptionDocument, canvasAudioSpeechHistory } from
 import { replaceCanvasMediaFile, withoutCanvasMediaMask } from "@/lib/canvas/media-replacement";
 import {
   addEdge,
+  canvasEdgeRepresentativeId,
   alignCanvasNodes,
   arrangeCanvas,
   arrangeCanvasGroup,
@@ -1493,7 +1494,7 @@ export default function SuperCanvas() {
               selectedGroupId,
             ),
           )
-          .map((edge) => edge.id),
+          .map((edge) => canvasEdgeRepresentativeId(document, edge)),
       ),
     // edgeTouchesSelection only inspects the edge set, group membership and
     // the selection; node positions/camera never change which edges are

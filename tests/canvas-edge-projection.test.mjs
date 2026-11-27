@@ -91,3 +91,76 @@ test("hidden edge mode keeps only directly related selected-node connections", (
     "hidden mode with no selection renders no ordinary connections",
   );
 });
+
+test("visible edge projection collapses member edges at a group boundary", () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, "Source");
+  const first = model.createMedia("image", "/first.png", "First", { x: 320, y: 0 });
+  const second = model.createMedia("image", "/second.png", "Second", { x: 320, y: 320 });
+  let document = model.normalizeDocument({ nodes: [source, first, second] });
+  document = model.createGroup(document, [first.id, second.id], "Group");
+  document = {
+    ...document,
+    edges: [
+      { id: "first", source: source.id, target: first.id, kind: "manual" },
+      { id: "second", source: source.id, target: second.id, kind: "manual" },
+    ],
+  };
+
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(
+      document,
+      new Set([source.id, first.id, second.id]),
+      new Set([document.groups[0].id]),
+    ).map((edge) => edge.id),
+    ["first"],
+  );
+});
+
+test("visible edge projection uses projected group endpoints for viewport filtering", () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, "Source");
+  const first = model.createMedia("image", "/first.png", "First", { x: 320, y: 0 });
+  const second = model.createMedia("image", "/second.png", "Second", { x: 320, y: 320 });
+  let document = model.normalizeDocument({ nodes: [source, first, second] });
+  document = model.createGroup(document, [first.id, second.id], "Group");
+  document = {
+    ...document,
+    edges: [
+      { id: "first", source: source.id, target: first.id, kind: "manual" },
+      { id: "second", source: source.id, target: second.id, kind: "manual" },
+    ],
+  };
+
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(
+      document,
+      new Set([source.id]),
+      new Set([document.groups[0].id]),
+    ).map((edge) => edge.id),
+    ["first"],
+  );
+});
+
+test("hidden edge projection pins the representative for a selected member edge", () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, "Source");
+  const first = model.createMedia("image", "/first.png", "First", { x: 320, y: 0 });
+  const second = model.createMedia("image", "/second.png", "Second", { x: 320, y: 320 });
+  let document = model.normalizeDocument({ nodes: [source, first, second] });
+  document = model.createGroup(document, [first.id, second.id], "Group");
+  document = {
+    ...document,
+    edges: [
+      { id: "first", source: source.id, target: first.id, kind: "manual" },
+      { id: "second", source: source.id, target: second.id, kind: "manual" },
+    ],
+  };
+
+  assert.deepEqual(
+    projection.visibleCanvasEdgeProjection(
+      document,
+      new Set(),
+      new Set(),
+      new Set(["second"]),
+    ).map((edge) => edge.id),
+    ["first"],
+  );
+});
