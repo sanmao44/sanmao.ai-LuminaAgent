@@ -13,7 +13,7 @@ export type InlineToolCall = {
   function: { name: string; arguments: string };
 };
 
-const INLINE_TOOL_MARKER = /(?:\bto\s*=\s*functions\.|<\s*function\s*=\s*)([A-Za-z0-9_-]+)/gi;
+const INLINE_TOOL_MARKER = /(?:\bto\s*=\s*(?:functions\.)?|<\s*function\s*=\s*)([A-Za-z0-9_-]+)/gi;
 const TOOL_CALL_MARKER = /<\s*tool_call\b[^>]*>([\s\S]*?)<\/\s*tool_call\s*>/gi;
 // DeepSeek-compatible providers sometimes emit their tool call as DSML text
 // instead of populating `message.tool_calls`. Keep this matcher deliberately

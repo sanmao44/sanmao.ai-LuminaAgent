@@ -228,7 +228,7 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
   assert.equal(result.count, 1);
 });
 
-test('reference image generation keeps its operation on an accepted async task', async () => {
+test('reference image generation submits selected images through the provider image-input port', async () => {
   const image = load('./packages/tool-runtime/image-capability');
   const accepted = Object.assign(new Error('provider accepted'), {
     providerPossiblyAccepted: true,
@@ -262,8 +262,13 @@ test('reference image generation keeps its operation on an accepted async task',
       startGenerationLog: async (log) => { finished.push({ started: log }); return 'media-log-1'; },
       referenceRecords: [],
       getRuntimeImageModelCandidates: () => [],
-      editImage: async () => { throw new Error('reference generation must not call image edit'); },
-      generateImage: async () => { throw accepted; },
+      editImage: async () => { throw new Error('reference generation must not be classified as edit'); },
+      generateImageWithReferences: async (_provider, _model, input) => {
+        assert.deepEqual(input.references, ['data:image/png;base64,reference']);
+        assert.equal(input.prompt, 'a test image');
+        throw accepted;
+      },
+      generateImage: async () => { throw new Error('reference generation must use the provider image-input port'); },
       persistGenerationResult: async () => ({ images: [] }),
       imageDownloadAuth: () => undefined,
       finishGenerationLog: async (id, patch) => { finished.push({ id, patch }); },

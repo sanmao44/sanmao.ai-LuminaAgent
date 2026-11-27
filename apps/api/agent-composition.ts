@@ -5,6 +5,7 @@ import {
   describeProviderFailure,
   editImage,
   generateImage,
+  generateImageWithReferences,
   imageDownloadAuth,
   type ChatMessage,
   type ChatContentPart,
@@ -96,7 +97,6 @@ import type { SkillRouteDecision, SkillRouteOptions } from '@/packages/contracts
 import type { AgentProjectTypecheckPort } from '@/packages/contracts/agent';
 import { createProjectTypecheckPort } from '@/lib/agent/project-typecheck';
 import { reviewImageArtifact } from '@/lib/creative-review/image';
-import { reviewCreativeVisualsLocally } from '@/lib/creative-review/local-vision';
 
 export type AgentCompositionRuntime = ProviderRuntime & {
   provider: Parameters<typeof chatCompletion>[0];
@@ -145,6 +145,7 @@ export type AgentApplicationInfrastructure = {
     describeProviderFailure: typeof describeProviderFailure;
     editImage: typeof editImage;
     generateImage: typeof generateImage;
+    generateImageWithReferences: typeof generateImageWithReferences;
     imageDownloadAuth: typeof imageDownloadAuth;
   };
   artifacts: {
@@ -273,8 +274,9 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
   });
   return {
     projectTypecheck: createProjectTypecheckPort({ listAuthorizedRoots: listFilesystemRoots }),
-    creativeReview: { reviewImageArtifact: (input) => reviewImageArtifact({ ...input, visualReviewer: reviewCreativeVisualsLocally }) },
-    provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
+    // Image delivery only checks the saved file. Visual assessment is opt-in through the evaluation path.
+    creativeReview: { reviewImageArtifact },
+    provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, generateImageWithReferences, imageDownloadAuth },
     artifacts: { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, artifactDownloadUrl, getStorageRoots },
     transcription: {
       readArtifact: artifactStore.read,

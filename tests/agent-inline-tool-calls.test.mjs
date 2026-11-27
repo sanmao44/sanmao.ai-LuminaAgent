@@ -29,6 +29,16 @@ test('识别模型写进正文的浏览器工具调用', () => {
   ]);
 });
 
+test('恢复裸 to=image_edit code 格式的图片工具调用', () => {
+  const text = 'to=image_edit code: {"prompt":"保持主体，只改成真实摄影风格","aspectRatio":"16:9"}';
+  const [call] = inline.parseInlineToolCalls(text, tools);
+  assert.equal(call?.function.name, 'image_edit');
+  assert.deepEqual(JSON.parse(call.function.arguments), {
+    prompt: '保持主体，只改成真实摄影风格',
+    aspectRatio: '16:9',
+  });
+});
+
 test('只恢复本轮实际提供且参数为合法对象的工具', () => {
   assert.deepEqual(inline.parseInlineToolCalls('to=functions.unknown {"x":1}', tools), []);
   assert.deepEqual(inline.parseInlineToolCalls('to=functions.playwright_browserclick not-json', tools), []);

@@ -28,6 +28,7 @@ export type ImageCapabilityPorts = {
   getRuntimeImageModelCandidates: (id: string, capability: string) => readonly RuntimeImage[];
   editImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
   generateImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
+  generateImageWithReferences: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
   persistGenerationResult: (options: Record<string, unknown>) => Promise<{ images: RuntimeImage[] }>;
   reviewImageArtifact?: (input: { artifactRef: string; expectedAspectRatio?: string; storagePath?: string; brief?: string; generationPrompt?: string; signal?: AbortSignal }) => Promise<CreativeReviewReport>;
   imageDownloadAuth: (provider: unknown) => unknown;
@@ -65,7 +66,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
     isBareImageExecution, extractBatchPrompts, fallbackImagePrompt, requestedImageCapability, latestRefs,
     trackedChatCompletion, agentRuntime, requestedAgentImageModelId, getRuntimeImageGenerationModel,
     getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog,
-    referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage,
+    referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage, generateImageWithReferences,
     persistGenerationResult, imageDownloadAuth, finishGenerationLog, reviewImageArtifact, latestInstruction, agentRunId, skipCaption, executionPublicState,
   } = input.ports;
   let { generated, preparedCaption, batchItems, generations } = state;
@@ -78,8 +79,8 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           || args.aspectRatio
           || '自动',
       );
-      // References are not enough to turn a new-image batch into an edit. The
-      // server-side intent decision is authoritative over the model's tool name.
+      // Reference generation is a distinct operation; its provider adapter
+      // chooses the correct native image-input contract without changing task semantics.
       const mode = requestedImageCapability
         ? requestedImageCapability === 'edit' ? 'edit' : 'generate'
         : call.function?.name === 'image_edit' ? 'edit' : 'generate';
@@ -162,7 +163,9 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
                 itemRuntime = candidate;
                 const candidateImages = mode === 'edit'
                   ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
-                  : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
+                  : requiredImageCapability === 'reference'
+                    ? generateImageWithReferences(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal)
+                    : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
                 const images = await candidateImages;
                 if (!images.length) {
                   throw Object.assign(new Error('图片模型没有返回可交付图片'), { mediaModelNoOutput: true });

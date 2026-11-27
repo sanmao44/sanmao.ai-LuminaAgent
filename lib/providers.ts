@@ -2300,6 +2300,18 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   return images.slice(0, count);
 }
 
+/** Generate a new image conditioned on references. Providers with a native
+ * reference-generation contract keep using it; other OpenAI-compatible
+ * adapters must send references through their image-input/edit endpoint.
+ * The application operation remains `reference-generate` either way. */
+export async function generateImageWithReferences(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  if (isCangyuanProvider(provider) || isAgnesProvider(provider)
+    || provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') {
+    return generateImage(provider, rawModelId, input, signal);
+  }
+  return editImage(provider, rawModelId, { ...input, fidelity: input.fidelity || 'high' }, signal);
+}
+
 export async function upscaleImage(provider: RuntimeProvider, rawModelId: string, input: { reference: string; size: string; prompt?: string; seed?: number; colorCorrection?: string; resizeMethod?: string }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImageUpscale(provider, input, signal);
   const reference = normalizeReference(input.reference);

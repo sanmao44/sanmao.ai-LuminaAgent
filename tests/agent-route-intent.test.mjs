@@ -78,6 +78,7 @@ function harness(options = {}) {
             describeProviderFailure: providerApi.describeProviderFailure,
             editImage: providerApi.editImage,
             generateImage: providerApi.generateImage,
+            generateImageWithReferences: providerApi.generateImageWithReferences,
             imageDownloadAuth: providerApi.imageDownloadAuth,
           },
           artifacts: {
@@ -308,6 +309,17 @@ function harness(options = {}) {
       },
       describeProviderFailure: options.describeProviderFailure || (() => 'provider failure'),
       generateImage: async (_provider, _model, args) => {
+        images.push({ mode: 'generate', ...args });
+        imageModelCalls.push(_model);
+        if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
+        const imageFailure = options.generateImageError?.(_model);
+        if (imageFailure) throw imageFailure;
+        const emptyOutput = typeof options.emptyImagesForModel === 'function'
+          ? options.emptyImagesForModel(_model)
+          : options.emptyImages;
+        return emptyOutput ? [] : [{ url: options.generatedImageRef || '/test.png' }];
+      },
+      generateImageWithReferences: async (_provider, _model, args) => {
         images.push({ mode: 'generate', ...args });
         imageModelCalls.push(_model);
         if (options.pendingImage) throw Object.assign(new Error('provider accepted'), { providerPossiblyAccepted: true, providerTaskId: 'provider-task-1' });
@@ -2233,6 +2245,55 @@ test('Canvas selected node snapshots reach both the assistant context and image 
   assert.match(userTurn.content[0].text, /两位角色并肩站立/);
   assert.match(userTurn.content[0].text, /角色设定/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
+});
+
+test('Canvas selected image plus a direct visual desire creates an image and uses the selected image as input', async () => {
+  const reference = 'https://assets.test/green-frog.png';
+  const agent = harness({
+    imageCapabilities: ['generate', 'reference'],
+    reply: () => ({ content: '好的，我现在为你生成红色青蛙。' }),
+  });
+  const text = '我要红色的青蛙。';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['frog-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['frog-1'], kind: 'image', operation: 'none' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'frog-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '绿色青蛙', url: reference } }],
+    },
+  });
+
+  assert.equal(agent.images.length, 1, 'the request runs even if the chat model answers with prose');
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, [reference]);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'reference', id: 'auto' }]);
+  assert.equal(data.images.length, 1);
+});
+
+test('Canvas explicit image-model selection executes a concrete visual correction even when the chat model answers with prose', async () => {
+  const agent = harness({
+    imageCapabilities: ['generate'],
+    reply: (_payload, callNumber) => ({ content: callNumber === 1 ? '当前无法调用图片生成工具。' : '已按要求生成。' }),
+  });
+  const text = '图片不对，我要的是写实风格，真实摄影，超写实场景。';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: [], kind: 'none', operation: 'none' },
+  });
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.match(agent.images[0].prompt, /写实风格|真实摄影|超写实/);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'generate', id: 'test-image' }]);
+  assert.equal(data.images.length, 1);
+  assert.doesNotMatch(data.message, /当前无法调用图片生成工具/);
+  const lastToolTurn = [...agent.modelCalls.at(-1).payload.messages].reverse().find((message) => message.role === 'assistant' && message.tool_calls?.some((call) => call.function?.name === 'image_generate'));
+  assert.equal(lastToolTurn?.content ?? null, null);
 });
 
 test('JEV clarification cannot downgrade an explicit Canvas poster request', async () => {

@@ -42,7 +42,7 @@ import { isHtmlFileGenerationRequested, isTextFileFallbackRequested, makeTextFil
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
-import { canvasAgentImageCapability, canvasAgentImageGenerationIntent, canvasAgentNeedsSemanticReview } from '@/lib/canvas/run-context';
+import { canvasAgentImageCapability, canvasAgentImageCorrectionIntent, canvasAgentImageGenerationIntent, canvasAgentNeedsSemanticReview } from '@/lib/canvas/run-context';
 import { runPlainAgentTurn } from '@/apps/api/agent-entry';
 import type { AgentMessage, ModelDescriptor } from '@/packages/contracts';
 import { createLegacyChatModelRuntime } from '@/packages/model-runtime/legacy-chat-adapter';
@@ -514,7 +514,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     projectTypecheck,
     creativeReview,
   } = infrastructure;
-  const { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth } = providerInfrastructure;
+  const { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, generateImageWithReferences, imageDownloadAuth } = providerInfrastructure;
   const { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, getStorageRoots } = artifactInfrastructure;
   const { getPublicState, getRuntimeImageGenerationModel, getRuntimeImageModelCandidates, getRuntimeImageModelForCapability, getRuntimeModel, getRuntimeModelCandidates, getRuntimeIntentClassifierModel, filterModelsByActiveProviders, getProviderPreset } = modelInfrastructure;
   const { appendGenerationLog, finishGenerationLog, startGenerationLog, persistGenerationResult } = persistenceInfrastructure;
@@ -801,9 +801,16 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // 「本轮参考图数量」只统计能交给生图模型的图片/视频素材，引用文本与上传文档不算参考图。
     const latestReferenceImageCount = latestRefs.filter((reference) => reference.kind !== 'text').length;
     const canvasImageInstruction = agentInstructionText(body.intentText, latest?.content || '');
+    const requestedAgentImageModelId = typeof body.imageModelId === 'string' && body.imageModelId.trim()
+      ? body.imageModelId.trim()
+      : 'auto';
     const canvasImageCompositionIntent = isCanvasSource
       && body.executionMode === 'agent-dock'
       && canvasAgentImageGenerationIntent(canvasImageInstruction, canvasTargetKind, canvasTargetOperation, latestReferenceImageCount > 0);
+    const canvasImageCorrectionRequest = isCanvasSource
+      && body.executionMode === 'agent-dock'
+      && canvasAgentImageCorrectionIntent(canvasImageInstruction, latestReferenceImageCount > 0 || requestedAgentImageModelId !== 'auto');
+    const canvasImageExecutionIntent = canvasImageCompositionIntent || canvasImageCorrectionRequest;
     // 画布等调用方会把系统上下文拼在用户消息末尾（"画布 / 图片 / 渲染"这些词都在里面）。
     // 意图判断一律只看用户原话，避免把普通提问判成生图请求。
     const supportsVideoInput = agentRuntime.model.capabilities.includes('video-input');
@@ -1173,7 +1180,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         if (requestController.signal.aborted) throw requestController.signal.reason || error;
       }
     }
-    if (canvasDockIntentReview && !semanticDecisionResolved && intentDecision.confidence !== 'high' && !canvasImageCompositionIntent && canvasTargetNodeIds.length === 0) {
+    if (canvasDockIntentReview && !semanticDecisionResolved && intentDecision.confidence !== 'high' && !canvasImageExecutionIntent && canvasTargetNodeIds.length === 0) {
       requestedDeliverable = 'CLARIFY';
       intentPreviewMode = 'ask';
       intentPreviewConfidence = 'low';
@@ -1222,8 +1229,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       confidence: suppliedCreativeRoute?.confidence || intentDecision.confidence,
       signals: [],
     });
-    const canvasImageCompositionRequest = canvasImageCompositionIntent;
-    if (canvasImageCompositionRequest) {
+    if (canvasImageExecutionIntent) {
       // Structured Canvas selection plus an explicit visual command is an
       // executable composition floor. JEV still reviews the turn, but a
       // clarification or an unavailable reviewer cannot discard the target.
@@ -1231,13 +1237,15 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       requestedDeliverable = 'IMAGE';
       intentPreviewMode = 'execute';
       intentPreviewConfidence = 'high';
-      requestedIntentReason = 'Canvas 已选中图片，且本轮明确要求生成视觉产物';
+      requestedIntentReason = canvasImageCorrectionRequest
+        ? 'Canvas 本轮是明确的图片修正请求'
+        : 'Canvas 已选中图片，且本轮明确要求生成视觉产物';
       creativeRoute = {
         ...creativeRoute,
         lane: 'image',
-        operation: 'reference-generate',
+        operation: latestReferenceImageCount > 0 ? 'reference-generate' : 'generate',
         execution: 'run',
-        requiresReference: true,
+        requiresReference: latestReferenceImageCount > 0,
       };
     }
     if (creativeRoute.lane === 'prompt') {
@@ -1323,9 +1331,6 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       !presentationImageGenerationRequest && explicitImageEditRequest && !canvasReferenceComposition ? 'edit' : 'generate',
       Boolean(canvasReferenceComposition && latestReferenceImageCount),
     );
-    const requestedAgentImageModelId = typeof body.imageModelId === 'string' && body.imageModelId.trim()
-      ? body.imageModelId.trim()
-      : 'auto';
     const imageModelState = imageToolsRequested ? await ensurePublicState() : null;
     const imageModels = imageToolsRequested
       ? filterModelsByActiveProviders(imageModelState!.models, imageModelState!.providers, {
@@ -2491,6 +2496,9 @@ const auditMcpCall = (
         mode: requestedImageCapability === 'edit' ? 'edit' : 'generate',
         batchContent: batchPlanContent,
       })];
+      // Once the deterministic fallback takes over, don't carry the model's
+      // contradictory prose into the tool turn as if it were a valid answer.
+      toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
     }
     if (presentationImageGenerationRequest && toolCalls.some(isImageToolCall)) {
       toolCalls = toolCalls.filter(isImageToolCall).slice(0, 1);
@@ -2779,6 +2787,7 @@ const auditMcpCall = (
         getRuntimeImageModelCandidates,
         editImage,
         generateImage,
+        generateImageWithReferences,
         persistGenerationResult,
         reviewImageArtifact: creativeReview?.reviewImageArtifact,
         imageDownloadAuth,
@@ -3423,7 +3432,7 @@ const auditMcpCall = (
         const failure = `图片未生成成功：${errors.at(-1) || '未收到有效图片结果'}。`;
         await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
         if (wantsStream) return streamResult(null, { fallback: failure, images: [], files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName });
-        return applicationJson({ ok: true, message: failure, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable });
+        return applicationJson({ ok: false, error: failure, message: failure, images: [], files: generatedFiles, generations, deliverable: requestedDeliverable }, { status: 502 });
       }
     }
     if (fileGenerationRequest && !generatedFiles.length) {

@@ -495,7 +495,7 @@ export function buildAgnesVideoPayload(rawModelId: string, input: VideoGeneratio
   if (mode === 'keyframe' && (images.length || videos.length || audios.length)) throw new VideoProviderError('Agnes keyframe 模式不允许参考图片、参考视频或音频输入。', { code: 'AGNES_KEYFRAME_MEDIA_NOT_ALLOWED' });
   if (mode === 'reference' && (hasFirstFrame || hasLastFrame)) throw new VideoProviderError('Agnes reference 模式不允许 first_frame 或 last_frame。', { code: 'AGNES_REFERENCE_FRAME_NOT_ALLOWED' });
   if (mode === 'reference' && !images.length && !videos.length && !audios.length) throw new VideoProviderError('Agnes reference 模式至少需要图片、音频或视频参考输入。', { code: 'AGNES_REFERENCE_REQUIRED' });
-  const ratio = AGNES_VIDEO_RATIOS.has(String(input.aspectRatio || '')) ? input.aspectRatio : undefined;
+  const ratio = mode === 'keyframe' ? undefined : AGNES_VIDEO_RATIOS.has(String(input.aspectRatio || '')) ? input.aspectRatio : undefined;
   const referenceVideos = videos.map((url) => ({ url, ...(input.referenceVideoStartSeconds !== undefined ? { start_seconds: input.referenceVideoStartSeconds } : {}), ...(input.referenceVideoEndSeconds !== undefined ? { end_seconds: input.referenceVideoEndSeconds } : {}), ...(input.requireAudio !== undefined ? { require_audio: input.requireAudio } : {}) }));
   return {
     model,
