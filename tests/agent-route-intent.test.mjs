@@ -2783,6 +2783,9 @@ test('HTML interactive page wording stays on the file lane and does not fall int
   const content = '<!doctype html><html><body><button id="go">Go</button></body></html>';
   const agent = harness({
     reply: (payload) => {
+      const systemMessage = payload.messages.find((message) => message.role === 'system')?.content || '';
+      assert.ok(systemMessage.includes('\n\nHTML/HTM/SVG/代码文件硬隔离：'), 'HTML guidance must be separated by actual prompt newlines');
+      assert.equal(systemMessage.includes('\\n\\nHTML/HTM/SVG/代码文件硬隔离：'), false, 'HTML guidance must not contain escaped newline text');
       const offered = (payload.tools || []).map((tool) => tool.function.name);
       assert.ok(offered.includes('file_generate'), JSON.stringify(offered));
       assert.equal(offered.includes('image_generate'), false, JSON.stringify(offered));

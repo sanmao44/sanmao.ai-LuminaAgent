@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { rename } from 'node:fs/promises';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
 import { fetchSkillBytes } from '@/lib/skills';
@@ -14,10 +15,81 @@ const CHUNK_BYTES = 4 * 1024 * 1024;
 const DOWNLOAD_ATTEMPTS = 3;
 const ARCHIVE_MAX_UNPACKED_BYTES = 256 * 1024 * 1024;
 const ARCHIVE_MAX_FILES = 4096;
+const DIRECTORY_COMMIT_ATTEMPTS = 8;
+const DIRECTORY_COMMIT_RETRY_DELAY_MS = 250;
 
 export type CatalogArchiveInstallerDependencies = {
   fetchBytes?: typeof fetchSkillBytes;
+  renamePath?: typeof rename;
 };
+
+function isTransientRenameError(error: unknown) {
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  return code === 'EPERM' || code === 'EACCES' || code === 'EBUSY' || code === 'ENOTEMPTY';
+}
+
+async function renameWithRetries(source: string, target: string, renamePath: typeof rename = rename) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < DIRECTORY_COMMIT_ATTEMPTS; attempt += 1) {
+    try {
+      await renamePath(source, target);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isTransientRenameError(error) || attempt === DIRECTORY_COMMIT_ATTEMPTS - 1) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, DIRECTORY_COMMIT_RETRY_DELAY_MS * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('无法提交 Windows MCP 运行包');
+}
+
+function removePathBestEffort(target: string) {
+  try {
+    rmSync(target, {
+      recursive: true,
+      force: true,
+      maxRetries: DIRECTORY_COMMIT_ATTEMPTS,
+      retryDelay: DIRECTORY_COMMIT_RETRY_DELAY_MS,
+    });
+  } catch {
+    // Windows 可能仍持有旧可执行文件；保留备份比让成功安装变成数据丢失更安全。
+  }
+}
+
+/**
+ * 不先删除当前版本，提交已经解压好的运行包。
+ * Windows 不能直接 rename 覆盖目录，杀毒软件或仍在运行的可执行文件也可能让旧目录暂时无法删除。
+ * 先移到备份目录可以回滚，目标被占用时也不会破坏当前安装。
+ */
+async function commitInstalledDirectory(
+  stagingPath: string,
+  installPath: string,
+  installRoot: string,
+  version: string,
+  renamePath: typeof rename = rename,
+) {
+  if (!existsSync(installPath)) {
+    await renameWithRetries(stagingPath, installPath, renamePath);
+    return;
+  }
+
+  const backupPath = path.join(installRoot, `.previous-${version}-${randomUUID()}`);
+  await renameWithRetries(installPath, backupPath, renamePath);
+  try {
+    await renameWithRetries(stagingPath, installPath, renamePath);
+  } catch (error) {
+    try {
+      await renameWithRetries(backupPath, installPath, renamePath);
+    } catch (rollbackError) {
+      const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+      throw new Error(`Windows MCP 更新失败，且旧版本回滚失败：${rollbackMessage}`, { cause: error });
+    }
+    throw error;
+  }
+  removePathBestEffort(backupPath);
+}
 
 function safeArchivePath(root: string, archivePath: string) {
   const normalized = archivePath.replace(/\\/g, '/');
@@ -131,8 +203,7 @@ export async function installCatalogArchive(
     }
     if (!executableFound) throw new Error('桌面控制运行包缺少主程序');
     writeFileSync(path.join(stagingPath, '.sanmao-install.json'), JSON.stringify({ version: entry.version, sha256: asset.sha256 }));
-    rmSync(installPath, { recursive: true, force: true });
-    renameSync(stagingPath, installPath);
+    await commitInstalledDirectory(stagingPath, installPath, installRoot, entry.version, dependencies.renamePath);
     rmSync(archivePath, { force: true });
   } catch (error) {
     rmSync(stagingPath, { recursive: true, force: true });
