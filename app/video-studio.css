@@ -729,12 +729,14 @@ body:has(.video-app-shell){height:100%;min-height:0;overflow:hidden}
 .video-option-segment .video-cangyuan-audio-field input[type=checkbox]:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:2px}
 
 
-/* P1 artifact review evidence shown beside the saved video task. */
-.creative-review-panel{display:grid;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--panel-2)}
-.creative-review-panel-heading,.creative-review-section>header,.creative-review-evidence-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.creative-review-panel-heading{align-items:flex-start;flex-direction:column}
-.creative-review-panel-heading strong{color:var(--text);font-size:12px}
-.creative-review-panel-heading span,.creative-review-empty{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+/* Artifact review details in Canvas and saved video tasks. */
+.creative-review-panel>summary{width:fit-content;max-width:100%;padding:4px 2px;color:var(--muted);font-size:11px;cursor:pointer}
+.creative-review-panel>summary:hover{color:var(--text)}
+.creative-review-panel>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.creative-review-panel>summary>.creative-review-status{margin-inline-start:6px}
+.creative-review-panel-content{display:grid;gap:12px;margin-top:5px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+.creative-review-section>header,.creative-review-evidence-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.creative-review-note,.creative-review-empty{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
 .creative-review-report{display:grid;gap:10px}
 .creative-review-report h4{margin:0;color:var(--text-2);font-size:10px}
 .creative-review-sections{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
