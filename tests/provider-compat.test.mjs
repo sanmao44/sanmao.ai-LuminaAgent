@@ -138,6 +138,20 @@ test('normalizes common model list response shapes', () => {
   ]);
 });
 
+test('preserves an explicit chat capability even when an image model name would mislead inference', () => {
+  const [chatModel, imageModel] = providers.normalizeDiscoveredModels({ data: [
+    { id: 'openai::gpt-image-2', name: 'GPT Image 2', capabilities: ['chat'] },
+    { id: 'taiji-draw::mj::8.2', name: 'Midjourney 8.2', capabilities: ['generate'] },
+  ] });
+
+  assert.deepEqual(chatModel, {
+    id: 'openai::gpt-image-2',
+    name: 'GPT Image 2',
+    capabilities: ['chat'],
+  });
+  assert.ok(imageModel.capabilities.includes('generate'));
+});
+
 test('detects native search protocols from model metadata', () => {
   const models = providers.normalizeDiscoveredModels({ data: [
     { id: 'gpt-search-preview', tools: [{ type: 'web_search' }] },

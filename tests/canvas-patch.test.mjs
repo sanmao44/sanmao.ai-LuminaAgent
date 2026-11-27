@@ -35,8 +35,7 @@ async function loadCanvasPatch() {
     .replace(/^\s*import\s+\{\s*selectAutomaticModel\s*\}\s+from\s+["']\.\.\/model-selection["'];?\s*$/m, 'const selectAutomaticModel = (models, defaultProviderId, defaultModelId) => models.find((model) => model.id === defaultModelId) || models[0];')
     .replace(/^\s*import\s+\{\s*normalizeLocalEditAnnotations\s*\}\s+from\s+["']\.\.\/local-edit["'];?\s*$/m, '')
     .replace(/^\s*import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m, '')
-    .replace(/^\s*import\s+\{[\s\S]*?\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m, 'const getCangyuanVideoModelProfile = () => null; const isCangyuanVideoModelSelectable = () => false;')
-    .replace(/^\s*import\s+\{\s*getCangyuanVideoModelSpec\s*,\s*getCangyuanVideoParameter\s*\}\s+from\s+["']\.\.\/cangyuan-video-model-catalog["'];?\s*$/m, 'const getCangyuanVideoModelSpec = () => null; const getCangyuanVideoParameter = () => undefined;')
+    .replace(/^\s*import\s+\{\s*getCangyuanVideoModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m, 'const getCangyuanVideoModelProfile = () => null;')
     .replace(/^\s*import\s+\{\s*isCangyuanProvider,\s*usesCangyuanVideoProtocol\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m, '');
   const maskCompiled = compile(mask.source, mask.url.pathname)
     .replace(/\bobjectValue\b/g, 'maskObjectValue')

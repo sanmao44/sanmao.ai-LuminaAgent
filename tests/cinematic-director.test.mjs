@@ -67,7 +67,7 @@ test("rejects a director response without an executable prompt", () => {
 });
 
 test("one-click cinematic requires an explicit provider and video model", () => {
-  assert.match(cinematicPanel, /oneClickCinematicVideoModelOptions\(runtime\)/);
+  assert.match(cinematicPanel, /videoModelOptions\(runtime\)/);
   assert.match(cinematicPanel, /请选择服务商/);
   assert.match(cinematicPanel, /请选择视频模型/);
   assert.match(cinematicPanel, /disabled=\{!selectedModel\}/);

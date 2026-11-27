@@ -9,8 +9,7 @@ import {
   AGNES_V20_DEFAULT_PARAMS,
   AGNES_V20_DIMENSION_PRESETS,
   AGNES_V20_DURATION_PRESETS,
-  oneClickCinematicVideoModelConfiguration,
-  oneClickCinematicVideoModelOptions,
+  videoModelOptions,
 } from "@/lib/creation/settings";
 import type { CanvasRuntimeState } from "@/lib/canvas/types";
 import SelectMenu from "@/components/SelectMenu";
@@ -53,7 +52,12 @@ export default function OneClickCinematicPanel({
   const [agnesNumFrames, setAgnesNumFrames] = useState<number>(AGNES_V20_DEFAULT_PARAMS.numFrames);
   const [agnesFrameRate, setAgnesFrameRate] = useState<number>(AGNES_V20_DEFAULT_PARAMS.frameRate);
   const [selectionError, setSelectionError] = useState("");
-  const availableModels = useMemo(() => oneClickCinematicVideoModelOptions(runtime), [runtime]);
+  const availableModels = useMemo(
+    () => videoModelOptions(runtime).filter((model) =>
+      runtime?.providers.find((provider) => provider.id === model.providerId)?.videoTransport !== "cangyuan-videos",
+    ),
+    [runtime],
+  );
   const providerOptions = useMemo(() => {
     const providers = new Map<string, { id: string; name: string; count: number }>();
     for (const model of availableModels) {
@@ -72,10 +76,6 @@ export default function OneClickCinematicPanel({
   );
   const selectedModel = providerModels.find((model) => model.id === modelId);
   const selectedProvider = runtime?.providers.find((provider) => provider.id === selectedModel?.providerId);
-  const selectedModelConfiguration = useMemo(
-    () => selectedModel ? oneClickCinematicVideoModelConfiguration(selectedModel, selectedProvider) : null,
-    [selectedModel, selectedProvider],
-  );
   const modelLimits = useMemo(
     () => getVideoModelLimits(selectedModel, selectedProvider),
     [selectedModel?.displayName, selectedModel?.rawId, selectedProvider?.id, selectedProvider?.platform, selectedProvider?.videoTransport],
@@ -95,30 +95,18 @@ export default function OneClickCinematicPanel({
     () => modelLimits.resolutions.map((value) => ({ value, label: value, description: value === "480p" ? "快速生成" : value.toLowerCase() === "1080p" ? "高清" : "推荐" })),
     [modelLimits.resolutions],
   );
-  const ratioOptions = useMemo(() => {
-    const modelRatios = selectedModelConfiguration?.aspectRatios;
-    const values = modelRatios === undefined
-      ? allRatios
-      : allRatios.filter((value) => modelRatios.some((candidate) => candidate.toLowerCase() === value.toLowerCase()));
-    return [
-      { value: "project" as const, label: "跟随项目", description: "根据参考图比例生成" },
-      ...values.map((value) => ({
-        value: value as Exclude<CinematicOpeningSettings["aspectRatio"], "project">,
-        label: value === "auto" ? "Auto" : value,
-        description: value === "auto" ? "由模型决定" : value.split(":")[0] === value.split(":")[1] ? "方形" : Number(value.split(":")[0]) > Number(value.split(":")[1]) ? "横屏" : "竖屏",
-      })),
-    ];
-  }, [selectedModelConfiguration?.aspectRatios]);
+  const ratioOptions = useMemo(() => [
+    { value: "project" as const, label: "跟随项目", description: "根据参考图比例生成" },
+    ...allRatios.map((value) => ({
+      value: value as Exclude<CinematicOpeningSettings["aspectRatio"], "project">,
+      label: value === "auto" ? "Auto" : value,
+      description: value === "auto" ? "由模型决定" : value.split(":")[0] === value.split(":")[1] ? "方形" : Number(value.split(":")[0]) > Number(value.split(":")[1]) ? "横屏" : "竖屏",
+    })),
+  ], []);
 
   useEffect(() => {
     if (!resolutionOptions.some((option) => option.value === resolution)) setResolution(resolutionOptions[0]?.value || "720p");
   }, [resolution, resolutionOptions]);
-
-  useEffect(() => {
-    if (settings.aspectRatio !== "project" && !ratioOptions.some((option) => option.value === settings.aspectRatio)) {
-      setSettings((current) => ({ ...current, aspectRatio: "project" }));
-    }
-  }, [ratioOptions, settings.aspectRatio]);
 
   useEffect(() => {
     if (providerId && !providerOptions.some((provider) => provider.id === providerId)) {
@@ -245,7 +233,7 @@ export default function OneClickCinematicPanel({
               <small className="canvas-one-click-model-hint">
                 {!availableModels.length
                   ? runtime ? "暂无可用于图片参考的一键成片模型；仅支持提示词的视频模型可在视频工作台使用。" : "正在读取视频模型列表…"
-                  : "仅显示已启用、已发布的视频模型；沧元型号还需具备已核实的图片输入规格。"}
+                  : "仅显示模型库中已启用且已发布的视频模型。"}
               </small>
             )}
             {selectionError && <small className="canvas-one-click-model-error" role="alert">{selectionError}</small>}

@@ -245,15 +245,19 @@ export function inferModel(rawId: string, platform?: ProviderPlatform, nativeSea
   const upscaleish = /(seed[-_ ]?vr2?|real[-_ ]?esrgan|swinir|upscal|super[-_ ]?resolution)/.test(id);
   if (upscaleish) return { kind: 'image', capabilities: ['edit', 'reference', 'upscale'] };
   if (inferredKind === 'video') return { kind: 'video', capabilities: ['video-generate'], ...(audioClassification.purposes.length ? { classification: audioClassification } : {}) };
-  const imageish = /(image|imagen|flux|sdxl|stable-diffusion|dall-e|ideogram|recraft|seedream|nano[-_ ]?banana)/.test(id);
-  if (imageish || inferredKind === 'image') {
+  const explicitChatOnly = hints.capabilities?.includes('chat')
+    && !hints.capabilities.includes('generate')
+    && !hints.capabilities.includes('upscale');
+  const imageish = (!explicitChatOnly && /(image|imagen|flux|sdxl|stable-diffusion|dall-e|ideogram|recraft|seedream|nano[-_ ]?banana)/.test(id))
+    || inferredKind === 'image';
+  if (imageish) {
     if (isImageEditOnlyModel({ rawId, displayName: hints.displayName })) return { kind: 'image', capabilities: ['edit', 'reference'] };
     const capabilities: ModelCapability[] = ['generate'];
     if (/(gpt-image|gemini.*image|nano|recraft|flux)/.test(id)) capabilities.push('edit', 'reference');
     if (/(gpt-image|gemini.*image|ideogram|recraft)/.test(id)) capabilities.push('typography');
     return { kind: 'image', capabilities, ...(audioClassification.purposes.length ? { classification: audioClassification } : {}) };
   }
-  const chatish = /(gpt|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|command-r|o[134]|sonar|perplexity)/.test(id);
+  const chatish = /(gpt|gemini|claude|deepseek|qwen|llama|mistral|glm|kimi|grok|mimo|command-r|o[134]|sonar|perplexity)/.test(id);
   if (chatish || inferredKind === 'chat') {
     const capabilities: ModelCapability[] = ['chat', 'vision'];
     const inferredNative = inferNativeSearch(rawId, platform);
@@ -1030,13 +1034,8 @@ export async function getRuntimeVideoModel(id: string | null | undefined) {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
     return isProviderModelLibraryEnabled(provider) && item.kind === 'video' && item.enabled && item.published && (item.capabilities.includes('video-generate') || item.capabilities.some((capability) => capability.startsWith('video-')));
   });
-  const requestedId = id && id !== 'auto' ? id : undefined;
-  // An explicitly selected model is an instruction, not a preference. If it
-  // has gone stale or is no longer usable, never silently submit to another
-  // provider (for example, OpenAI instead of the selected Cangyuan model).
-  const model = requestedId
-    ? compatible.find((item) => item.id === requestedId)
-    : selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultVideoModelId);
+  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
+  const model = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultVideoModelId);
   if (!model) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);
   if (!provider) return null;

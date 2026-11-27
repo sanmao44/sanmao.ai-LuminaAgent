@@ -37,7 +37,6 @@ import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-person
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
-import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure, isTextFileContextSizeFailure, isCompleteTextFileContent } from '@/lib/agent/text-file-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
@@ -150,7 +149,6 @@ function normalizeGeneratedFile(raw: any, index: number): GeneratedFile | null {
   const rawName = typeof raw.filename === 'string' ? raw.filename : typeof raw.name === 'string' ? raw.name : '';
   const safeName = rawName.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_').trim().slice(0, 160) || `SANMAO-file-${index + 1}.txt`;
   const extension = safeName.includes('.') ? safeName.split('.').pop()?.toLowerCase() || '' : '';
-  if (encoding === 'utf8' && ['html', 'htm', 'svg', 'json'].includes(extension) && !isCompleteTextFileContent(content, extension)) return null;
   const mimeType = typeof raw.mimeType === 'string' && raw.mimeType.trim() ? raw.mimeType.trim().slice(0, 120) : FILE_MIME_TYPES[extension] || (encoding === 'base64' ? 'application/octet-stream' : 'text/plain;charset=utf-8');
   const size = encoding === 'base64' ? Math.floor(content.replace(/\s/g, '').length * 0.75) : new TextEncoder().encode(content).length;
   return { name: safeName, mimeType, content, encoding, size };
@@ -599,10 +597,6 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
 
     const latestMessage = latestUser(messages);
     let fileDeliveryDeadlineRequested = likelyFileGenerationRequest(String(latestMessage?.content || ''));
-    // File recovery is still a single full-document response. Give it the same
-    // long deadline as the primary file request; a 60s recovery window cuts off
-    // polished HTML before the model can finish and surfaces as a false failure.
-    let textFileFallbackInProgress = false;
     const hasAudioAttachment = Boolean(latestMessage?.files?.some((file) => isAudioClientFile(file) && file.artifactId));
     if (hasAudioAttachment && latestMessage) {
       const bodyHasTranscriptionSelection = Object.prototype.hasOwnProperty.call(body, 'audioTranscription');
@@ -719,9 +713,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
       timeoutFor: (runtime, mode) => mode === 'failover'
         ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
-        : textFileFallbackInProgress
-          ? AGENT_FILE_GENERATION_TIMEOUT_MS
-          : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
+        : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
           ? AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS
           : fileDeliveryDeadlineRequested
             ? AGENT_FILE_GENERATION_TIMEOUT_MS
@@ -1269,7 +1261,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const presentationImageGenerationRequest = requestModeAllowsExecution
       && requestRoute.artifactKind === 'ppt'
       && !/(?:不要|不需要|无需|不用).{0,6}(?:图片|配图|插图)/i.test(latestInstruction);
-    const imageGenerationRequest = !presentationImageGenerationRequest && requestRoute.route !== 'file' && requestRoute.artifactKind !== 'file' && requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
+    const imageGenerationRequest = !presentationImageGenerationRequest && requestModeAllowsExecution && creativeRoute.lane === 'image' && creativeRoute.execution === 'run' && !isCanvasNodeExecution && !isReversePromptTask && !isOneTakeVideoPromptTask && !isCinematicDirectorTask && !isSmartVariantPlanningTask && !isPromptOptimizationTask && !identityQuestion
       && (canvasImageEditRequest
         || requestedDeliverable === 'IMAGE'
         || requestedDeliverable === 'BOTH'
@@ -2004,15 +1996,9 @@ const auditMcpCall = (
     const toolSelectionText = toolSelectionIsolated ? '' : `${mcpTurnText}\n${priorityServerIds.join(' ')}`;
     const callableTools = toolSchemasFor(gatingContext, mcpTools, toolSelectionText, lazyGroupKeywords);
     if (isCanvasNodeExecution) callableTools.splice(0, callableTools.length);
-    // Text/code delivery is a hard file lane. Do not expose Office or archive
-    // tools for an HTML/SVG/JSON/etc. request: a visual description inside an
-    // HTML request must never let the model route the turn to DOCX/PPTX/ZIP.
-    const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
     const initialCallableTools = presentationImageGenerationRequest
       ? callableTools.filter((tool) => tool.function.name === 'presentation_generate' || tool.function.name === 'image_generate')
-      : textFileFallbackRequested
-        ? callableTools.filter((tool) => tool.function.name === 'file_generate')
-        : callableTools;
+      : callableTools;
     /**
      * 浏览器工具最容易翻车的是元素定位：模型会把快照里的 [ref=f5e14] 连前缀一起抄进 target，
      * 或者自己编一个 CSS 选择器，于是每次都「找不到元素」——用户看到的就是「浏览器打开了，
@@ -2041,14 +2027,10 @@ const auditMcpCall = (
       llmMessages[0] = { role: 'system', content: system };
     }
     const skillToolsOnly = callableTools.filter((tool: any) => isSkillToolCall({ function: { name: tool?.function?.name } }));
-    const artifactToolsOnly = initialCallableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
-    const artifactFallbackKind = artifactGenerationRequest && !textFileFallbackRequested
+    const artifactToolsOnly = callableTools.filter((tool: any) => isArtifactToolCall({ function: { name: tool?.function?.name } }) || tool?.function?.name === 'file_generate');
+    const artifactFallbackKind = artifactGenerationRequest
       ? artifactFallbackKindFor(requestRoute.route, `${latestInstruction}\n${previousAssistantText}`)
       : null;
-    if (textFileFallbackRequested) {
-      system += '\n\nHTML/HTM/SVG/代码文件硬隔离：本轮只能调用 file_generate，一次性提交完整文件正文。禁止调用 document_generate、spreadsheet_generate、presentation_generate、archive_generate、image_generate 或 image_edit；禁止拆分、简化、占位、只给方案或把 HTML 改成 Word。';
-      llmMessages[0] = { role: 'system', content: system };
-    }
     let artifactFallbackUsed = false;
     const artifactFallbackContext: unknown = requestRoute.contextNeed === 'required'
       ? modelContextMessages
@@ -2074,27 +2056,6 @@ const auditMcpCall = (
         reportProgress({ stage: 'tool', message: '当前模型未返回文件调用，正在使用本地 Office 生成器…' });
       }
       return call as ToolRuntimeCall | null;
-    };
-    const requestTextFileFallback = async () => {
-      textFileFallbackInProgress = true;
-      try {
-        reportProgress({ stage: 'tool', message: '模型未能调用文件工具，正在通过文本生成补救交付…' });
-        const response = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
-          messages: [
-            { role: 'system', content: textFileFallbackSystemPrompt() },
-            { role: 'user', content: textFileFallbackUserPrompt(latestInstruction) },
-          ],
-          tool_choice: 'none',
-        }, requestController.signal);
-        const content = responseContent(response);
-        return makeTextFileFallbackCall({
-          response: content,
-          instruction: latestInstruction,
-          callId: `sanmao-file-fallback-${agentRunId || Date.now()}`,
-        });
-      } finally {
-        textFileFallbackInProgress = false;
-      }
     };
     const searchMetadata = (): WebSearchMeta | null => {
       if (nativeSearchData) return { source: 'native', protocol: nativeSearchData.protocol, modelId: nativeSearchData.modelId, provider: nativeSearchData.provider, query: nativeSearchData.query, resultCount: nativeSearchData.resultCount, ...(nativeSearchData.searchRequestCount !== undefined ? { searchRequestCount: nativeSearchData.searchRequestCount } : {}), ...(nativeSearchData.fetchedCount !== undefined ? { fetchedCount: nativeSearchData.fetchedCount } : {}), warnings: nativeSearchData.warnings, searchedAt: nativeSearchData.searchedAt };
@@ -2224,33 +2185,8 @@ const auditMcpCall = (
      } catch (error) {
        if (requestController.signal.aborted) throw requestController.signal.reason || error;
        const failureStatus = Number((error as { providerStatus?: number; status?: number } | null)?.providerStatus || (error as { status?: number } | null)?.status || 0);
-      const textFileRecoveryAllowed = fileGenerationRequest
-        && isTextFileFallbackRequested(latestInstruction)
-        && latestReferenceImageCount === 0
-        && !(latestMessage?.files?.length)
-        && (isTextFileContextSizeFailure(error));
-      if (failureStatus === 413 && !textFileRecoveryAllowed) throw error;
-      if (failureStatus !== 413 && /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
-        const providerFailureKind = (error as { providerFailureKind?: unknown } | null)?.providerFailureKind;
-        const isProviderTimeout = (error instanceof Error && error.name === 'TimeoutError') || providerFailureKind === 'timeout';
-        if (fileGenerationRequest && isTextFileFallbackRequested(latestInstruction) && (isToolSchemaProviderFailure(error) || isProviderTimeout || textFileRecoveryAllowed)) {
-          try {
-            const fallback = await requestTextFileFallback();
-            if (fallback.ok) {
-              first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [fallback.call] } }] };
-            } else if (isProviderTimeout) {
-              throw new Error('本轮没有生成可下载文件：模型响应超时后未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
-            } else {
-              throw error;
-            }
-          } catch (fallbackError) {
-            if (requestController.signal.aborted) throw requestController.signal.reason || fallbackError;
-            // Keep the original upstream timeout visible when recovery also
-            // times out; it is the most useful provider-side diagnosis.
-            if (isProviderTimeout && fallbackError instanceof Error && fallbackError.name === 'TimeoutError') throw error;
-            throw fallbackError;
-          }
-        } else if (imageGenerationRequest) {
+       if (failureStatus === 413 || /413|request entity too large|请求内容过大|请求内容超过服务商限制/i.test(error instanceof Error ? error.message : '')) throw error;
+        if (imageGenerationRequest) {
          first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: requestedImageCapability === 'edit' ? 'edit' : 'generate', batchContent: batchPlanContent })] } }] };
         } else if (artifactFallbackKind) {
           const artifactCall = requestArtifactFallback();
@@ -2308,7 +2244,7 @@ const auditMcpCall = (
       toolCalls = inlineToolCalls.slice(0, 1);
       toolCallMessage = { ...message, content: null, tool_calls: toolCalls };
     }
-    if (imageGenerationRequest && !textFileFallbackRequested && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
+    if (imageGenerationRequest && !toolCalls.some((call: any) => call?.function?.name === 'image_generate' || call?.function?.name === 'image_edit')) {
       toolCalls = [...toolCalls, makeFallbackImageToolCall({
         prompt: presentationImageGenerationRequest
           ? `${fallbackImagePrompt}\n横向 16:9 演示文稿配图，画面中不要出现文字或品牌标识。`
@@ -2440,19 +2376,6 @@ const auditMcpCall = (
         } catch (error) {
           if (requestController.signal.aborted) throw requestController.signal.reason || error;
           throw error;
-        }
-      }
-      // A provider may answer an artifact request with prose even after one
-      // native-tool retry. For text/code files only, make one constrained
-      // tool-free generation attempt and route a validated envelope back
-      // through the ordinary file tool runtime. Never persist prose directly.
-      if (!toolCalls.length && fileGenerationRequest && !artifactFallbackKind && !presentationImageGenerationRequest) {
-        const fallback = await requestTextFileFallback();
-        if (fallback.ok) {
-          toolCalls = [fallback.call];
-          toolCallMessage = { role: 'assistant', content: null, tool_calls: toolCalls };
-        } else {
-          throw new Error('本轮没有生成可下载文件：模型未返回可验证的文本文件内容。请重试，或切换到支持文件工具的对话模型。');
         }
       }
       if (!toolCalls.length) {
@@ -3122,10 +3045,6 @@ const auditMcpCall = (
       });
       if (presentationImageGenerationRequest) {
         // The artifact follow-up receives the image error and generates a text-only deck.
-      } else if (fileGenerationRequest && generatedFiles.length) {
-        // A text-file request may share the image lane (for example an SVG
-        // animation). Preserve the verified file delivery even when no image
-        // result was produced; the file is the requested deliverable.
       } else {
         const failure = `图片未生成成功：${errors.at(-1) || '未收到有效图片结果'}。`;
         await settleLlmLog?.({ status: 'error', responseChars: failure.length, error: failure });
@@ -3166,9 +3085,7 @@ const auditMcpCall = (
       : undefined;
     const verifiedFailure = authorizationStatus
       ? videoDownloadSessionConsentQuestion(requestedVideoUrl, authorizationStatus, latestVideoDownloadOutcome?.error)
-      : toolOutcomeText('', fileGenerationRequest && generatedFiles.length
-        ? toolOutcomes.filter((outcome) => !(isImageToolCall({ function: { name: outcome.name } }) && !outcome.ok))
-        : toolOutcomes);
+      : toolOutcomeText('', toolOutcomes);
     if (verifiedFailure) {
       await settleLlmLog?.({ status: 'error', responseChars: verifiedFailure.length, error: verifiedFailure });
       if (wantsStream) return streamResult(null, { fallback: verifiedFailure, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, mcpTools: usedMcpTools, toolTrace });

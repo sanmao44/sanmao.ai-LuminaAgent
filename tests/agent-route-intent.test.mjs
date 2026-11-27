@@ -2023,12 +2023,14 @@ test('HTML delivery fails as a retryable request when the model describes a temp
   const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
   assert.match(data.error, /没有生成可下载文件/);
   assert.equal(data.files?.length || 0, 0);
-  assert.equal(agent.modelCalls.length, 3, 'the application retries the native tool, then makes one constrained text fallback before returning failure');
+  assert.equal(agent.modelCalls.length, 2, 'the application requests a tool-backed file generation retry before returning failure');
 });
 
 for (const failure of [
+  Object.assign(new Error('HTTP 400: invalid tool schema (request id: req-schema)'), { providerStatus: 400, providerFailureKind: 'http' }),
   Object.assign(new Error('请求内容超过服务商限制：body too large (request id: req-size)'), { providerStatus: 413, providerFailureKind: 'http' }),
   Object.assign(new Error('HTTP 429: rate limit exceeded (request id: req-rate)'), { providerStatus: 429, providerFailureKind: 'http' }),
+  Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' }),
 ]) {
   test(`HTML delivery preserves the original provider failure: ${failure.message}`, async () => {
     const described = [];
@@ -2043,84 +2045,6 @@ for (const failure of [
     assert.equal(data.files?.length || 0, 0);
   });
 }
-
-test('HTML delivery recovers from a context-size 413 with the minimal fenced-document fallback', async () => {
-  const content = '<!doctype html><html><body><main>context recovery</main></body></html>';
-  const failure = Object.assign(new Error('context_length_exceeded: prompt tokens exceed model limit'), {
-    providerStatus: 413,
-    providerFailureKind: 'http',
-    providerErrorCode: 'context_length_exceeded',
-  });
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (payload, count) => {
-      if (count === 1) throw failure;
-      assert.equal(payload.tool_choice, 'none');
-      assert.equal(payload.tools, undefined);
-      const fence = String.fromCharCode(96).repeat(3);
-      return { content: fence + 'html\n' + content + '\n' + fence };
-    },
-  });
-  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 交互页面，命名为 context-recovery.html' }]);
-  assert.equal(agent.modelCalls.length, 2);
-  assert.equal(data.files?.[0]?.name, 'context-recovery.html', JSON.stringify(data));
-  assert.equal(data.files?.[0]?.content, content);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
-});
-
-test('HTML delivery recovers from an initial model timeout with a validated tool-free file response', async () => {
-  const content = '<!doctype html><html><body><main>timeout recovery</main></body></html>';
-  const failure = Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' });
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (payload, count) => {
-      if (count === 1) throw failure;
-      assert.equal(payload.tool_choice, 'none');
-      assert.equal(payload.tools, undefined);
-      return { content: JSON.stringify({ filename: 'timeout-recovery.html', content }) };
-    },
-  });
-  const data = await agent.post([{ role: 'user', content: '写一个 HTML 文件，命名为 timeout-recovery.html' }]);
-
-  assert.equal(agent.modelCalls.length, 2);
-  assert.deepEqual(agent.modelTimeouts.map((entry) => entry.timeoutMs), [180_000, 180_000]);
-  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
-  assert.equal(data.files[0].name, 'timeout-recovery.html');
-  assert.equal(data.files[0].content, content);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
-});
-
-test('HTML delivery keeps a clear provider timeout when the constrained recovery also times out', async () => {
-  const failure = Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' });
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: () => { throw failure; },
-  });
-  const data = await agent.post([{ role: 'user', content: '写一个 HTML 文件，命名为 timeout-recovery.html' }]);
-
-  assert.equal(agent.modelCalls.length, 2);
-  assert.equal(data.error, failure.message);
-  assert.equal(data.files?.length || 0, 0);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
-  assert.equal(agent.generationLogFinishes.at(-1).error, failure.message);
-});
-
-test('HTML delivery rejects invalid content from timeout recovery without creating a file', async () => {
-  const failure = Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' });
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (_payload, count) => {
-      if (count === 1) throw failure;
-      return { content: JSON.stringify({ filename: 'timeout-invalid.html', content: '<html>未闭合' }) };
-    },
-  });
-  const data = await agent.post([{ role: 'user', content: '写一个 HTML 文件，命名为 timeout-invalid.html' }]);
-
-  assert.equal(agent.modelCalls.length, 2);
-  assert.equal(data.files?.length || 0, 0);
-  assert.match(data.error, /没有生成可下载文件|未返回可验证的文本文件内容/);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
-});
 
 test('HTML delivery preserves a provider failure during the tool-call retry', async () => {
   const failure = Object.assign(new Error('HTTP 429: retry rate limit (request id: req-retry)'), { providerStatus: 429, providerFailureKind: 'http' });
@@ -2152,99 +2076,6 @@ test('HTML delivery returns a downloadable chat file after file_generate succeed
   assert.equal(data.files[0].content, content);
   assert.match(data.message, /1 个文件/);
   assert.equal(agent.modelTimeouts[0].timeoutMs, 180_000);
-});
-
-test('HTML interactive page exposes only the text-file lane, never Office or image tools', async () => {
-  const content = '<!doctype html><html><body><button id="go">Go</button></body></html>';
-  const agent = harness({
-    reply: (payload) => {
-      const systemMessage = payload.messages.find((message) => message.role === 'system')?.content || '';
-      assert.ok(systemMessage.includes('\n\nHTML/HTM/SVG/代码文件硬隔离：'), 'HTML guidance must be separated by actual prompt newlines');
-      assert.equal(systemMessage.includes('\\n\\nHTML/HTM/SVG/代码文件硬隔离：'), false, 'HTML guidance must not contain escaped newline text');
-      const offered = (payload.tools || []).map((tool) => tool.function.name);
-      assert.ok(offered.includes('file_generate'), JSON.stringify(offered));
-      for (const forbidden of ['image_generate', 'document_generate', 'spreadsheet_generate', 'presentation_generate', 'archive_generate']) {
-        assert.equal(offered.includes(forbidden), false, 'must not offer ' + forbidden);
-      }
-      return { tool_calls: [{ id: 'html-interactive', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'interactive.html', content }] }) } }] };
-    },
-  });
-  const data = await agent.post([{ role: 'user', content: '生成一个小丑骑单轮车的 SVG 动画 HTML 交互页面，要求具备交互功能，设计要精致，并加入一些小巧思。' }]);
-  assert.equal(data.error, undefined, JSON.stringify(data));
-  assert.equal(data.files?.[0]?.name, 'interactive.html');
-  assert.equal(agent.images.length, 0);
-});
-
-test('HTML delivery keeps the file when the optional image lane returns no image', async () => {
-  const content = '<!doctype html><html><body><main>file wins</main></body></html>';
-  const agent = harness({
-    emptyImages: true,
-    reply: (_payload, count) => count === 1
-      ? { tool_calls: [
-        { id: 'image-failed', type: 'function', function: { name: 'image_generate', arguments: JSON.stringify({ prompt: '鹅骑自行车' }) } },
-        { id: 'html-file', type: 'function', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'file-wins.html', content }] }) } },
-      ] }
-      : { content: '文件已生成。' },
-  });
-  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的 SVG 动画，HTML 交付，命名为 file-wins.html' }]);
-
-  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
-  assert.equal(data.files[0].name, 'file-wins.html');
-  assert.match(data.message, /1 个文件/);
-  assert.doesNotMatch(data.message, /图片未生成成功|任务尚未全部完成/);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
-});
-
-test('HTML delivery falls back to validated tool-free output after the native tool retry is omitted', async () => {
-  const content = '<!doctype html><html><body><main>交互演示</main></body></html>';
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (payload) => payload.tool_choice === 'none'
-    ? { content: JSON.stringify({ filename: 'demo.html', content }) }
-    : { content: '我会生成 HTML 文件。' } });
-  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
-
-  assert.equal(agent.modelCalls.length, 3, 'initial request, native-tool retry, then constrained text fallback');
-  assert.equal(agent.modelCalls[2].payload.tools, undefined, 'the final fallback must not depend on tool-call support');
-  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
-  assert.equal(data.files[0].name, 'demo.html');
-  assert.equal(data.files[0].content, content);
-  assert.match(data.message, /1 个文件/);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
-});
-
-test('HTML delivery falls back when the provider rejects its tool schema', async () => {
-  const content = '<!doctype html><html><body>schema recovery</body></html>';
-  const failure = Object.assign(new Error('HTTP 400: invalid tool schema'), { providerStatus: 400 });
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (payload, count) => {
-      if (count === 1) throw failure;
-      assert.equal(payload.tool_choice, 'none');
-      return { content: JSON.stringify({ filename: 'recovered.html', content }) };
-    },
-  });
-  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 文件，命名为 recovered.html' }]);
-
-  assert.equal(agent.modelCalls.length, 2);
-  assert.equal(data.files?.length || 0, 1, JSON.stringify(data));
-  assert.equal(data.files[0].name, 'recovered.html');
-  assert.equal(data.files[0].content, content);
-});
-
-test('HTML delivery refuses an invalid tool-free fallback without creating a file', async () => {
-  const agent = harness({
-    describeProviderFailure: (error) => error.message,
-    reply: (payload) => payload.tool_choice === 'none'
-    ? { content: JSON.stringify({ filename: 'demo.html', content: '<html>未闭合' }) }
-    : { content: '我会生成 HTML 文件。' },
-  });
-  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 网页，命名为 demo.html' }]);
-
-  assert.equal(agent.modelCalls.length, 3);
-  assert.equal(data.files?.length || 0, 0);
-  assert.match(data.error, /没有生成可下载文件|未返回可验证的文本文件内容/);
-  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
 });
 
 test('HTML delivery repairs invalid file content once using the actual tool error', async () => {

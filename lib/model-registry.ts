@@ -12,12 +12,17 @@ type InferredModel = {
 const AUDIO_TASK_CAPABILITIES = new Set<ModelCapability>([
   'speech', 'transcription', 'music-generate', 'sound-effect', 'audio-conversation',
 ]);
+const IMAGE_TASK_CAPABILITIES = new Set<ModelCapability>([
+  'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale',
+]);
 
 /** Replace discovered task capabilities with the latest provider snapshot. */
 export function reconcileDiscoveredModelCapabilities(previous: RegistryModel, latest: readonly ModelCapability[]) {
+  const explicitChatOnly = latest.includes('chat') && !latest.some((capability) => IMAGE_TASK_CAPABILITIES.has(capability));
   const retained = previous.source === 'manual'
     ? previous.capabilities
-    : previous.capabilities.filter((capability) => !AUDIO_TASK_CAPABILITIES.has(capability));
+    : previous.capabilities.filter((capability) => !AUDIO_TASK_CAPABILITIES.has(capability)
+      && !(explicitChatOnly && IMAGE_TASK_CAPABILITIES.has(capability)));
   return Array.from(new Set([...retained, ...latest]));
 }
 

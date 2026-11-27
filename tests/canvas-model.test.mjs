@@ -62,11 +62,8 @@ async function loadTypeScript(path) {
       /^\s*import\s+\{\s*getCangyuanImageModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-image-capabilities["'];?\s*$/m,
       '',
     ).replace(
-      /^\s*import\s+\{[^}]*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
-      'const getCangyuanVideoModelProfile = () => null; const isCangyuanVideoModelSelectable = () => false;',
-    ).replace(
-      /^\s*import\s+\{\s*getCangyuanVideoModelSpec\s*,\s*getCangyuanVideoParameter\s*\}\s+from\s+["']\.\.\/cangyuan-video-model-catalog["'];?\s*$/m,
-      'const getCangyuanVideoModelSpec = () => null; const getCangyuanVideoParameter = () => undefined;',
+      /^\s*import\s+\{\s*getCangyuanVideoModelProfile\s*\}\s+from\s+["']\.\.\/cangyuan-video-capabilities["'];?\s*$/m,
+      'const getCangyuanVideoModelProfile = () => null;',
     ).replace(
       /^\s*import\s+\{\s*isCangyuanProvider,\s*usesCangyuanVideoProtocol\s*\}\s+from\s+["']\.\.\/cangyuan-provider["'];?\s*$/m,
       '',

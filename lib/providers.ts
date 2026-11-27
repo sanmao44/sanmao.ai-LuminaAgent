@@ -178,11 +178,24 @@ function normalizeProviderToolCalls<T extends { content: unknown }>(message: T):
   return { ...message, tool_calls: toolCalls } as T;
 }
 
+const EXPLICIT_DISCOVERED_CAPABILITIES = new Set<ModelCapability>([
+  'chat', 'vision', 'generate', 'edit', 'reference', 'typography', 'transparent', 'upscale', 'fast',
+  'speech', 'voice-conversion', 'audio-isolation', 'transcription', 'music-generate', 'sound-effect',
+  'audio-conversation', '3d-generate', 'web-search', 'video-generate', 'video-edit', 'video-extend',
+  'video-first-frame', 'video-reference', 'video-input', 'video-audio',
+]);
+
 function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id = ''): ModelCapability[] {
   const raw = [item?.capabilities, item?.features, item?.supported_tools, item?.tools, item?.tool_support, item?.modalities, item?.metadata, item?.endpoints, item?.endpoint, item?.operations, item?.pricing, item?.pricing_info]
     .filter(Boolean);
   const text = raw.length ? JSON.stringify(raw).toLowerCase() : '';
   const capabilities: ModelCapability[] = [];
+  if (Array.isArray(item?.capabilities)) {
+    for (const value of item.capabilities) {
+      const capability = String(value).trim().toLowerCase() as ModelCapability;
+      if (EXPLICIT_DISCOVERED_CAPABILITIES.has(capability)) capabilities.push(capability);
+    }
+  }
   if (/(^|[\[\s,"':])video([_ -]|$)|\/videos?(?:[/?"'\s]|$)|text[-_ ]to[-_ ]video|image[-_ ]to[-_ ]video|video[-_ ]generation|video_generation|frames2video|multimodal2video/.test(text)) {
     capabilities.push('video-generate');
     if (/edit|modify|reference_video/.test(text)) capabilities.push('video-edit');
@@ -228,7 +241,7 @@ function discoveredModelCapabilities(item: any, provider?: RuntimeProvider, id =
   }
   const native = inferNativeSearch(id, provider?.platform, raw);
   if (native.detected) capabilities.push('chat', 'web-search');
-  return capabilities;
+  return Array.from(new Set(capabilities));
 }
 
 function trimSlash(value: string) { return value.replace(/\/+$/, ''); }

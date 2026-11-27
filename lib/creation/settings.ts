@@ -5,8 +5,7 @@ import { getLastModelCall } from "../model-preferences";
 import { selectAutomaticModel } from "../model-selection";
 import { normalizeLocalEditAnnotations, type LocalEditAnnotation } from "../local-edit";
 import { getCangyuanImageModelProfile } from "../cangyuan-image-capabilities";
-import { getCangyuanVideoModelProfile, isCangyuanVideoModelSelectable } from "../cangyuan-video-capabilities";
-import { getCangyuanVideoModelSpec, getCangyuanVideoParameter } from "../cangyuan-video-model-catalog";
+import { getCangyuanVideoModelProfile } from "../cangyuan-video-capabilities";
 import type { CangyuanImageAdvancedParameter } from "../cangyuan-image-capabilities";
 import { isCangyuanProvider, usesCangyuanVideoProtocol } from "../cangyuan-provider";
 
@@ -263,96 +262,6 @@ export function videoModelOptions(runtime: PublicState | null | undefined) {
           capability.startsWith("video-"),
         )),
   );
-}
-
-export type OneClickCinematicVideoModelConfiguration = {
-  inputMode: "first-frame" | "reference";
-  aspectRatios?: string[];
-  aspectRatioDefault?: string;
-};
-
-export function oneClickCinematicVideoModelConfiguration(
-  model: RegistryModel,
-  provider?: PublicState["providers"][number] | null,
-): OneClickCinematicVideoModelConfiguration | null {
-  if (!usesCangyuanVideoProtocol(provider)) {
-    return {
-      inputMode:
-        model.capabilities.includes("video-first-frame") ||
-        model.capabilities.includes("video-generate") ||
-        !model.capabilities.includes("video-reference")
-          ? "first-frame"
-          : "reference",
-    };
-  }
-
-  const profile = getCangyuanVideoModelProfile(model.rawId);
-  if (!isCangyuanVideoModelSelectable(model.rawId) || !profile) return null;
-
-  const inputMode = profile.supportsFirstFrame
-    ? "first-frame"
-    : profile.supportsReferenceImages
-      ? "reference"
-      : null;
-  if (!inputMode) return null;
-
-  const spec = getCangyuanVideoModelSpec(model.rawId);
-  const aspectParameter = spec && getCangyuanVideoParameter(spec, "aspect_ratio");
-  const aspectRatioValues = aspectParameter?.enum;
-  const aspectRatios = Array.isArray(aspectRatioValues)
-    ? aspectRatioValues
-    : typeof aspectRatioValues === "string"
-      ? [aspectRatioValues]
-      : [...profile.suggestedAspectRatios];
-
-  return {
-    inputMode,
-    ...(profile.supportsAspectRatio && aspectRatios.length ? { aspectRatios } : {}),
-    ...(typeof aspectParameter?.suggestedDefault === "string"
-      ? { aspectRatioDefault: aspectParameter.suggestedDefault }
-      : profile.aspectRatioDefault
-        ? { aspectRatioDefault: profile.aspectRatioDefault }
-        : {}),
-  };
-}
-
-export function oneClickCinematicVideoModelOptions(runtime: PublicState | null | undefined) {
-  return videoModelOptions(runtime).filter((model) => {
-    const provider = runtime?.providers.find((candidate) => candidate.id === model.providerId);
-    return oneClickCinematicVideoModelConfiguration(model, provider) !== null;
-  });
-}
-
-function numericAspectRatio(value: string) {
-  const [width, height] = value.split(":").map(Number);
-  return width > 0 && height > 0 ? width / height : undefined;
-}
-
-export function resolveOneClickCinematicAspectRatio(input: {
-  requested: string;
-  project: string;
-  configuration: OneClickCinematicVideoModelConfiguration | null;
-}) {
-  const choices = input.configuration?.aspectRatios;
-  if (!choices) return input.requested === "project" ? input.project : input.requested;
-
-  const requested = input.requested === "project" ? input.project : input.requested;
-  const exact = choices.find((choice) => choice.toLowerCase() === requested.toLowerCase());
-  if (exact) return exact;
-  if (input.requested === "project") {
-    const auto = choices.find((choice) => choice.toLowerCase() === "auto");
-    if (auto) return auto;
-    const targetRatio = numericAspectRatio(input.project);
-    if (targetRatio) {
-      const closest = choices
-        .map((choice) => ({ choice, ratio: numericAspectRatio(choice) }))
-        .filter((candidate): candidate is { choice: string; ratio: number } => candidate.ratio !== undefined)
-        .sort((left, right) => Math.abs(Math.log(left.ratio / targetRatio)) - Math.abs(Math.log(right.ratio / targetRatio)))[0];
-      if (closest) return closest.choice;
-    }
-  }
-  const fallback = input.configuration?.aspectRatioDefault;
-  return choices.find((choice) => choice.toLowerCase() === fallback?.toLowerCase()) || choices[0] || requested;
 }
 
 export function agentModelOptions(runtime: PublicState | null | undefined) {
