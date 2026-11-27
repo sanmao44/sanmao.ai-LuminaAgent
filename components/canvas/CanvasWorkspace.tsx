@@ -171,8 +171,6 @@ import {
   imageModelIdForRequest,
   readSharedCreationSettings,
   resolveAvailableCreationModel,
-  oneClickCinematicVideoModelConfiguration,
-  resolveOneClickCinematicAspectRatio,
   subscribeSharedCreationSettings,
   videoModelOptions,
   IMAGE_QUALITY_OPTIONS,
@@ -8479,22 +8477,13 @@ export default function SuperCanvas() {
               ? "4:5"
               : "1:1"
         : "16:9";
+      const aspect = settings.aspectRatio === "project" ? sourceAspect : settings.aspectRatio;
       const baseParams = normalizeCreationSettings(
         "video",
         readSharedCreationSettings("video", runtime),
         runtime,
       );
       const videoProvider = runtime?.providers.find((provider) => provider.id === selectedModel.providerId);
-      const cinematicModelConfiguration = oneClickCinematicVideoModelConfiguration(selectedModel, videoProvider);
-      if (!cinematicModelConfiguration) {
-        notify("该沧元视频型号不支持一键成片所需的图片输入，已阻止提交。", "error");
-        return;
-      }
-      const aspect = resolveOneClickCinematicAspectRatio({
-        requested: settings.aspectRatio,
-        project: sourceAspect,
-        configuration: cinematicModelConfiguration,
-      });
       const videoLimits = getVideoModelLimits(selectedModel, videoProvider);
       const usesAgnesV20 = /agnes(?: video)?[- ]?v2\.0/i.test(`${selectedModel.rawId} ${selectedModel.displayName}`);
       const requestedDuration = resolvedCinematicDuration(settings.duration);
@@ -8507,7 +8496,12 @@ export default function SuperCanvas() {
       const resolution = videoLimits.resolutions.includes(selection.resolution)
         ? selection.resolution
         : videoLimits.resolutions[0] || baseParams.resolution;
-      const inputMode = cinematicModelConfiguration.inputMode;
+      const modelCapabilities = selectedModel.capabilities || [];
+      const inputMode = modelCapabilities.includes("video-first-frame") || modelCapabilities.includes("video-generate")
+        ? "first-frame" as const
+        : modelCapabilities.includes("video-reference")
+          ? "reference" as const
+          : "first-frame" as const;
       const videoParams: VideoCreationSettings = {
         ...baseParams,
         model: selectedModel.id,
@@ -8516,7 +8510,6 @@ export default function SuperCanvas() {
         duration,
         aspect,
         resolution,
-        modelParameters: {},
         ...(usesAgnesV20 ? {
           agnesWidth: selection.agnesWidth || baseParams.agnesWidth,
           agnesHeight: selection.agnesHeight || baseParams.agnesHeight,

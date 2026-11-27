@@ -21,6 +21,8 @@ test('classifies common chat model families from their names', () => {
   assert.equal(modelKind.inferModelKind({ displayName: 'Hiy3' }), 'chat');
   assert.equal(modelKind.inferModelKind({ rawId: 'codex-mini-latest' }), 'chat');
   assert.equal(modelKind.inferModelKind({ rawId: 'Tencent-Hunyuan/Hy3' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'grok-4.7' }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'mimo-v2-flash' }), 'chat');
   assert.equal(modelKind.inferModelKind({ rawId: 'doubao-seedance-2-0' }), 'video');
 });
 
@@ -33,6 +35,8 @@ test('recognizes image-edit-only model names without treating them as text-to-im
 test('recognizes APIKL GPT Image Pro and 4K models as image models', () => {
   assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2-pro' }), 'image');
   assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2-4K' }), 'image');
+  assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2', capabilities: ['chat'] }), 'chat');
+  assert.equal(modelKind.inferModelKind({ rawId: 'gpt-image-2', capabilities: ['chat', 'generate'] }), 'image');
 });
 
 test('uses discovered capabilities before name heuristics', () => {
@@ -83,6 +87,7 @@ test('classifies TTS and ASR families as audio without eating realtime chat audi
   for (const rawId of ['gpt-4o-audio-preview', 'gpt-4o-realtime-preview']) {
     assert.notEqual(modelKind.inferModelKind({ rawId }), 'audio', rawId);
   }
+  assert.equal(modelKind.inferModelKind({ rawId: 'mimo-audio-7b' }), 'audio');
 });
 
 test('keeps an explicit category and the speech capability authoritative', () => {

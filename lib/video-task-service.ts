@@ -435,14 +435,8 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
 }
 
 export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource; retryOf?: string }) {
-  const requestedModelId = options.modelId?.trim() || 'auto';
-  const runtime = await getRuntimeVideoModel(requestedModelId);
-  if (!runtime) {
-    if (requestedModelId !== 'auto') {
-      throw new Error('所选视频模型不可用或已变更。请刷新模型库并重新选择；系统不会自动切换到其他模型。');
-    }
-    throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
-  }
+  const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
+  if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
   const cangyuanVideo = isCangyuanVideoProvider(runtime.provider);
   if (cangyuanVideo) validateCangyuanVideoInput(runtime.model.rawId, options.input, { requirePublicMedia: false });
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);
@@ -601,9 +595,6 @@ async function refreshVideoTaskOnce(id: string) {
         return isCangyuanVideoProvider(runtime.provider)
           ? failTask(task, cangyuanUnconfirmedSubmissionMessage(), 'CANGYUAN_SUBMISSION_UNCONFIRMED')
           : failUnconfirmedVideoSubmission(task);
-      }
-      if (error instanceof VideoProviderError && error.code === 'AGNES_VIDEO_QUEUE_FULL') {
-        return keepVideoSubmissionPending(task, error);
       }
       if (isRetryableVideoProviderError(error)) {
         const providerError = error as VideoProviderError;

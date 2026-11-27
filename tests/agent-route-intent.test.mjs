@@ -2694,8 +2694,10 @@ test('HTML generation rejects a prose-only response without retrying', async () 
 });
 
 for (const failure of [
+  Object.assign(new Error('HTTP 400: invalid tool schema (request id: req-schema)'), { providerStatus: 400, providerFailureKind: 'http' }),
   Object.assign(new Error('请求内容超过服务商限制：body too large (request id: req-size)'), { providerStatus: 413, providerFailureKind: 'http' }),
   Object.assign(new Error('HTTP 429: rate limit exceeded (request id: req-rate)'), { providerStatus: 429, providerFailureKind: 'http' }),
+  Object.assign(new Error('模型在 180 秒内没有返回响应'), { name: 'TimeoutError', providerFailureKind: 'timeout' }),
 ]) {
   test(`HTML delivery preserves the original provider failure: ${failure.message}`, async () => {
     const described = [];

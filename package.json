@@ -18,6 +18,7 @@
     "smoke:github": "node scripts/smoke-github.mjs",
     "migrate:database": "node scripts/migrate-database.mjs",
     "generate:launcher-icons": "node scripts/generate-launcher-icons.mjs",
+    "taiji:web-bridge": "node scripts/taiji-web-bridge/server.mjs",
     "build:playwright-extension": "node scripts/build-playwright-extension.mjs"
   },
   "dependencies": {

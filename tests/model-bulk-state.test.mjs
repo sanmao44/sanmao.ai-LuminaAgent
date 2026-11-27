@@ -46,6 +46,36 @@ test('bulk model update rejects stale IDs without partially changing state', asy
   assert.deepEqual(persistedState.models, before);
 });
 
+test('provider refresh corrects explicitly chat-capable image-named models and preserves enabled state', async () => {
+  const providerId = await store.addProvider({
+    name: 'Taiji web bridge', type: 'openai-compatible', platform: 'custom',
+    baseUrl: 'http://127.0.0.1:8787/v1', apiKey: 'local-bridge',
+  });
+  const taijiChatModels = [
+    'openai::gpt-image-2',
+    'openai::gpt-image-2.5-flare',
+    'openai::gpt-image-2.5-sunburst',
+    'openai::gpt-image-2.6-flare',
+    'openai::gpt-image-2.6-sunburst',
+    'google::gemini-3.1-flash-image-preview',
+    'google::nano-banana-pro',
+  ];
+  const initialModels = await store.replaceProviderModels(providerId, 'Taiji web bridge', taijiChatModels.map((id) => ({ id, name: id })));
+  assert.ok(initialModels.every((model) => model.kind === 'image' && model.capabilities.includes('generate')));
+
+  await store.setModelsEnabled(initialModels.map((model) => model.id), true);
+  const refreshedModels = await store.replaceProviderModels(providerId, 'Taiji web bridge', taijiChatModels.map((id) => ({ id, name: id, capabilities: ['chat'] })));
+
+  assert.equal(refreshedModels.length, taijiChatModels.length);
+  for (const refreshed of refreshedModels) {
+    assert.equal(refreshed.kind, 'chat', refreshed.rawId);
+    assert.ok(refreshed.capabilities.includes('chat'), refreshed.rawId);
+    assert.equal(refreshed.capabilities.includes('generate'), false, refreshed.rawId);
+    assert.equal(refreshed.enabled, true, refreshed.rawId);
+    assert.equal(refreshed.published, true, refreshed.rawId);
+  }
+});
+
 test('model library application deduplicates IDs and validates before mutation', async () => {
   const calls = [];
   const application = modelLibrary.createModelLibraryApplication({

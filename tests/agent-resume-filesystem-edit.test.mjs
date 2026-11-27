@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -82,7 +82,7 @@ test('reviewed file edit and undo report actual outcomes without using a model',
     assert.deepEqual(readFileSync(target), Buffer.from(original.replace('initial line', 'corrected line')));
     const [receipt] = body.filesystemUndos;
     assert.match(receipt.id, /^undo_[a-f0-9]{32}$/);
-    assert.equal(receipt.path, target);
+    assert.equal(realpathSync.native(receipt.path), realpathSync.native(target));
     assert.ok(receipt.expiresAt > Date.now());
     return receipt.id;
   }

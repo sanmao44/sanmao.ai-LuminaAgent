@@ -32,7 +32,7 @@ export function isFilesystemTextSearchCall(server: Pick<McpServerConfig, 'catalo
 }
 
 type FilesystemSearchScope = { roots: readonly string[]; dataDir?: string; platform?: string };
-type FilesystemSearchOptions = { signal?: AbortSignal };
+type FilesystemSearchOptions = { signal?: AbortSignal; now?: () => number };
 type PendingPath = { filePath: string; depth: number };
 
 function searchResult(isError: boolean, text: string, fileTextEvidence?: false): McpCallResult {
@@ -68,12 +68,12 @@ async function isNextBuildOutput(directory: string) {
   return devInfo?.isDirectory() === true && await hasRegularFile(path.join(devOutput, 'build-manifest.json'));
 }
 
-async function readBoundedFile(handle: Awaited<ReturnType<typeof open>>, limit: number, options: FilesystemSearchOptions, startedAt: number) {
+async function readBoundedFile(handle: Awaited<ReturnType<typeof open>>, limit: number, options: FilesystemSearchOptions, startedAt: number, now: () => number) {
   const bytes = Buffer.allocUnsafe(limit + 1);
   let offset = 0;
   while (offset < bytes.length) {
     if (options.signal?.aborted) return { cancelled: true as const };
-    if (Date.now() - startedAt >= MAX_SEARCH_MS) return { timedOut: true as const };
+    if (now() - startedAt >= MAX_SEARCH_MS) return { timedOut: true as const };
     const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, null);
     if (!bytesRead) break;
     offset += bytesRead;
@@ -121,11 +121,12 @@ export async function searchFilesystemText(
   let oversizedSkipped = 0;
   let buildOutputsSkipped = 0;
   let stoppedReason = '';
-  const startedAt = Date.now();
+  const now = options.now ?? Date.now;
+  const startedAt = now();
 
   while (pending.length && !stoppedReason) {
     if (options.signal?.aborted) return searchResult(true, '搜索已取消。');
-    if (Date.now() - startedAt >= MAX_SEARCH_MS) {
+    if (now() - startedAt >= MAX_SEARCH_MS) {
       stoppedReason = '搜索时间达到上限';
       break;
     }
@@ -228,7 +229,7 @@ export async function searchFilesystemText(
         continue;
       }
       const limit = Math.min(MAX_FILE_BYTES, remainingBytes);
-      const read = await readBoundedFile(handle, limit, options, startedAt);
+      const read = await readBoundedFile(handle, limit, options, startedAt, now);
       if ('cancelled' in read) return searchResult(true, '搜索已取消。');
       if ('timedOut' in read) {
         stoppedReason = '搜索时间达到上限';
@@ -251,7 +252,7 @@ export async function searchFilesystemText(
       const lines = content.split(/\r?\n/);
       for (let index = 0; index < lines.length; index += 1) {
         if (options.signal?.aborted) return searchResult(true, '搜索已取消。');
-        if (Date.now() - startedAt >= MAX_SEARCH_MS) {
+        if (now() - startedAt >= MAX_SEARCH_MS) {
           stoppedReason = '搜索时间达到上限';
           break;
         }

@@ -9,7 +9,7 @@
     "https://gh-proxy.com/https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.109/SANMAO.AI-0.7.109.zip",
     "https://github.com/sanmao44/sanmao.ai-LuminaAgent/releases/download/v0.7.109/SANMAO.AI-0.7.109.zip"
   ],
-  "sha256": "4ef73797a86933027dbd43010fa2ff1cf88135a23714fbbb1e21dd44b23a6b64",
+  "sha256": "f009c181f39093d16018179452224024115947609b1e3afc9301a151507a53a4",
   "notes": [
     "新增空白画布首次使用引导，支持从导入素材、创建节点或让 Agent 起稿开始工作。",
     "改进画布三维生成参考图绑定、上传与多视图交换，删除或替换源图片时保持引用一致。",

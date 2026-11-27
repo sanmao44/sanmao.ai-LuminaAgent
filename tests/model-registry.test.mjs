@@ -128,6 +128,14 @@ test('provider refresh replaces stale discovered audio purposes', () => {
   assert.deepEqual(capabilities, ['chat', 'transcription']);
 });
 
+test('chat-only refresh removes stale inferred image capabilities from discovered models', () => {
+  const previous = model({ source: 'discovered', kind: 'image', capabilities: ['generate', 'edit', 'reference', 'typography'] });
+  assert.deepEqual(registry.reconcileDiscoveredModelCapabilities(previous, ['chat']), ['chat']);
+
+  const manual = model({ source: 'manual', kind: 'image', capabilities: ['generate', 'edit'] });
+  assert.deepEqual(registry.reconcileDiscoveredModelCapabilities(manual, ['chat']), ['generate', 'edit', 'chat']);
+});
+
 test('keeps a manual model missing from the latest upstream list and removes duplicate IDs', () => {
   const manual = model({ id: 'manual-1', rawId: 'gpt-image-2-4K', source: 'manual' });
   const discovered = [

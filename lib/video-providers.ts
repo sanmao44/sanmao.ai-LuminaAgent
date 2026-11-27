@@ -215,7 +215,7 @@ function jimengErrorMessage(value: unknown, fallback: string) {
   return text.slice(0, 900) || fallback;
 }
 
-async function requestJson(url: string, init: RequestInit, signal?: AbortSignal, definiteSubmissionRejectionCode?: (status: number, data: unknown) => string | undefined) {
+async function requestJson(url: string, init: RequestInit, signal?: AbortSignal) {
   const submission = String(init.method || 'GET').toUpperCase() === 'POST';
   let response: Response;
   try {
@@ -242,12 +242,10 @@ async function requestJson(url: string, init: RequestInit, signal?: AbortSignal,
     let data: any = {};
     try { data = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch {}
     const retryAfter = Number(response.headers.get('retry-after') || 0);
-    const rejectionCode = submission ? definiteSubmissionRejectionCode?.(response.status, data) : undefined;
     throw new VideoProviderError(errorFrom(data, `视频服务商返回 HTTP ${response.status}`), {
       status: response.status,
       retryAfterMs: retryAfter > 0 ? retryAfter * 1000 : undefined,
-      code: rejectionCode,
-      possiblyAccepted: possiblyAccepted && !rejectionCode || undefined,
+      possiblyAccepted: possiblyAccepted || undefined,
     });
   }
   if (/^video\//i.test(contentType) && bytes.byteLength <= 64 * 1024 * 1024) return { data: `data:${contentType.split(';', 1)[0]};base64,${Buffer.from(bytes).toString('base64')}` };
@@ -292,13 +290,10 @@ function videoRateLimitMessage(error: VideoProviderError) {
  * enforces one video request per minute, so a short exponential retry only
  * creates more rejected requests and hides the real cause from the user.
  */
-async function requestJsonWithRateLimitRetry(url: string, init: RequestInit, signal?: AbortSignal, options: {
-  retry429?: boolean;
-  definiteSubmissionRejectionCode?: (status: number, data: unknown) => string | undefined;
-} = {}) {
+async function requestJsonWithRateLimitRetry(url: string, init: RequestInit, signal?: AbortSignal, options: { retry429?: boolean } = {}) {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestJson(url, init, signal, options.definiteSubmissionRejectionCode);
+      return await requestJson(url, init, signal);
     } catch (error) {
       const providerError = error instanceof VideoProviderError ? error : null;
       if (!providerError || providerError.status !== 429) throw error;
@@ -568,20 +563,6 @@ function agnesErrorFrom(data: any) {
   return typeof value === 'string' ? value.slice(0, 900) : value ? JSON.stringify(value).slice(0, 900) : 'Agnes 视频任务失败';
 }
 
-function agnesErrorCodeFrom(data: unknown) {
-  const root = data && typeof data === 'object' && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const nested = root.data && typeof root.data === 'object' && !Array.isArray(root.data) ? root.data as Record<string, unknown> : {};
-  const error = root.error && typeof root.error === 'object' && !Array.isArray(root.error) ? root.error as Record<string, unknown> : {};
-  const nestedError = nested.error && typeof nested.error === 'object' && !Array.isArray(nested.error) ? nested.error as Record<string, unknown> : {};
-  const value = error.code
-    ?? root.error_code
-    ?? root.code
-    ?? nestedError.code
-    ?? nested.error_code
-    ?? nested.code;
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
-
 function agnesProgressFrom(data: any) {
   const value = agnesResponseValue(data, 'progress');
   const number = Number(value);
@@ -612,13 +593,7 @@ async function submitAgnesVideo(provider: RuntimeProvider, rawModelId: string, i
     audios: await Promise.all(audioValues(input).map((url) => preparePublicMediaUrl(provider, url, 'audio'))),
   };
   const body = buildAgnesVideoPayload(rawModelId, input, media);
-  const isFlashModel = /^agnes-video-2\.5-flash$/i.test(rawModelId.trim());
-  const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, {
-    retry429: false,
-    definiteSubmissionRejectionCode: (status, data) => isFlashModel && status === 503 && agnesErrorCodeFrom(data) === 'video_queue_full'
-      ? 'AGNES_VIDEO_QUEUE_FULL'
-      : undefined,
-  });
+  const response = await requestJsonWithRateLimitRetry(agnesGenerationUrl(provider), { method: 'POST', headers: headers(provider, idempotencyKey), body: JSON.stringify(body) }, signal, { retry429: false });
   const data = response.data;
   const videoId = agnesVideoIdFrom(data);
   const providerStatus = String(agnesResponseValue(data, 'status') || '').trim() || undefined;

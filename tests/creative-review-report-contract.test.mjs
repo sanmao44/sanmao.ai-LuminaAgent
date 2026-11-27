@@ -56,4 +56,3 @@ test('accepts a consistent pass section with observed evidence', () => {
   const consistent = { ...report, capability: { status: 'pass', evidence: [evidence] } };
   assert.equal(isCreativeReviewReport(consistent), true);
 });
-
