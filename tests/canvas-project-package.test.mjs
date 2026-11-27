@@ -44,7 +44,7 @@ test('project package carries brief and a bounded asset provenance index', () =>
     exportedAt: '2026-11-07T00:00:00.000Z',
   });
   assert.equal(value.schema, packageApi.CANVAS_PROJECT_PACKAGE_SCHEMA);
-  assert.equal(value.version, 1);
+  assert.equal(value.version, packageApi.CANVAS_PROJECT_PACKAGE_VERSION);
   assert.deepEqual(value.project.brief, { style: '写实', audience: '旅行者', constraints: '保持角色一致', deliverable: 'video' });
   assert.deepEqual(value.assets, [{
     nodeId: 'image-node',
@@ -57,6 +57,70 @@ test('project package carries brief and a bounded asset provenance index', () =>
     modelName: 'image-model',
     createdAt: 123,
   }]);
+});
+
+test('portable project packages embed each current and historical image once and restore destination URLs', () => {
+  const document = documentFixture();
+  document.nodes[0].data.assetId = 'source-asset-id';
+  const version = {
+    id: 'version-1',
+    label: '导入前版本',
+    createdAt: 1,
+    snapshot: { nodes: structuredClone(document.nodes), edges: [], groups: [], camera: document.camera },
+  };
+  const base = packageApi.canvasProjectPackageFromDocument({ name: '便携项目', document, versions: [version] });
+  const urls = packageApi.canvasProjectPackageImageUrls(base);
+  assert.deepEqual(urls, ['/api/storage/images?id=image-1']);
+
+  const portable = packageApi.embedCanvasProjectPackageImages(base, [{
+    id: 'image-1',
+    name: '主视觉',
+    sourceUrl: urls[0],
+    dataUrl: 'data:image/png;base64,UE5H',
+  }]);
+  assert.equal(portable.version, 2);
+  assert.equal(portable.embeddedImages.length, 1);
+  assert.equal(portable.document.nodes[0].data.url, 'sanmao-project-image:image-1');
+  assert.equal(portable.assets[0].url, 'sanmao-project-image:image-1');
+  assert.equal(portable.assets[0].storageKey, undefined);
+  assert.equal(portable.assets[0].sourceAssetId, undefined);
+  assert.equal(portable.project.versions[0].snapshot.nodes[0].data.url, 'sanmao-project-image:image-1');
+
+  const parsed = packageApi.parseCanvasProjectPackage(JSON.parse(JSON.stringify(portable)));
+  const restored = packageApi.restoreCanvasProjectPackageImages(parsed, new Map([
+    ['image-1', { url: '/api/storage/file?name=destination.png', storageKey: 'images/destination.png' }],
+  ]));
+  assert.equal(restored.document.nodes[0].data.url, '/api/storage/file?name=destination.png');
+  assert.equal(restored.document.nodes[0].data.storageKey, 'images/destination.png');
+  assert.equal(restored.document.nodes[0].data.assetId, undefined);
+  assert.equal(restored.document.nodes[0].data.sourceAssetId, undefined);
+  assert.equal(restored.project.versions[0].snapshot.nodes[0].data.url, '/api/storage/file?name=destination.png');
+  assert.equal(restored.assets[0].url, '/api/storage/file?name=destination.png');
+  assert.equal(restored.assets[0].storageKey, 'images/destination.png');
+  assert.equal(document.nodes[0].data.url, '/api/storage/images?id=image-1', 'export and import never mutate the source document');
+});
+
+test('project package captures nested SVG data URLs and rejects broken embedded image references', () => {
+  const document = documentFixture();
+  document.nodes[1].data.mask = { sourceImageDataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' };
+  const value = packageApi.canvasProjectPackageFromDocument({ name: 'SVG', document });
+  assert.deepEqual(packageApi.canvasProjectPackageImageUrls(value), [
+    '/api/storage/images?id=image-1',
+    'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+  ]);
+  const portable = packageApi.embedCanvasProjectPackageImages(value, [
+    { id: 'image-1', name: '主视觉', sourceUrl: '/api/storage/images?id=image-1', dataUrl: 'data:image/png;base64,UE5H' },
+    { id: 'image-2', name: 'SVG蒙版', sourceUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=', dataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' },
+  ]);
+  assert.ok(packageApi.parseCanvasProjectPackage(portable));
+  assert.equal(packageApi.parseCanvasProjectPackage({
+    ...portable,
+    embeddedImages: [{ ...portable.embeddedImages[0], dataUrl: 'data:image/png;base64,!!!!' }, portable.embeddedImages[1]],
+  }), null, 'invalid image bytes are not silently dropped');
+  assert.equal(packageApi.parseCanvasProjectPackage({
+    ...portable,
+    embeddedImages: [portable.embeddedImages[0]],
+  }), null, 'an image reference without embedded bytes invalidates the package');
 });
 
 test('project package preserves bounded version snapshots for portable rollback', () => {
@@ -112,6 +176,7 @@ test('project package round trips through JSON and rejects legacy workflow paylo
   assert.equal(parsed.project.name, '项目');
   assert.equal(parsed.document.nodes[0].id, 'image-node');
   assert.equal(parsed.assets[0].storageKey, 'image-1');
+  assert.equal(packageApi.parseCanvasProjectPackage({ ...parsed, version: 1 }).version, 1, 'older project packages remain importable');
   assert.equal(packageApi.parseCanvasProjectPackage(documentFixture()), null);
   assert.equal(packageApi.parseCanvasProjectPackage({ schema: packageApi.CANVAS_PROJECT_PACKAGE_SCHEMA, version: 99 }), null);
 });

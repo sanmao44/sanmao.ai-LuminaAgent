@@ -3718,6 +3718,7 @@ async function requestDeepSeekResponses(
   input: DeepSeekResponsesInput,
   options: DeepSeekResponsesOptions,
   signal?: AbortSignal,
+  timeoutMs = 180000,
 ) {
   const body = deepSeekResponsesRequest(rawModelId, input, options);
   const request = {
@@ -3726,8 +3727,8 @@ async function requestDeepSeekResponses(
     body: JSON.stringify(body),
   } satisfies RequestInit;
   const endpoint = deepSeekResponsesEndpoint(provider);
-  if (options.stream) return fetchStreamingResponse(endpoint, request, 180000, signal);
-  const data = await fetchJson(endpoint, request, 180000, signal);
+  if (options.stream) return fetchStreamingResponse(endpoint, request, timeoutMs, signal);
+  const data = await fetchJson(endpoint, request, timeoutMs, signal);
   normalizeDeepSeekResponsesResponse(data, rawModelId);
   return data;
 }
@@ -3742,7 +3743,8 @@ async function prepareDeepSeekResponsesInput(input: DeepSeekResponsesInput): Pro
   return prepared;
 }
 
-export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal) {
+export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal, options: { timeoutMs?: number } = {}) {
+  const requestTimeoutMs = Math.max(1_000, Math.min(600_000, Math.trunc(options.timeoutMs || 180_000)));
   if (is65535ClaudeModelProvider(provider, rawModelId)) {
     const { invokeClaudeCodeProvider } = await import('./claude-code-provider');
     const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
@@ -3750,7 +3752,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
   }
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload);
-    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
+    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, requestTimeoutMs, signal);
     return normalizeAgnesResponse(data, request.protocol);
   }
   if (provider.platform === 'deepseek' && deepSeekResponsesModel(rawModelId) === 'deepseek-v4-pro' && deepSeekMessagesContainImage(payload.messages)) {
@@ -3770,7 +3772,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
       safetyCheck: payload.safetyCheck,
       title: payload.title,
       user: payload.user,
-    }, signal);
+    }, signal, requestTimeoutMs);
     return normalizeDeepSeekResponsesResponse(data, rawModelId);
   }
   // OpenAI-compatible providers accept inline image data URLs. Keep them
@@ -3784,7 +3786,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
       messages,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
-  }, 180000, signal);
+  }, requestTimeoutMs, signal);
   return unwrapProviderData(provider, data);
 }
 

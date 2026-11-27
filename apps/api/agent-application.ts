@@ -38,7 +38,7 @@ import { appendPersonaToSystem, personaContextMessage } from '@/lib/agent-person
 import { normalizeWorkspaceContext } from '@/lib/workspace-context';
 import { filesystemEditPreviewRecoveryText, toolOutcomeKey, toolOutcomeText, type ToolOutcome } from '@/lib/agent/tool-outcome';
 import { artifactFallbackKindFor, artifactInputHasContent, makeArtifactFallbackCall } from '@/lib/agent/artifact-fallback';
-import { isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure, isTextFileContextSizeFailure, isCompleteTextFileContent } from '@/lib/agent/text-file-fallback';
+import { isHtmlFileGenerationRequested, isTextFileFallbackRequested, makeTextFileFallbackCall, textFileFallbackSystemPrompt, textFileFallbackUserPrompt, isToolSchemaProviderFailure, isTextFileContextSizeFailure, isCompleteTextFileContent } from '@/lib/agent/text-file-fallback';
 import { ARTIFACT_MAX_PER_TURN } from '@/lib/artifacts/limits';
 import { validateCanvasPatch, type CanvasPatch } from '@/lib/canvas/patch';
 import { normalizeDocument } from '@/lib/canvas/model';
@@ -79,6 +79,10 @@ const AGENT_MODEL_CALL_TIMEOUT_MS = 60_000;
 // File generation needs a longer first completion because the model must
 // produce the complete file tool arguments before local execution can begin.
 const AGENT_FILE_GENERATION_TIMEOUT_MS = 180_000;
+// A single full HTML document is a long model output, not two 180s attempts.
+// Keep it within the 660s client progress window while leaving time to execute
+// file persistence and settle the response.
+const AGENT_HTML_FILE_GENERATION_TIMEOUT_MS = 600_000;
 const AGENT_CLAUDE_MODEL_CALL_TIMEOUT_MS = 180_000;
 const CINEMATIC_DIRECTOR_CANDIDATE_TIMEOUT_MS = 75_000;
 // Search is a pre-answer dependency. It must not inherit the provider's long
@@ -605,6 +609,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
 
     const latestMessage = latestUser(messages);
     let fileDeliveryDeadlineRequested = likelyFileGenerationRequest(String(latestMessage?.content || ''));
+    let directHtmlFileGenerationRequested = false;
     // File recovery is still a single full-document response. Give it the same
     // long deadline as the primary file request; a 60s recovery window cuts off
     // polished HTML before the model can finish and surfaces as a false failure.
@@ -725,6 +730,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       failoverTimeoutMs: AGENT_AUTO_FAILOVER_TIMEOUT_MS,
       timeoutFor: (runtime, mode) => mode === 'failover'
         ? AGENT_AUTO_FAILOVER_TIMEOUT_MS
+        : directHtmlFileGenerationRequested && textFileFallbackInProgress
+          ? AGENT_HTML_FILE_GENERATION_TIMEOUT_MS
         : textFileFallbackInProgress
           ? AGENT_FILE_GENERATION_TIMEOUT_MS
           : is65535ClaudeModelProvider(runtime.provider, runtime.model.rawId)
@@ -741,6 +748,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       onCurrent: (runtime) => { agentRuntime = runtime; },
       invokeProvider: (runtime, payload, signal) => chatCompletion(
         runtime.provider, runtime.model.rawId, boundChatPayload(payload, runtime.model), signal,
+        directHtmlFileGenerationRequested && textFileFallbackInProgress
+          ? { timeoutMs: AGENT_HTML_FILE_GENERATION_TIMEOUT_MS }
+          : undefined,
       ),
       invokeProviderStream: (runtime, payload, signal) => chatCompletionStream(
         runtime.provider, runtime.model.rawId, boundChatPayload(payload, runtime.model), signal,
@@ -822,6 +832,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       },
     });
     const { latestInstruction, previousImagePlan, continuesImageRequest, batchPlanContent, intentDecision, previousAssistantForRouting, directGithubMcpRepo, webMode, requestRoute, routerMs, modelContextMessages, routeSummary, requestedDeliverable: plannedDeliverable, requestedIntentReason: plannedIntentReason } = planning;
+    directHtmlFileGenerationRequested = isHtmlFileGenerationRequested(latestInstruction);
     let requestModeAllowsExecution = planning.requestModeAllowsExecution;
     let requestedDeliverable = plannedDeliverable;
     let requestedIntentReason = plannedIntentReason;
@@ -982,6 +993,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       recordLlmUsage(response);
       return response;
     });
+    const trackedSelectedChatCompletion = (
+      payload: Parameters<typeof chatCompletion>[2],
+      signal: Parameters<typeof chatCompletion>[3] = requestController.signal,
+    ) => composition.invokeSpecificChatModel(agentRuntime, payload, signal).then((response) => {
+      recordLlmUsage(response);
+      return response;
+    });
     const trackedChatCompletionStream = (
       _provider: Parameters<typeof chatCompletionStream>[0],
       _rawModelId: Parameters<typeof chatCompletionStream>[1],
@@ -1048,11 +1066,11 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const needsContextualSemanticPlanner = intentDecision.mode === 'unknown'
       && requestRoute.contextNeed === 'required'
       && needsSemanticIntent(latestInstruction, intentDecision);
-    const shouldUseSemanticPlanner = videoDownloadCandidate
+    const shouldUseSemanticPlanner = !directHtmlFileGenerationRequested && (videoDownloadCandidate
       || canvasDockIntentReview
       || (!requestRoute.tools.useMcp
         && !requestRoute.tools.useSkills
-        && (requestRoute.policy.lane === 'action' && requestRoute.needsTools || needsContextualSemanticPlanner));
+        && (requestRoute.policy.lane === 'action' && requestRoute.needsTools || needsContextualSemanticPlanner)));
     let semanticDecisionResolved = false;
     if (shouldUseSemanticPlanner && !body.task && !isModelIdentityQuestion(latestInstruction) && (!isCanvasSource || canvasDockIntentReview)
       && (videoDownloadCandidate || requestedDeliverable === 'OTHER' || requestedDeliverable === 'CLARIFY' || canvasDockIntentReview)
@@ -2038,6 +2056,7 @@ const auditMcpCall = (
     // tools for an HTML/SVG/JSON/etc. request: a visual description inside an
     // HTML request must never let the model route the turn to DOCX/PPTX/ZIP.
     const textFileFallbackRequested = fileGenerationRequest && isTextFileFallbackRequested(latestInstruction);
+    directHtmlFileGenerationRequested = textFileFallbackRequested && isHtmlFileGenerationRequested(latestInstruction);
     const initialCallableTools = presentationImageGenerationRequest
       ? callableTools.filter((tool) => tool.function.name === 'presentation_generate' || tool.function.name === 'image_generate')
       : textFileFallbackRequested
@@ -2216,17 +2235,20 @@ const auditMcpCall = (
       }
       return call as ToolRuntimeCall | null;
     };
-    const requestTextFileFallback = async () => {
+    const requestTextFileFallback = async (primaryHtmlGeneration = false) => {
       textFileFallbackInProgress = true;
       try {
-        reportProgress({ stage: 'tool', message: '模型未能调用文件工具，正在通过文本生成补救交付…' });
-        const response = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
+        reportProgress({ stage: 'tool', message: primaryHtmlGeneration ? '正在一次性生成完整 HTML 文件…' : '模型未能调用文件工具，正在通过文本生成补救交付…' });
+        const payload: Parameters<typeof chatCompletion>[2] = {
           messages: [
             { role: 'system', content: textFileFallbackSystemPrompt() },
             { role: 'user', content: textFileFallbackUserPrompt(latestInstruction) },
           ],
           tool_choice: 'none',
-        }, requestController.signal);
+        };
+        const response = primaryHtmlGeneration
+          ? await trackedSelectedChatCompletion(payload, requestController.signal)
+          : await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, payload, requestController.signal);
         const content = responseContent(response);
         return makeTextFileFallbackCall({
           response: content,
@@ -2354,7 +2376,18 @@ const auditMcpCall = (
     progressToolCalls = 0;
     const shouldUseTools = useTools && !isCinematicDirectorTask && initialCallableTools.length > 0;
      let first: any;
-     if (canvasImageEditRequest) {
+      if (directHtmlFileGenerationRequested) {
+        const generated = await requestTextFileFallback(true);
+        if (!generated.ok) {
+          const reason = generated.reason === 'invalid-document'
+            ? '文档不完整或已被截断'
+            : generated.reason === 'content-too-large'
+              ? '内容超过文件交付限制'
+              : '没有返回可识别的完整 HTML 正文';
+          throw new Error(`本轮没有生成可下载文件：${reason}，因此未创建文件。请重试或使用支持长代码输出的模型。`);
+        }
+        first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [generated.call] } }] };
+      } else if (canvasImageEditRequest) {
        // A selected Canvas image edit is already a structured image command;
        // do not ask the chat model to reinterpret it or read the reference.
        first = { model: agentRuntime.model.rawId, choices: [{ message: { content: null, tool_calls: [makeFallbackImageToolCall({ prompt: fallbackImagePrompt, mode: 'edit' })] } }] };
@@ -3445,7 +3478,7 @@ const auditMcpCall = (
     }
     if (wantsStream) {
       if (followupText || artifactFollowupText || mcpFollowupText) return streamResult(null, { fallback: followupText || artifactFollowupText || mcpFollowupText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '正在整理回复…' }] });
-      if ((artifactGenerationRequest || fileGenerationRequest) && generatedDeliveryCount > 0 && !generated.length && !webSearchData) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '文件已生成，正在返回下载信息…' }] });
+      if ((artifactGenerationRequest || fileGenerationRequest) && (generatedDeliveryCount > 0 || generatedFiles.length > 0) && !generated.length && !webSearchData) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'answering', message: '文件已生成，正在返回下载信息…' }] });
       try {
         if (generated.length && preparedCaption) return streamResult(null, { fallback: finalText, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: 'caption', message: '图片已生成，正在整理创作建议…' }] });
         const secondStream = await trackedChatCompletionStream(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
@@ -3461,7 +3494,7 @@ const auditMcpCall = (
     }
     if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
     try {
-       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageEditRequest && !((artifactGenerationRequest || fileGenerationRequest) && generatedDeliveryCount > 0 && !generated.length && !webSearchData)) {
+       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageEditRequest && !((artifactGenerationRequest || fileGenerationRequest) && (generatedDeliveryCount > 0 || generatedFiles.length > 0) && !generated.length && !webSearchData)) {
         const second = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
         const secondText = stripToolCallMarkup(String(second?.choices?.[0]?.message?.content || '')).trim();
         if (secondText) finalText = secondText;
