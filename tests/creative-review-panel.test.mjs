@@ -29,19 +29,15 @@ function report(overrides = {}) {
   };
 }
 
-test('keeps failures concise and puts passed or unevaluated checks in a separate disclosure', () => {
+test('shows only confirmed failures and hides unevaluated checks', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, { reports: [report()] }));
   const summary = html.match(/<summary>(.*?)<\/summary>/)?.[1];
-  assert.equal(summary, '查看产物检查<span class="creative-review-status fail">发现 1 项问题</span><span class="creative-review-summary-findings">目标画面比例</span>');
+  assert.equal(summary, '查看问题<span class="creative-review-status fail">发现 1 项问题</span><span class="creative-review-summary-findings">目标画面比例</span>');
   assert.match(html, /需要关注/);
-  assert.match(html, /其余检查结果：通过 0 项 · 未评估 1 项 · 无结论 0 项/);
-  assert.doesNotMatch(summary, /能力检查|安全判断|未评估/);
-  assert.match(html, /安全判断/);
-  assert.match(html, /未评估/);
+  assert.match(html, /没有结论的检查不会被当作失败/);
+  assert.doesNotMatch(html, /能力检查|安全判断|未评估|未得出结论|没有可用的对应评审器/);
   assert.match(html, /1:1 \(1\.0000:1\)/);
   assert.match(html, /9:16 \(0\.5625:1\)/);
-  assert.match(html, /没有可用的对应评审器/);
-  assert.match(html, /<details class="creative-review-additional">/);
   assert.doesNotMatch(html, /综合分|总分|score/i);
 });
 
@@ -51,7 +47,7 @@ test('does not add review noise when an older task has no saved review record', 
 });
 
 
-test('labels multiple image reports as images and keeps unknown visual judgment explicit', () => {
+test('labels multiple image reports as images', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, {
     reports: [report({ mediaKind: 'image' }), report({ mediaKind: 'image', artifactRef: 'image-2' })],
   }));
@@ -62,8 +58,7 @@ test('labels multiple image reports as images and keeps unknown visual judgment 
 
 test('keeps the problem summary visible while both detail layers are closed by default', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, { reports: [report()] }));
-  assert.match(html, /^<details class="creative-review-panel"(?![^>]*\bopen(?:\s|=|>))[^>]*><summary>查看产物检查<span[^>]*>发现 1 项问题<\/span><span[^>]*>目标画面比例<\/span><\/summary>/);
-  assert.match(html, /<details class="creative-review-additional">/);
+  assert.match(html, /^<details class="creative-review-panel"(?![^>]*\bopen(?:\s|=|>))[^>]*><summary>查看问题<span[^>]*>发现 1 项问题<\/span><span[^>]*>目标画面比例<\/span><\/summary>/);
   assert.doesNotMatch(html, /<details class="(?:creative-review-panel|creative-review-additional)"[^>]*\bopen/u);
   assert.match(html, /<\/summary>.*需要关注.*目标画面比例/);
 });
@@ -82,7 +77,7 @@ test('does not show an entry when no check found a problem', () => {
   assert.equal(html, '');
 });
 
-test('keeps inconclusive brief checks and unevaluated quality and safety distinct', () => {
+test('does not leak inconclusive or unevaluated checks alongside a failure', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, {
     reports: [report({
       mediaKind: 'image',
@@ -108,13 +103,7 @@ test('keeps inconclusive brief checks and unevaluated quality and safety distinc
     })],
   }));
   const summary = html.match(/<summary>(.*?)<\/summary>/)?.[1];
-  assert.equal(summary, '查看产物检查<span class="creative-review-status fail">发现 1 项问题</span><span class="creative-review-summary-findings">目标画面比例</span>');
-  assert.match(html, /画面与需求一致性<\/strong><span[^>]*>未得出结论<\/span>/);
-  assert.match(html, /其余检查结果：通过 0 项 · 未评估 3 项 · 无结论 2 项/);
-  assert.match(html, /本次未启用视觉评审器/);
-  assert.match(html, /视觉评审超时/);
-  assert.match(html, /视觉评审器返回了无法识别的判定/);
-  assert.match(html, /视觉质量<\/strong>/);
-  assert.match(html, /内容安全<\/strong>/);
+  assert.equal(summary, '查看问题<span class="creative-review-status fail">发现 1 项问题</span><span class="creative-review-summary-findings">目标画面比例</span>');
+  assert.doesNotMatch(html, /本次未启用视觉评审器|视觉评审超时|视觉评审器返回了无法识别的判定|视觉质量<\/strong>|内容安全<\/strong>/);
   assert.doesNotMatch(html, /依据：(图像向量|视觉模型)/);
 });

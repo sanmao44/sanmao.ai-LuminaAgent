@@ -1312,6 +1312,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         || requestedDeliverable === 'IMAGE'
         || requestedDeliverable === 'BOTH'
         || Boolean(previousImagePlan && isBareImageExecution(latestInstruction)));
+    const canvasImageDeliveryRequest = isCanvasSource && body.executionMode === 'agent-dock' && imageGenerationRequest;
     const imageToolsRequested = imageGenerationRequest || presentationImageGenerationRequest;
     // Ordinary reference-image batches stay on generation. A selected Canvas
     // image composition instead requires the provider's image-input contract;
@@ -2794,7 +2795,7 @@ const auditMcpCall = (
         finishGenerationLog,
         latestInstruction,
         agentRunId,
-        skipCaption: canvasImageEditRequest,
+        skipCaption: canvasImageDeliveryRequest,
         executionPublicState,
       }, mcpPorts: {
         observer: runtimeObserver,
@@ -3501,9 +3502,10 @@ const auditMcpCall = (
         return streamResult(null, { fallback: `${finalText}（整理回答失败：${llmFailure.slice(0, 200)}）`, images: generated, batchItems, files: generatedFiles, generations, model: actualModel || agentRuntime.model.displayName, webSearch: searchMetadata(), webSearchDecision: searchDecisionMetadata(), skills: usedSkills, mcpTools: usedMcpTools, toolTrace, ...(canvasPatch ? { canvasPatch } : {}), statuses: [{ type: 'status', stage: generated.length ? 'caption' : 'answering', message: generated.length ? '图片已生成，正在整理创作建议…' : '正在整理回复…' }] });
       }
     }
-    if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
+    if (canvasImageDeliveryRequest && generated.length && preparedCaption) finalText = await preparedCaption;
+    else if (followupText || artifactFollowupText || mcpFollowupText) finalText = followupText || artifactFollowupText || mcpFollowupText;
     try {
-       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageEditRequest && !((artifactGenerationRequest || fileGenerationRequest) && (generatedDeliveryCount > 0 || generatedFiles.length > 0) && !generated.length && !webSearchData)) {
+       if (!followupText && !artifactFollowupText && !mcpFollowupText && !canvasImageDeliveryRequest && !((artifactGenerationRequest || fileGenerationRequest) && (generatedDeliveryCount > 0 || generatedFiles.length > 0) && !generated.length && !webSearchData)) {
         const second = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, { messages: secondMessages, tool_choice: 'none' }, requestController.signal);
         const secondText = stripToolCallMarkup(String(second?.choices?.[0]?.message?.content || '')).trim();
         if (secondText) finalText = secondText;

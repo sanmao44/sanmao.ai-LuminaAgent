@@ -2325,6 +2325,8 @@ test('JEV clarification cannot downgrade an explicit Canvas poster request', asy
   assert.equal(agent.images[0].references.length, 4);
   assert.match(agent.images[0].prompt, /16:9|海报/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
+  assert.equal(data.message, '图片已生成。');
+  assert.doesNotMatch(data.message, /下一版可尝试方向/);
 });
 
 test('Canvas short image confirmation carries the original poster task and all selected images', async () => {

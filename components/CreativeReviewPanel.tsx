@@ -25,37 +25,12 @@ const DIMENSION_LABELS: Record<string, string> = {
 };
 
 function statusLabel(evidence: CreativeReviewEvidence) {
-  if (evidence.status === 'pass') return '符合该检查';
-  if (evidence.status === 'fail') return '发现问题';
-  return isUnevaluated(evidence) ? '未评估' : '未得出结论';
+  return evidence.status === 'fail' ? '发现问题' : '需要关注';
 }
 function sourceLabel(evidence: CreativeReviewEvidence) {
   if (evidence.status === 'unknown') return null;
   if (evidence.source === 'rule') return '规则检查';
   return evidence.source === 'embedding' ? '图像向量' : '视觉模型';
-}
-
-function isUnevaluated(evidence: CreativeReviewEvidence) {
-  return unevaluatedCause(evidence) !== null;
-}
-
-function unevaluatedCause(evidence: CreativeReviewEvidence): string | null {
-  if (evidence.status !== 'unknown' || evidence.observed !== undefined) return null;
-  const reason = evidence.reason;
-  if (/没有启用|未启用|没有经标注|没有经校准|没有已校准|没有可验证的质量模型/u.test(reason)) {
-    return '没有启用可用的对应评审器';
-  }
-  if (evidence.dimension === 'content_safety'
-    && /本地文件和比例检查不分析画面语义|未评审内容安全|没有已校准的本地内容安全评审器/u.test(reason)) {
-    return '没有启用可用的对应评审器';
-  }
-  if (evidence.dimension === 'subtitle_timeline' && /未提取|未识别|尚未评审/u.test(reason)) {
-    return '本版本没有进行字幕时间线评审';
-  }
-  if (/没有保留到原始创作需求|没有有效的明确目标比例|没有有效的目标时长/u.test(reason)) {
-    return '缺少可评估的需求信息';
-  }
-  return null;
 }
 function valueLabel(value: CreativeReviewEvidence['observed'] | CreativeReviewEvidence['expected']) {
   return value === undefined ? null : String(value);
@@ -80,58 +55,37 @@ function ReviewEvidence({ evidence }: { evidence: CreativeReviewEvidence }) {
   </li>;
 }
 
-function ReviewSection({ title, evidence }: { title: string; evidence: readonly CreativeReviewEvidence[] }) {
-  if (evidence.length === 0) return null;
-
-  return <section className="creative-review-section">
-    <header><strong>{title}</strong></header>
-    <ul>{evidence.map((item, index) => <ReviewEvidence key={item.dimension + '-' + index} evidence={item} />)}</ul>
-  </section>;
-}
-
 export default function CreativeReviewPanel({ reports }: Props) {
   if (!reports?.length) return null;
 
-  const issues = reports.reduce((count, report) => count
-    + report.capability.evidence.filter((item) => item.status === 'fail').length
-    + report.safety.evidence.filter((item) => item.status === 'fail').length, 0);
-  if (issues === 0) return null;
+  const actionableReports = reports.map((report, index) => ({
+    report,
+    index,
+    findings: [report.capability, report.safety].flatMap((section) => section.evidence.filter((evidence) => evidence.status === 'fail')),
+  })).filter((entry) => entry.findings.length > 0);
+  const issues = actionableReports.reduce((count, entry) => count + entry.findings.length, 0);
+  if (!actionableReports.length) return null;
 
-  const findingLabels = [...new Set(reports.flatMap((report) => [...report.capability.evidence, ...report.safety.evidence])
-    .filter((evidence) => evidence.status === 'fail')
+  const findingLabels = [...new Set(actionableReports.flatMap((entry) => entry.findings)
     .map((evidence) => DIMENSION_LABELS[evidence.dimension] || evidence.dimension.replaceAll('_', ' ')))];
 
   return <details className="creative-review-panel">
     <summary>
-      查看产物检查
+      查看问题
       <span className="creative-review-status fail">发现 {issues} 项问题</span>
       <span className="creative-review-summary-findings">{findingLabels.slice(0, 2).join('、')}{findingLabels.length > 2 ? '等' : ''}</span>
     </summary>
     <div className="creative-review-panel-content">
       <p className="creative-review-note">
-        这里只列出检查发现的问题。未评估表示没有可用的对应评审器，不代表产物失败。
+        这里只列出已确认的问题。没有结论的检查不会被当作失败。
       </p>
-      {reports.map((report, index) => {
-        const sections = [report.capability, report.safety];
-        const findings = sections.flatMap((section) => section.evidence.filter((evidence) => evidence.status === 'fail'));
-        const remaining = sections.flatMap((section) => section.evidence.filter((evidence) => evidence.status !== 'fail'));
-        const passedCount = remaining.filter((evidence) => evidence.status === 'pass').length;
-        const unevaluatedCount = remaining.filter(isUnevaluated).length;
-        const inconclusiveCount = remaining.filter((evidence) => evidence.status === 'unknown' && !isUnevaluated(evidence)).length;
-
+      {actionableReports.map(({ report, index, findings }) => {
         return <article className="creative-review-report" key={report.artifactRef + '-' + index}>
           {reports.length > 1 && <h4>第 {index + 1} {report.mediaKind === 'image' ? '张图片' : '个视频'}</h4>}
           <section className="creative-review-section">
             <header><strong>需要关注</strong><span className="creative-review-status fail">{findings.length} 项</span></header>
             <ul>{findings.map((evidence, itemIndex) => <ReviewEvidence key={evidence.dimension + '-' + itemIndex} evidence={evidence} />)}</ul>
           </section>
-          {remaining.length > 0 && <details className="creative-review-additional">
-            <summary>其余检查结果：通过 {passedCount} 项 · 未评估 {unevaluatedCount} 项 · 无结论 {inconclusiveCount} 项</summary>
-            <div className="creative-review-sections">
-              <ReviewSection title="能力检查" evidence={report.capability.evidence.filter((evidence) => evidence.status !== 'fail')} />
-              <ReviewSection title="安全判断" evidence={report.safety.evidence.filter((evidence) => evidence.status !== 'fail')} />
-            </div>
-          </details>}
         </article>;
       })}
     </div>
