@@ -1,5 +1,11 @@
 import { canvasNodeColorKey, type CanvasNodeColorKey } from "./appearance";
-import { isCanvasGridComposeLineageEdge, nodeSize } from "./model";
+import {
+  canvasEdgeEndpoints,
+  canvasEdgeRepresentativeId,
+  isCanvasEdgeVisible,
+  isCanvasGridComposeLineageEdge,
+  nodeSize,
+} from "./model";
 import type { CanvasDocument, CanvasNode } from "./types";
 
 /** Build the edge color lookup from the first existing member of each group. */
@@ -60,16 +66,26 @@ export function visibleCanvasEdgeProjection(
   groupIds: ReadonlySet<string>,
   pinnedEdgeIds?: ReadonlySet<string>,
 ) {
+  const pinnedRepresentativeIds = pinnedEdgeIds
+    ? new Set(
+        document.edges
+          .filter((edge) => pinnedEdgeIds.has(edge.id))
+          .map((edge) => canvasEdgeRepresentativeId(document, edge)),
+      )
+    : null;
   return document.edges.filter((edge) => {
     if (isCanvasGridComposeLineageEdge(document, edge)) return false;
     // When the caller supplies a pinned set it is the complete projection
     // contract for hidden-edge mode. Do not fall back to the normal viewport
     // endpoint filter, otherwise every edge whose two endpoints happen to be
     // rendered would remain visible.
-    if (pinnedEdgeIds) return pinnedEdgeIds.has(edge.id);
-    const sourceVisible = visibleNodeIds.has(edge.source) || groupIds.has(edge.source);
-    const targetVisible = visibleNodeIds.has(edge.target) || groupIds.has(edge.target);
+    if (pinnedEdgeIds) {
+      return pinnedRepresentativeIds?.has(edge.id) === true && isCanvasEdgeVisible(document, edge);
+    }
+    const endpoints = canvasEdgeEndpoints(document, edge);
+    const sourceVisible = visibleNodeIds.has(endpoints.source) || groupIds.has(endpoints.source);
+    const targetVisible = visibleNodeIds.has(endpoints.target) || groupIds.has(endpoints.target);
     if (!sourceVisible || !targetVisible) return false;
-    return true;
+    return isCanvasEdgeVisible(document, edge);
   });
 }

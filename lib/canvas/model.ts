@@ -1403,6 +1403,11 @@ const automaticBatchFirstIdsCache = new WeakMap<
   Map<string, string>
 >();
 
+const projectedGroupEdgeFirstIdsCache = new WeakMap<
+  CanvasDocument,
+  Map<string, string>
+>();
+
 function automaticBatchFirstIds(document: CanvasDocument) {
   const cached = automaticBatchFirstIdsCache.get(document);
   if (cached) return cached;
@@ -1423,11 +1428,57 @@ function automaticBatchFirstIds(document: CanvasDocument) {
   return firstIds;
 }
 
+/** Return the directional key used to collapse several member edges at a group boundary. */
+export function projectedGroupEdgeKey(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const endpoints = canvasEdgeEndpoints(document, edge);
+  if (!groupById(document, endpoints.source) && !groupById(document, endpoints.target)) return null;
+  return `${endpoints.source}->${endpoints.target}`;
+}
+
+function projectedGroupEdgeFirstIds(document: CanvasDocument) {
+  const cached = projectedGroupEdgeFirstIdsCache.get(document);
+  if (cached) return cached;
+  const firstIds = new Map<string, string>();
+  for (const candidate of document.edges) {
+    if (!isCanvasEdgeDrawable(document, candidate)) continue;
+    const key = projectedGroupEdgeKey(document, candidate);
+    if (!key) continue;
+    const currentId = firstIds.get(key);
+    if (!currentId) {
+      firstIds.set(key, candidate.id);
+      continue;
+    }
+    const current = document.edges.find((edge) => edge.id === currentId);
+    const candidateUsesExplicitGroup = Boolean(
+      groupById(document, candidate.source) || groupById(document, candidate.target),
+    );
+    const currentUsesExplicitGroup = Boolean(
+      current && (groupById(document, current.source) || groupById(document, current.target)),
+    );
+    if (candidateUsesExplicitGroup && !currentUsesExplicitGroup) firstIds.set(key, candidate.id);
+  }
+  projectedGroupEdgeFirstIdsCache.set(document, firstIds);
+  return firstIds;
+}
+
+/** Return the persisted edge that represents a projected node/group connection. */
+export function canvasEdgeRepresentativeId(
+  document: CanvasDocument,
+  edge: CanvasEdge,
+) {
+  const key = projectedGroupEdgeKey(document, edge);
+  return key ? projectedGroupEdgeFirstIds(document).get(key) || edge.id : edge.id;
+}
+
 export function isCanvasEdgeVisible(
   document: CanvasDocument,
   edge: CanvasEdge,
 ) {
   if (!isCanvasEdgeDrawable(document, edge)) return false;
+  if (canvasEdgeRepresentativeId(document, edge) !== edge.id) return false;
   const kind = canvasAutomaticBatchKind(document, edge);
   if (!kind) return true;
   if (

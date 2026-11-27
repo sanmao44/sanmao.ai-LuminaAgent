@@ -1490,7 +1490,7 @@ test('projects member edges to group boundaries without changing persisted edges
     source: firstGroup.id,
     target: secondGroup.id,
   });
-  assert.equal(model.isCanvasEdgeVisible(document, outbound), true);
+  assert.equal(model.isCanvasEdgeVisible(document, outbound), false);
   assert.equal(model.isCanvasEdgeVisible(document, betweenGroups), true);
   assert.equal(model.isCanvasEdgeVisible(document, explicitGroupEdge), true);
 
@@ -1509,6 +1509,32 @@ test('projects member edges to group boundaries without changing persisted edges
     source: first.id,
     target: outside.id,
   });
+});
+
+test('collapses ordinary member edges to one directional group connection', () => {
+  const source = model.createPrompt({ x: 0, y: 0 }, '来源');
+  const first = model.createMedia('image', '/group-first.png', '组内一', { x: 420, y: 0 });
+  const second = model.createMedia('image', '/group-second.png', '组内二', { x: 420, y: 420 });
+  let document = model.normalizeDocument({ nodes: [source, first, second] });
+  document = model.createGroup(document, [first.id, second.id], '目标组');
+  const group = document.groups[0];
+  const edges = [
+    { id: 'member-one', source: source.id, target: first.id, kind: 'manual' },
+    { id: 'member-two', source: source.id, target: second.id, kind: 'manual' },
+    { id: 'reverse', source: first.id, target: source.id, kind: 'manual' },
+  ];
+  document = { ...document, edges };
+
+  assert.deepEqual(edges.map((edge) => model.canvasEdgeEndpoints(document, edge)), [
+    { source: source.id, target: group.id },
+    { source: source.id, target: group.id },
+    { source: group.id, target: source.id },
+  ]);
+  assert.equal(model.isCanvasEdgeVisible(document, edges[0]), true);
+  assert.equal(model.isCanvasEdgeVisible(document, edges[1]), false);
+  assert.equal(model.isCanvasEdgeVisible(document, edges[2]), true);
+  assert.equal(model.edgeRouteLaneOffset(document, edges[0]), -12);
+  assert.equal(model.edgeRouteLaneOffset(document, edges[2]), 12);
 });
 test('paints a single generated edge into a variant group', () => {
   const empty = model.normalizeDocument(null);
