@@ -6,6 +6,9 @@ import path from 'node:path';
 import sharp from 'sharp';
 import test from 'node:test';
 import { buildLibModules } from './lib-build.mjs';
+import { createTsRequire } from './ts-require.mjs';
+
+const { isCreativeReviewReport } = createTsRequire(process.cwd())('./packages/contracts/creative-review');
 
 const { main: review } = await buildLibModules(
   ['lib/image-storage', 'lib/media-paths', 'lib/creative-review/visual-evidence', 'lib/creative-review/image'],
@@ -100,6 +103,8 @@ test('external URLs and path-shaped references are rejected without fetching', a
   assert.match(external.capability.evidence[0].reason, /不会请求外部 URL/);
   const traversal = await review.reviewImageArtifact({ artifactRef: '/api/storage/file?name=..%2Foutside.png' });
   assert.equal(traversal.capability.status, 'fail');
+  assert.equal(isCreativeReviewReport(external), true, 'Canvas can display the rejected URL finding');
+  assert.equal(isCreativeReviewReport(traversal), true, 'Canvas can display the rejected path finding');
   assert.equal(traversal.safety.status, 'unknown');
   assert.equal(traversal.artifactRef, 'unavailable');
 });
@@ -136,6 +141,32 @@ test('missing local images return unknown and never block the generated artifact
   });
 });
 
+
+test('ordinary Agent image delivery keeps technical checks without running visual inference', async () => {
+  let visualCalls = 0;
+  const load = createTsRequire(process.cwd(), {
+    '@/lib/creative-review/local-vision': {
+      reviewCreativeVisualsLocally: async () => {
+        visualCalls++;
+        return { status: 'pass', observed: 'fixture', reason: 'fixture' };
+      },
+    },
+  });
+  const { createAgentApplicationInfrastructure } = load('./apps/api/agent-composition');
+  await withImageRoot(async (root) => {
+    const bytes = await sharp({ create: { width: 64, height: 48, channels: 3, background: '#fff' } }).png().toBuffer();
+    const artifactRef = await save(root, bytes);
+    const report = await createAgentApplicationInfrastructure().creativeReview.reviewImageArtifact({
+      artifactRef, storagePath: root, expectedAspectRatio: '4:3', brief: '画一张白底商品图。',
+    });
+    assert.equal(visualCalls, 0);
+    assert.equal(isCreativeReviewReport(report), true);
+    assert.equal(report.capability.evidence.find((item) => item.dimension === 'image_decode')?.status, 'pass');
+    assert.equal(report.capability.evidence.find((item) => item.dimension === 'requested_aspect_ratio')?.status, 'pass');
+    assert.equal(report.capability.evidence.find((item) => item.dimension === 'brief_visual_compliance')?.status, 'unknown');
+    assert.equal(report.safety.status, 'unknown');
+  });
+});
 
 test('image review sends one resized JPEG and the original brief to an injected reviewer', async () => {
   await withImageRoot(async (root) => {

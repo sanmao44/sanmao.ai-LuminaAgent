@@ -36,6 +36,7 @@ function makeUnavailableReport(ref: string, reason: string, capabilityStatus: Cr
       dimension: 'local_artifact_read',
       status: capabilityStatus,
       criterion: '产物必须能从本地图片库安全读取后才能检查',
+      ...(capabilityStatus === 'fail' ? { observed: '已拒绝读取' } : {}),
       reason,
       source: 'rule',
     }]),
