@@ -16,7 +16,7 @@ const MAX_AUDIO_BYTES = 512 * 1024 * 1024;
 
 function extension(name: string, mime: string) {
   const fromName = path.extname(name).toLowerCase().replace(/[^a-z0-9.]/g, '');
-  if (fromName && /^\.(png|jpe?g|webp|gif|mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus)$/.test(fromName)) return fromName;
+  if (fromName && /^\.(png|jpe?g|webp|gif|bmp|svg|mp4|webm|mov|m4v|ogv|mp3|wav|ogg|oga|m4a|aac|flac|opus)$/.test(fromName)) return fromName;
   if (mime.includes('webp')) return '.webp';
   if (mime.includes('jpeg')) return '.jpg';
   if (mime.includes('png')) return '.png';

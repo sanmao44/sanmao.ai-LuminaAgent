@@ -420,6 +420,35 @@ test('Agent execution boundary owns MCP continuation lifecycle', async () => {
   assert.equal(result.stopReason, 'no_tool_calls');
 });
 
+test('bounded MCP continuation reports an incomplete task instead of a neutral success placeholder', () => {
+  const { mcpFollowupIncompleteMessage } = load('./apps/api/agent-execution');
+  assert.equal(
+    mcpFollowupIncompleteMessage('max_steps', 8, 11),
+    '任务未完成：达到工具续轮上限（8 轮）。已执行 11 次工具调用，尚未得到最终答案。',
+  );
+  assert.equal(
+    mcpFollowupIncompleteMessage('no_tool_calls', 1, 11),
+    '任务未完成：模型停止调用工具但未提供最终文字答复。已执行 11 次工具调用，尚未得到最终答案。',
+  );
+  assert.equal(
+    mcpFollowupIncompleteMessage('no_tool_calls', 1, 11, true),
+    '任务未完成：模型续轮请求失败。已执行 11 次工具调用，尚未得到最终答案。',
+  );
+});
+
+test('bounded MCP summaries preserve the stop reason and restrict claims to returned evidence', () => {
+  const { mcpFollowupPartialMessage, mcpFollowupSummaryPrompt } = load('./apps/api/agent-execution');
+  const prompt = mcpFollowupSummaryPrompt('max_steps', 8);
+  assert.match(prompt, /只根据此前已经返回的工具结果/);
+  assert.match(prompt, /用户请求仍未完成/);
+  assert.match(prompt, /不要调用工具/);
+  assert.equal(
+    mcpFollowupPartialMessage('max_steps', 8, 7, '已读取仓库列表，未核实其余步骤。'),
+    '任务未完成：达到工具续轮上限（8 轮）。以下整理只依据已返回的 7 次工具结果，未执行或未核验的步骤仍未完成。\n\n已读取仓库列表，未核实其余步骤。',
+  );
+  assert.equal(mcpFollowupPartialMessage('max_steps', 8, 7, '  '), '');
+});
+
 test('Worker entry executes and observes a clone task through its runner port', async () => {
   const { runCloneJob } = load('./apps/worker/task-entry');
   const { BufferedRuntimeObserver } = load('./packages/contracts/observability');

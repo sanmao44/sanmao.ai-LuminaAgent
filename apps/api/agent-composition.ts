@@ -5,6 +5,7 @@ import {
   describeProviderFailure,
   editImage,
   generateImage,
+  generateImageWithReferences,
   imageDownloadAuth,
   type ChatMessage,
   type ChatContentPart,
@@ -55,6 +56,8 @@ import { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess, ty
 import { isTabbitCliAvailable, runTabbitBrowserAction } from '@/lib/tabbit-cli';
 import { importLocalImage, isLocalImageRead } from '@/lib/agent/local-image';
 import { verifyFilesystemMove } from '@/lib/agent/filesystem-result';
+import { callFilesystemEdit, isFilesystemEditCall, prepareFilesystemEdit } from '@/lib/mcp/filesystem-edit';
+import { isFilesystemTextSearchCall, searchFilesystemText } from '@/lib/mcp/filesystem-search';
 import { stripToolCallMarkup } from '@/lib/skills';
 import { discoverMcpForRequest } from '@/lib/mcp/discovery';
 import { noteAgentModelFailure, noteAgentModelSuccess, orderAgentModelCandidates } from '@/lib/agent/model-health';
@@ -91,6 +94,9 @@ import { getDefaultVideoStoragePath } from '@/lib/video-storage';
 import { resolveFfmpeg } from '@/lib/video-trim-service';
 import { routeSkillRequest as routeSkillRequestFromMetadata } from '@/packages/agent-core/skill-routing';
 import type { SkillRouteDecision, SkillRouteOptions } from '@/packages/contracts/skill';
+import type { AgentProjectTypecheckPort } from '@/packages/contracts/agent';
+import { createProjectTypecheckPort } from '@/lib/agent/project-typecheck';
+import { reviewImageArtifact } from '@/lib/creative-review/image';
 
 export type AgentCompositionRuntime = ProviderRuntime & {
   provider: Parameters<typeof chatCompletion>[0];
@@ -130,6 +136,8 @@ export type AgentMcpDiscovery = typeof discoverMcpForRequest;
 
 /** Concrete infrastructure is assembled here and injected into the application. */
 export type AgentApplicationInfrastructure = {
+  projectTypecheck: AgentProjectTypecheckPort;
+  creativeReview: { reviewImageArtifact: typeof reviewImageArtifact };
   provider: {
     chatCompletion: typeof chatCompletion;
     intentClassificationCompletion?: typeof intentClassificationCompletion;
@@ -137,6 +145,7 @@ export type AgentApplicationInfrastructure = {
     describeProviderFailure: typeof describeProviderFailure;
     editImage: typeof editImage;
     generateImage: typeof generateImage;
+    generateImageWithReferences: typeof generateImageWithReferences;
     imageDownloadAuth: typeof imageDownloadAuth;
   };
   artifacts: {
@@ -212,7 +221,17 @@ export type AgentApplicationInfrastructure = {
     discoverMcpForRequest: typeof discoverMcpForRequest;
   };
   browser: { isTabbitCliAvailable: typeof isTabbitCliAvailable; runTabbitBrowserAction: typeof runTabbitBrowserAction };
-  filesystem: { persistImageBuffer: typeof persistImageBuffer; importLocalImage: typeof importLocalImage; isLocalImageRead: typeof isLocalImageRead; verifyFilesystemMove: typeof verifyFilesystemMove };
+  filesystem: {
+    persistImageBuffer: typeof persistImageBuffer;
+    importLocalImage: typeof importLocalImage;
+    isLocalImageRead: typeof isLocalImageRead;
+    verifyFilesystemMove: typeof verifyFilesystemMove;
+    prepareFilesystemEdit: typeof prepareFilesystemEdit;
+    callFilesystemEdit: typeof callFilesystemEdit;
+    isFilesystemEditCall: typeof isFilesystemEditCall;
+    searchFilesystemText: typeof searchFilesystemText;
+    isFilesystemTextSearchCall: typeof isFilesystemTextSearchCall;
+  };
   skills: {
     buildAgentSkillContext: typeof buildAgentSkillContext;
     routeSkillRequest: (input: string, options?: { dataDir?: string } & SkillRouteOptions) => SkillRouteDecision;
@@ -254,7 +273,10 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     fetchSkillFilesFromGithub: (target, options) => fetchSkillFilesFromGithub({ ...target, ref: target.ref || '', dir: target.dir || '' }, options),
   });
   return {
-    provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth },
+    projectTypecheck: createProjectTypecheckPort({ listAuthorizedRoots: listFilesystemRoots }),
+    // Image delivery only checks the saved file. Visual assessment is opt-in through the evaluation path.
+    creativeReview: { reviewImageArtifact },
+    provider: { chatCompletion, intentClassificationCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, generateImageWithReferences, imageDownloadAuth },
     artifacts: { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, artifactDownloadUrl, getStorageRoots },
     transcription: {
       readArtifact: artifactStore.read,
@@ -324,7 +346,7 @@ export function createAgentApplicationInfrastructure(): AgentApplicationInfrastr
     web: { planSearch, searchWeb },
     mcp: { callMcpTool, MCP_CALL_TIMEOUT_MS, MCP_TOOL_MAX_CALLS_PER_TURN, MCP_TURN_TIME_BUDGET_MS, MCP_TOOL_SEPARATOR, lazyMcpGroupKeywords, loadMcpToolRuntime, mcpServersForTurn, listMcpServers, BROWSER_TOOL_GUIDE, TABBIT_BROWSER_TOOL_GUIDE, BROWSER_EXECUTION_LIMITS, browserExternalBlocker, browserTextNeedsContinuation, browserTextSubmissionGap, guardMcpServerCall, importBrowserArtifacts, shouldImportBrowserArtifacts, noteRemoteCatalogCallFailure, noteRemoteCatalogCallSuccess, listFilesystemRoots, listFilesystemWriteRoots, recordMcpCall, summarizeMcpAuditText, runMcpManageAction, isMcpRuntimeAction, runMcpRuntimeAction, discoverMcpForRequest },
     browser: { isTabbitCliAvailable, runTabbitBrowserAction },
-    filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove },
+    filesystem: { persistImageBuffer, importLocalImage, isLocalImageRead, verifyFilesystemMove, prepareFilesystemEdit, callFilesystemEdit, isFilesystemEditCall, searchFilesystemText, isFilesystemTextSearchCall },
     skills: { buildAgentSkillContext, routeSkillRequest, createCapabilityPorts: createSkillCapabilityPorts, SKILL_TOOL_MAX_CALLS, stripToolCallMarkup },
     search: { nativeSearchIsEnabled, runNativeWebSearch, stripNativeSearchProcess },
     data: { resolveLocalDataDir },

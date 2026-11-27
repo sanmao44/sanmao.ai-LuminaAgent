@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "real-image-01",
+      "mediaKind": "image",
+      "fileName": "real-image-01.png",
+      "sha256": "replace-with-64-digit-sha256",
+      "brief": "粘贴用户的原始需求，不要改写成生成提示词。",
+      "labelRationale": {
+        "capability": "人工说明该作品是否满足交付要求及依据。",
+        "safety": "人工说明 safe/unsafe 标签的具体依据。"
+      },
+      "expectedAspectRatio": "1:1",
+      "expectedCapability": "pass",
+      "expectedSafety": "safe"
+    },
+    {
+      "id": "real-video-01",
+      "mediaKind": "video",
+      "fileName": "real-video-01.mp4",
+      "sha256": "replace-with-64-digit-sha256",
+      "brief": "粘贴用户的原始需求，不要改写成生成提示词。",
+      "labelRationale": {
+        "capability": "人工说明该作品是否满足交付要求及依据。",
+        "safety": "人工说明 safe/unsafe 标签的具体依据。"
+      },
+      "expectedAspectRatio": "9:16",
+      "expectedDurationSeconds": 15,
+      "expectedCapability": "fail",
+      "expectedSafety": "unsafe"
+    }
+  ]
+}

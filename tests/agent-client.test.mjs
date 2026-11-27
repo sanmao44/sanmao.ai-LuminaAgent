@@ -66,3 +66,31 @@ test('shared Agent client parses split CRLF SSE frames in order', async () => {
   assert.deepEqual(result.intentPreview, intentPreview);
   assert.deepEqual(events, ['status', 'delta', 'delta', 'final']);
 });
+
+
+test('undo does not claim success when a 200 response has invalid JSON', async () => {
+  let request;
+  await withFetch(async (input, options) => {
+    request = { input, options };
+    return new Response('{', { status: 200, headers: { 'content-type': 'application/json' } });
+  }, async () => {
+    await assert.rejects(
+      client.resumeAgentRun('undo_fixture', 'undo'),
+      /响应无法核对；请先检查文件，再决定是否重试/,
+    );
+  });
+  assert.equal(request.options.method, 'POST');
+  assert.deepEqual(JSON.parse(request.options.body), { action: 'undo' });
+});
+
+test('undo requires an explicit successful response body', async () => {
+  await withFetch(async () => new Response(JSON.stringify({}), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  }), async () => {
+    await assert.rejects(
+      client.resumeAgentRun('undo_fixture', 'undo'),
+      /服务器未确认撤销结果.*请先检查文件/,
+    );
+  });
+});

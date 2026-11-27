@@ -26,14 +26,30 @@ export function canvasAgentImageGenerationIntent(
   operation: CanvasAgentTarget["operation"],
   hasImageReferences: boolean,
 ) {
-  if (operation !== "generate" || !hasImageReferences || !["image", "mixed"].includes(targetKind)) return false;
+  if (operation === "edit" || !hasImageReferences || !["image", "mixed"].includes(targetKind)) return false;
   const text = String(instruction || "").replace(/\s+/g, " ").trim();
   if (!text || /(?:为什么|怎么|如何|能不能|是否|请问|解释|分析|讨论|评价)/i.test(text)) return false;
+  const directVisualDesire = /^(?:(?:我)?(?:要|想要|想看)|给我|来(?:一张|一幅|一个|一只|一条|一套|个|张|只|幅)?)\s*.{1,80}$/i.test(text)
+    && !/^(?:(?:我)?(?:要|想要)(?:知道|了解|确认|询问|问|分析|解释|描述|识别|比较|查看|学习))/i.test(text)
+    && !/[?？]/.test(text);
+  if (directVisualDesire) return true;
+  if (operation !== "generate") return false;
   const visualTarget = /(?:图片|图像|画面|海报|封面|插画|配图|banner|poster|image|picture)/i.test(text);
   const visualAction = /(?:生成|生图|出图|画图|做图|创作|制作|设计|绘制|合成|汇总|编排|拼成|做成)/i.test(text);
   const directCommand = /^(?:请|帮我|给我|将|把|根据|按照|基于|用|直接|制作|创作|生成|绘制|画|合成|汇总|编排|拼|做成)/i.test(text)
     || /^(?:直接)?(?:生成(?:图片|图像|海报)?|生图|出图|画图|做图)/i.test(text);
   return visualTarget && visualAction && directCommand;
+}
+
+/** A focused correction to an image is an executable visual task in Canvas
+ * when an image is selected or the user explicitly chose an image model. */
+export function canvasAgentImageCorrectionIntent(instruction: string, hasImageContext: boolean) {
+  if (!hasImageContext) return false;
+  const text = String(instruction || "").replace(/\s+/g, " ").trim();
+  if (!text || /(?:为什么|怎么|如何|能不能|是否|请问|解释|分析|讨论|评价|原因)|[?？]/i.test(text)) return false;
+  const imageFeedback = /(?:图片|图像|画面|照片|结果).{0,12}(?:不对|不满意|不合适|不符合|不像|偏离|没按|未按)/i.test(text);
+  const correctionDirection = /(?:我)?(?:要|想要|希望)(?:的)?是.{1,120}|(?:改成|换成|调整成|更(?:写实|真实|自然|清晰|明亮|暗|电影感))/i.test(text);
+  return imageFeedback && correctionDirection;
 }
 
 /** Only send visually framed requests to the Canvas-specific intent reviewer. */

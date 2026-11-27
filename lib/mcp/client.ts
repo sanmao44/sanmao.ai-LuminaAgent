@@ -5,6 +5,7 @@ import { browserTargetHint } from './browser-guidance';
 import { BROWSER_EDITOR_PROBE, browserEditorHints } from './browser-editors';
 import { catalogBrowserBridge, findCatalogEntry, isStdioCatalogEntry } from './catalog';
 import { MCP_MAX_TOOLS_PER_SERVER } from './store';
+import type { McpCallResult } from '@/packages/contracts/mcp';
 import type { McpRemoteTool, McpServerConfig } from './types';
 import {
   MCP_CALL_TIMEOUT_MS,
@@ -307,7 +308,7 @@ export async function callMcpTool(
   toolName: string,
   args: Record<string, unknown>,
   options: McpCallOptions = {},
-): Promise<{ text: string; isError: boolean }> {
+): Promise<McpCallResult> {
   const effectiveArgs = normalizeWindowsMcpAppArgs(server, toolName, args);
   if (server.transport === 'stdio') {
     try {
@@ -409,10 +410,7 @@ function browserHintFor(server: McpServerConfig, text: string): string | null {
   }
 }
 
-function withBrowserHint(
-  result: { text: string; isError: boolean },
-  server: McpServerConfig,
-): { text: string; isError: boolean } {
+function withBrowserHint(result: McpCallResult, server: McpServerConfig): McpCallResult {
   const hint = browserHintFor(server, result.text);
   return hint ? { ...result, text: `${result.text}\n\n${hint}` } : result;
 }

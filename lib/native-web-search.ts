@@ -284,6 +284,7 @@ async function deepSeekToolsSearch(provider: NativeSearchProvider, messages: Cha
     query: searchQuery,
     count: 10,
     ori_question: originalQuestion,
+    localization: '',
     need_content: true,
   }, signal);
   const rows = response.results.slice(0, 10);

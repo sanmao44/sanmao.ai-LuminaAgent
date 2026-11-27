@@ -82,6 +82,43 @@ export type McpCapabilityFollowupResult = {
 };
 
 /**
+ * A bounded MCP continuation without a final model answer must be reported as
+ * incomplete. Keeping this mapping outside the HTTP application makes the
+ * fallback behavior testable without starting a provider or MCP service.
+ */
+export function mcpFollowupStopMessage(stopReason: string, steps: number) {
+  const reason = {
+    max_steps: `达到工具续轮上限（${steps} 轮）`,
+    max_calls: '达到工具调用次数上限',
+    context_budget: '本轮内容超过模型上下文预算',
+    deadline: '达到工具执行时限',
+    stopped: '工具续轮被提前停止',
+    signal: '工具续轮已取消',
+    no_tool_calls: '模型停止调用工具但未提供最终文字答复',
+  }[stopReason];
+  return reason || '';
+}
+
+export function mcpFollowupIncompleteMessage(stopReason: string, steps: number, toolCalls: number, providerFailed = false) {
+  const reason = providerFailed ? '模型续轮请求失败' : mcpFollowupStopMessage(stopReason, steps);
+  return reason ? `任务未完成：${reason}。已执行 ${toolCalls} 次工具调用，尚未得到最终答案。` : '';
+}
+
+export function mcpFollowupSummaryPrompt(stopReason: string, steps: number) {
+  const reason = mcpFollowupStopMessage(stopReason, steps);
+  return reason
+    ? `工具续轮已停止：${reason}。请只根据此前已经返回的工具结果，概括可确认的事实和证据，并明确说明用户请求仍未完成、哪些步骤尚未执行或核验。不要调用工具，也不要把未确认的操作说成成功。`
+    : '';
+}
+
+export function mcpFollowupPartialMessage(stopReason: string, steps: number, toolCalls: number, summary: string) {
+  const reason = mcpFollowupStopMessage(stopReason, steps);
+  const evidence = summary.trim();
+  return reason && evidence
+    ? `任务未完成：${reason}。以下整理只依据已返回的 ${toolCalls} 次工具结果，未执行或未核验的步骤仍未完成。\n\n${evidence}`
+    : '';
+}
+/**
  * Application execution lifecycle for capability follow-ups.
  *
  * The HTTP application supplies model and ToolRuntime ports; this module owns

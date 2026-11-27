@@ -3,6 +3,7 @@ import type { VideoGenerationInput } from './types';
 import type { GenerationSource } from './generation-source';
 import { createTaskRepository } from './repositories/task-repository';
 import type { ProviderTokenUsage } from '@/packages/contracts/task';
+import type { CreativeReviewReport } from '@/packages/contracts/creative-review';
 
 export type VideoTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
 export type VideoTask = {
@@ -25,6 +26,7 @@ export type VideoTask = {
   videoUrls: string[];
   remoteVideoUrls: string[];
   localVideoPaths: string[];
+  creativeReview?: CreativeReviewReport[];
   costUsd?: number;
   errorCode?: string;
   error?: string;

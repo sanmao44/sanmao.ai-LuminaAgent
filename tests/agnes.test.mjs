@@ -287,6 +287,9 @@ test('builds Agnes 2.5 modes and enforces Flash restrictions', () => {
   const flash = video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'fast', seconds: 4, videoMode: 'reference', referenceImages: ['1.png'], audios: ['a.mp3'] });
   assert.equal(flash.size, '720P');
   assert.deepEqual(flash.images, ['1.png']);
+  const keyframe = video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'animate source', seconds: 12, videoMode: 'keyframe', aspectRatio: '9:16', firstFrame: 'first.png' });
+  assert.equal(keyframe.aspect_ratio, undefined);
+  assert.equal(keyframe.first_frame, 'first.png');
   assert.deepEqual(flash.audios, ['a.mp3']);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'too many', seconds: 5, videoMode: 'reference', referenceImages: ['1', '2', '3', '4', '5', '6'] }), /最多接收 5 张/);
   assert.throws(() => video.buildAgnesVideoPayload('agnes-video-2.5-flash', { prompt: 'video', seconds: 5, videoMode: 'reference', referenceVideos: ['v.mp4'] }), /不支持参考视频/);

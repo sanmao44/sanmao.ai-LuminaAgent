@@ -10,6 +10,7 @@ export * from './skill';
 export * from './artifact';
 export * from './context';
 export * from './creative';
+export * from './creative-review';
 export * from './planning';
 export * from './video-download';
 export * from './audio-synthesis';

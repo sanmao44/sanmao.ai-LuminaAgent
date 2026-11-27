@@ -38,7 +38,17 @@
     ".next-canvas-qa/types/**/*.ts",
     ".next-canvas-qa/dev/types/**/*.ts",
     ".next-minimax-voice-qa/types/**/*.ts",
-    ".next-minimax-voice-qa/dev/types/**/*.ts"
+    ".next-minimax-voice-qa/dev/types/**/*.ts",
+    ".next-agent-qa/types/**/*.ts",
+    ".next-agent-qa/dev/types/**/*.ts",
+    ".next-agent-workspace-verify2-20261126/types/**/*.ts",
+    ".next-agent-workspace-verify2-20261126/dev/types/**/*.ts",
+    ".next-agent-workspace-final-20261126/types/**/*.ts",
+    ".next-agent-workspace-final-20261126/dev/types/**/*.ts",
+    ".next-agent-workspace-budget-20261126/types/**/*.ts",
+    ".next-agent-workspace-budget-20261126/dev/types/**/*.ts",
+    ".next-agent-workspace-ui-20261126/types/**/*.ts",
+    ".next-agent-workspace-ui-20261126/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

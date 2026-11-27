@@ -2313,6 +2313,18 @@ export async function editImage(provider: RuntimeProvider, rawModelId: string, i
   return images.slice(0, count);
 }
 
+/** Generate a new image conditioned on references. Providers with a native
+ * reference-generation contract keep using it; other OpenAI-compatible
+ * adapters must send references through their image-input/edit endpoint.
+ * The application operation remains `reference-generate` either way. */
+export async function generateImageWithReferences(provider: RuntimeProvider, rawModelId: string, input: ImageEditInput, signal?: AbortSignal): Promise<GeneratedImage[]> {
+  if (isCangyuanProvider(provider) || isAgnesProvider(provider)
+    || provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') {
+    return generateImage(provider, rawModelId, input, signal);
+  }
+  return editImage(provider, rawModelId, { ...input, fidelity: input.fidelity || 'high' }, signal);
+}
+
 export async function upscaleImage(provider: RuntimeProvider, rawModelId: string, input: { reference: string; size: string; prompt?: string; seed?: number; colorCorrection?: string; resizeMethod?: string }, signal?: AbortSignal): Promise<GeneratedImage[]> {
   if (provider.videoTransport === 'jimeng-cli' || provider.platform === 'jimeng-cli') return (await import('./jimeng-image')).runJimengImageUpscale(provider, input, signal);
   const reference = normalizeReference(input.reference);
@@ -2462,16 +2474,16 @@ export type DeepSeekToolSearchInput = {
 };
 
 export type DeepSeekToolSearchResult = {
-  rerank_score: number;
+  rerank_score?: number;
   title: string;
   url: string;
-  snippet: string;
-  summary: string;
-  content: string;
-  site_name: string | null;
-  site_icon: string | null;
-  date: string | null;
-  authority: number;
+  snippet?: string;
+  summary?: string;
+  content?: string;
+  site_name?: string | null;
+  site_icon?: string | null;
+  date?: string | null;
+  authority?: number;
 };
 
 export type DeepSeekToolSearchResponse = {
@@ -2523,40 +2535,42 @@ function deepSeekSearchResult(value: unknown, index: number): DeepSeekToolSearch
   const row = value as Record<string, unknown>;
   const title = deepSeekField(row.title).trim();
   const url = deepSeekField(row.url).trim();
+  if (!title || !/^https?:\/\//i.test(url)) throw new Error(`第 ${index + 1} 条结果的 title 或 url 无效`);
   const score = row.rerank_score;
-  const authority = row.authority;
-  const date = row.date === null ? null : typeof row.date === 'string' ? row.date : undefined;
-  const isRfc3339Date = date === null || (
+  if (score !== undefined && (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 3)) {
+    throw new Error(`第 ${index + 1} 条结果的 rerank_score 必须为 0 至 3 的数字`);
+  }
+  for (const field of ['snippet', 'summary', 'content']) {
+    if (row[field] !== undefined && typeof row[field] !== 'string') {
+      throw new Error(`第 ${index + 1} 条结果的 ${field} 必须为字符串`);
+    }
+  }
+  if ((row.site_name !== undefined && typeof row.site_name !== 'string' && row.site_name !== null)
+    || (row.site_icon !== undefined && typeof row.site_icon !== 'string' && row.site_icon !== null)) {
+    throw new Error(`第 ${index + 1} 条结果的 site_name、site_icon 或 date 无效`);
+  }
+  const date = row.date;
+  const isRfc3339Date = date === undefined || date === null || (
     typeof date === 'string'
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/i.test(date)
     && Number.isFinite(Date.parse(date))
   );
-  if (!title || !/^https?:\/\//i.test(url)) throw new Error(`第 ${index + 1} 条结果的 title 或 url 无效`);
-  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 3) {
-    throw new Error(`第 ${index + 1} 条结果的 rerank_score 必须为 0 至 3 的数字`);
-  }
-  if (typeof row.snippet !== 'string' || typeof row.summary !== 'string' || typeof row.content !== 'string') {
-    throw new Error(`第 ${index + 1} 条结果缺少 snippet、summary 或 content`);
-  }
-  if ((typeof row.site_name !== 'string' && row.site_name !== null)
-    || (typeof row.site_icon !== 'string' && row.site_icon !== null)
-    || !isRfc3339Date) {
-    throw new Error(`第 ${index + 1} 条结果的 site_name、site_icon 或 date 无效`);
-  }
-  if (typeof authority !== 'number' || !Number.isInteger(authority) || authority < -1 || authority > 4) {
+  if (!isRfc3339Date) throw new Error(`第 ${index + 1} 条结果的 site_name、site_icon 或 date 无效`);
+  const authority = row.authority;
+  if (authority !== undefined && (typeof authority !== 'number' || !Number.isInteger(authority) || authority < -1 || authority > 4)) {
     throw new Error(`第 ${index + 1} 条结果的 authority 必须为 -1 至 4 的整数`);
   }
   return {
     title,
     url,
-    rerank_score: score,
-    snippet: row.snippet,
-    summary: row.summary,
-    content: row.content,
-    site_name: row.site_name,
-    site_icon: row.site_icon,
-    date: date ?? null,
-    authority,
+    ...(score !== undefined ? { rerank_score: score } : {}),
+    ...(typeof row.snippet === 'string' ? { snippet: row.snippet } : {}),
+    ...(typeof row.summary === 'string' ? { summary: row.summary } : {}),
+    ...(typeof row.content === 'string' ? { content: row.content } : {}),
+    ...(row.site_name === null || typeof row.site_name === 'string' ? { site_name: row.site_name } : {}),
+    ...(row.site_icon === null || typeof row.site_icon === 'string' ? { site_icon: row.site_icon } : {}),
+    ...(date === null || typeof date === 'string' ? { date } : {}),
+    ...(authority !== undefined ? { authority } : {}),
   };
 }
 
@@ -2623,8 +2637,8 @@ export async function deepSeekToolSearch(provider: DeepSeekApiProvider, input: D
     query,
     count,
     ...(input.ori_question !== undefined ? { ori_question: input.ori_question } : {}),
-    ...(input.localization !== undefined ? { localization: input.localization } : {}),
-    ...(input.need_content !== undefined ? { need_content: input.need_content } : {}),
+    localization: input.localization ?? '',
+    need_content: input.need_content ?? false,
   };
   const data = await deepSeekToolRequest(deepSeekToolEndpoint(provider, 'search'), {
     method: 'POST',
@@ -3729,6 +3743,7 @@ async function requestDeepSeekResponses(
   input: DeepSeekResponsesInput,
   options: DeepSeekResponsesOptions,
   signal?: AbortSignal,
+  timeoutMs = 180000,
 ) {
   const body = deepSeekResponsesRequest(rawModelId, input, options);
   const request = {
@@ -3737,8 +3752,8 @@ async function requestDeepSeekResponses(
     body: JSON.stringify(body),
   } satisfies RequestInit;
   const endpoint = deepSeekResponsesEndpoint(provider);
-  if (options.stream) return fetchStreamingResponse(endpoint, request, 180000, signal);
-  const data = await fetchJson(endpoint, request, 180000, signal);
+  if (options.stream) return fetchStreamingResponse(endpoint, request, timeoutMs, signal);
+  const data = await fetchJson(endpoint, request, timeoutMs, signal);
   normalizeDeepSeekResponsesResponse(data, rawModelId);
   return data;
 }
@@ -3753,7 +3768,8 @@ async function prepareDeepSeekResponsesInput(input: DeepSeekResponsesInput): Pro
   return prepared;
 }
 
-export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal) {
+export async function chatCompletion(provider: RuntimeProvider, rawModelId: string, payload: { messages: ChatMessage[]; tools?: any[]; tool_choice?: 'auto' | 'none'; reasoningEffort?: DeepSeekReasoningEffort; maxOutputTokens?: number; temperature?: number; topP?: number; topLogprobs?: number; text?: Record<string, unknown>; safetyCheck?: DeepSeekSafetyCheck; title?: DeepSeekResponseTitle; user?: string }, signal?: AbortSignal, options: { timeoutMs?: number } = {}) {
+  const requestTimeoutMs = Math.max(1_000, Math.min(600_000, Math.trunc(options.timeoutMs || 180_000)));
   if (is65535ClaudeModelProvider(provider, rawModelId)) {
     const { invokeClaudeCodeProvider } = await import('./claude-code-provider');
     const messages = await prepareProviderChatMessages(payload.messages, preparePublicMediaUrl, { prepareDataUrls: false });
@@ -3761,7 +3777,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
   }
   if (isAgnesProvider(provider)) {
     const request = await agnesChatRequest(provider, rawModelId, payload);
-    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, 180000, signal);
+    const data = await fetchJson(request.endpoint, { method: 'POST', headers: { ...agnesTextHeaders(provider, request.protocol), 'Content-Type': 'application/json' }, body: JSON.stringify(request.body) }, requestTimeoutMs, signal);
     return normalizeAgnesResponse(data, request.protocol);
   }
   if (provider.platform === 'deepseek' && deepSeekResponsesModel(rawModelId) === 'deepseek-v4-pro' && deepSeekMessagesContainImage(payload.messages)) {
@@ -3781,7 +3797,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
       safetyCheck: payload.safetyCheck,
       title: payload.title,
       user: payload.user,
-    }, signal);
+    }, signal, requestTimeoutMs);
     return normalizeDeepSeekResponsesResponse(data, rawModelId);
   }
   // OpenAI-compatible providers accept inline image data URLs. Keep them
@@ -3795,7 +3811,7 @@ export async function chatCompletion(provider: RuntimeProvider, rawModelId: stri
       messages,
       ...(payload.tools?.length ? { tools: payload.tools, tool_choice: payload.tool_choice || 'auto' } : {}),
     }),
-  }, 180000, signal);
+  }, requestTimeoutMs, signal);
   return unwrapProviderData(provider, data);
 }
 

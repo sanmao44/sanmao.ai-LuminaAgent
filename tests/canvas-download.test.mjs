@@ -13,8 +13,8 @@ const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   fileName: sourceUrl.pathname,
 }).outputText.replace(
-  'import { zipSync } from "fflate";',
-  `const { zipSync } = await import(${JSON.stringify(fflateUrl)});`,
+  'import { Zip, ZipPassThrough, zipSync } from "fflate";',
+  `const { Zip, ZipPassThrough, zipSync } = await import(${JSON.stringify(fflateUrl)});`,
 );
 const download = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 
@@ -81,7 +81,7 @@ test('does not create a partial zip when an image download fails', async () => {
 test('canvas exposes a multi-image download action without replacing single downloads', async () => {
   const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
   const selectionToolbar = await readFile(new URL('../components/canvas/CanvasSelectionToolbar.tsx', import.meta.url), 'utf8');
-  assert.match(component, /createCanvasImageZip\(downloadItems\)/);
+  assert.match(component, /createCanvasMediaZip\(downloadItems\)/);
   assert.match(selectionToolbar, /selectedImageCount >= 2/);
   assert.match(component, /\.filter\(\(node\) => isCanvasReadyImageSource\(node\)\)/);
   assert.match(selectionToolbar, /按选择顺序打包下载图片/);
@@ -100,10 +100,47 @@ test('remote fetch failure saves through existing storage before zipping', async
   assert.deepEqual(calls, ['https://example.com/a.png', '/api/storage/images', '/api/storage/file?name=a.png']);
 });
 
-test('group downloads use group members independently of selection', async () => {
-  const component = await readFile(new URL('../components/canvas/CanvasWorkspace.tsx', import.meta.url), 'utf8');
-  assert.match(component, /downloadSelectedImages\(groupImages\.map/);
-  assert.match(component, /disabled: !groupImages\.length \|\| batchDownloading/);
+test('group downloads include ready media and skip unsupported group members', () => {
+  const nodes = [
+    { id: 'image', type: 'media', data: { kind: 'image', name: 'photo.png', url: '/image.png' } },
+    { id: 'video', type: 'media', data: { kind: 'video', name: 'clip.mp4', url: '/clip.mp4' } },
+    { id: 'upscale', type: 'upscale', data: { kind: 'image', url: '/upscale.png' } },
+    { id: 'audio', type: 'media', data: { kind: 'audio', url: '/sound.mp3' } },
+    { id: 'three-d', type: 'media', data: { kind: '3d', url: '/model.glb' } },
+    { id: 'missing-url', type: 'media', data: { kind: 'video', url: '  ' } },
+    { id: 'running-video', type: 'media', data: { kind: 'video', url: '/running.mp4', status: 'running' } },
+    { id: 'failed-image', type: 'media', data: { kind: 'image', url: '/failed.png', status: 'failed' } },
+    { id: 'prompt', type: 'prompt', data: { kind: 'image', url: '/not-media.png' } },
+  ];
+  assert.deepEqual(download.canvasGroupDownloadItems(nodes), [
+    { id: 'image', name: 'photo.png', url: '/image.png', kind: 'image' },
+    { id: 'video', name: 'clip.mp4', url: '/clip.mp4', kind: 'video' },
+    { id: 'upscale', name: '图片素材', url: '/upscale.png', kind: 'image' },
+  ]);
+});
+
+test('group media archives include video bytes with the MIME-derived extension', async () => {
+  const result = await download.createCanvasMediaZip([
+    { id: 'image', kind: 'image', name: 'photo.png', url: 'image' },
+    { id: 'video', kind: 'video', name: 'clip.png', url: 'video' },
+  ], async (url) => new Response(new Uint8Array([url === 'video' ? 2 : 1]), {
+    headers: { 'content-type': url === 'video' ? 'video/webm' : 'image/png' },
+  }));
+  assert.deepEqual(result.fileNames, ['01-photo.png', '02-clip.webm']);
+  const files = unzipSync(new Uint8Array(await result.blob.arrayBuffer()));
+  assert.deepEqual([...files['01-photo.png']], [1]);
+  assert.deepEqual([...files['02-clip.webm']], [2]);
+});
+
+test('video archive failures do not incorrectly use the image storage fallback', async () => {
+  const calls = [];
+  await assert.rejects(
+    download.createCanvasMediaZip([
+      { id: 'video', kind: 'video', name: 'clip.mp4', url: 'https://example.com/clip.mp4' },
+    ], async (url) => { calls.push(url); throw new TypeError('Failed to fetch'); }),
+    /素材下载失败：clip\.mp4（Failed to fetch）/,
+  );
+  assert.deepEqual(calls, ['https://example.com/clip.mp4']);
 });
 
 test('upscale results expose a direct download action on the infinite canvas', async () => {

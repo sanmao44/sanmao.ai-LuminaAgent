@@ -214,6 +214,9 @@ test('canvas Agent target operation distinguishes edits from analysis and questi
   assert.equal(runContext.canvasAgentImageGenerationIntent('将这四个角色创作成一张16:9的海报图，各有各的动作！', 'image', 'generate', true), true);
   assert.equal(runContext.canvasAgentImageGenerationIntent('分析一下这张图怎么样？', 'image', 'generate', true), false);
   assert.equal(runContext.canvasAgentImageGenerationIntent('生成图片！', 'image', 'generate', false), false);
+  assert.equal(runContext.canvasAgentImageCorrectionIntent('图片不对，我要的是写实风格，真实摄影，超写实场景。', true), true);
+  assert.equal(runContext.canvasAgentImageCorrectionIntent('请分析图片为什么不对？', true), false);
+  assert.equal(runContext.canvasAgentImageCorrectionIntent('图片不对，我要的是写实风格。', false), false);
   for (const message of ['\u4f60\u597d', '\u4f60\u662f\u4ec0\u4e48\u6a21\u578b', '\u4e3a\u4f55\u8fd8\u4e0d\u884c']) {
     assert.equal(runContext.canvasAgentNeedsSemanticReview(message), false, message);
   }

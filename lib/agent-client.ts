@@ -1,7 +1,9 @@
 "use client";
 
 import type { AgentDeliverable } from "./agent-intent";
+import type { AgentApprovalCall, AgentFilesystemUndo, AgentProjectTypecheckResult } from "@/packages/contracts/agent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { CreativeReviewReport } from "@/packages/contracts/creative-review";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { AgentIntentPreview } from "@/packages/contracts/planning";
 import type { CreativeReference } from "./creative-references";
@@ -10,6 +12,8 @@ import type { CanvasDocument } from "./canvas/types";
 import type { CanvasPatch } from "./canvas/patch";
 import type { CanvasAgentTarget } from "./canvas/run-context";
 import type { AudioTranscriptionModelSelection } from "@/packages/contracts/audio-transcription";
+
+export type { AgentApprovalCall, AgentFilesystemUndo } from "@/packages/contracts/agent";
 
 export const AGENT_CONTEXT_MESSAGE_LIMIT = 12;
 
@@ -99,6 +103,7 @@ export type AgentGeneratedImage = {
   batchPrompt?: string;
   batchStatus?: "succeeded" | "failed";
   batchError?: string;
+  creativeReview?: CreativeReviewReport;
 };
 
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
@@ -107,16 +112,7 @@ export type AgentMcpToolUse = {
   name: string;
   readOnly: boolean;
   ok: boolean;
-};
-
-/** 待确认的一次外部操作：面板要说清「在哪、做什么、可能有什么影响」。 */
-export type AgentApprovalCall = {
-  id: string;
-  server: string;
-  tool: string;
-  risk: string;
-  reason: string;
-  argsPreview?: string;
+  preview?: boolean;
 };
 
 export type AgentApproval = {
@@ -134,7 +130,10 @@ export type AgentResumeResult = {
   rejected?: boolean;
   message?: string;
   mcpTools?: AgentMcpToolUse[];
+  filesystemUndos?: AgentFilesystemUndo[];
+  projectTypecheckResult?: AgentProjectTypecheckResult;
   error?: string;
+  consumed?: boolean;
 };
 
 export type AgentResponse = {
@@ -262,7 +261,7 @@ export async function readAgentEventStream(
  */
 export async function resumeAgentRun(
   id: string,
-  action: "approve" | "reject",
+  action: "approve" | "reject" | "undo",
   options: { signal?: AbortSignal } = {},
 ): Promise<AgentResumeResult> {
   const response = await fetch(`/api/agent/runs/${encodeURIComponent(id)}`, {
@@ -272,8 +271,26 @@ export async function resumeAgentRun(
     signal: options.signal,
     body: JSON.stringify({ action }),
   });
-  const data = (await response.json().catch(() => ({}))) as AgentResumeResult;
-  if (!response.ok) throw new Error(String(data?.error || `这一步没有执行：${response.status}`));
+  let data: AgentResumeResult = {};
+  try {
+    const payload: unknown = await response.json();
+    data = payload && typeof payload === "object" && !Array.isArray(payload)
+      ? payload as AgentResumeResult
+      : {};
+  } catch {
+    if (action === "undo" && response.ok) {
+      throw new Error("撤销请求已发出，但服务器响应无法核对；请先检查文件，再决定是否重试。");
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(String(data?.error || `这一步没有执行：${response.status}`)) as Error & { consumed?: boolean };
+    error.consumed = data?.consumed === true;
+    throw error;
+  }
+  if (action === "undo" && data.ok !== true) {
+    const detail = typeof data.error === "string" && data.error ? `：${data.error}` : "";
+    throw new Error(`服务器未确认撤销结果${detail}；请先检查文件，再决定是否重试。`);
+  }
   return data;
 }
 
@@ -352,7 +369,7 @@ export function pollAgentProgress(
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
         if (seconds >= 3 && seconds !== elapsed) {
           elapsed = seconds;
-          options.onProgress({ stage, message: `${message}（已 ${seconds}s）` });
+          options.onProgress({ stage, message: `${message}（本轮已 ${seconds}s）` });
         }
       }
     }

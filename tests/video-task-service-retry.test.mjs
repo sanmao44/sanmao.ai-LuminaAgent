@@ -11,12 +11,14 @@ const { canRecoverVideoTaskResult } = createTsRequire(process.cwd(), {
 
 function createHarness(submissionErrors, videoTransport = 'openai-videos', rawModelId = 'fixture-video', mediaPreparer = async (value) => value, providerOverrides = {}, useRealLimits = false) {
   const finishedLogs = [];
+  const reviewInputs = [];
   const tasks = new Map();
   let currentTask;
   let submitCount = 0;
   let submittedInput;
   let pollResult;
   let pollCount = 0;
+  let reviewHandler;
   let submitHandler;
   const provider = { id: 'provider-1', name: 'relay fixture', platform: 'custom', videoTransport, ...providerOverrides };
   const model = { id: 'model-1', rawId: rawModelId, displayName: 'Fixture video' };
@@ -60,6 +62,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
       markProviderCredentialFailure: async () => undefined,
     },
     './video-storage': { persistGeneratedVideos: async () => ({ videos: [], path: '' }) },
+    './creative-review/video': { reviewStoredVideoArtifact: async (input) => { reviewInputs.push(input); return reviewHandler ? reviewHandler(input) : { artifactRef: input.artifactRef }; } },
     './video-task-store': {
       canRecoverVideoTaskResult: (task) => canRecoverVideoTaskResult(task),
       claimFailedVideoTaskRetry: retryStore.claimFailedVideoTaskRetry,
@@ -135,7 +138,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     './video-task-runtime': {
       canRetryVideoTask: () => true,
       isStaleVideoTask: () => false,
-      videoTaskRuntime: { isActive: (status) => ['pending', 'running'].includes(status) },
+      videoTaskRuntime: { isActive: (status) => ['pending', 'running'].includes(status), canCancel: (status) => ['pending', 'running'].includes(status) },
     },
     '@/packages/contracts/observability': {
       BufferedRuntimeObserver: class { async emit() {} },
@@ -147,6 +150,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     service,
     loadService,
     finishedLogs,
+    reviewInputs,
     task: (id) => id ? tasks.get(id) : currentTask,
     makeRetryEligible: () => { patchTask({ nextPollAt: Date.now() - 1 }); },
     setProviderTaskId: (providerTaskId) => { patchTask({ providerTaskId }); },
@@ -156,6 +160,7 @@ function createHarness(submissionErrors, videoTransport = 'openai-videos', rawMo
     VideoProviderError,
     pushSubmissionError: (error) => submissionErrors.push(error),
     setPollResult: (result) => { pollResult = result; },
+    setReviewHandler: (handler) => { reviewHandler = handler; },
     setSubmitHandler: (handler) => { submitHandler = handler; },
     patchTask,
   };
@@ -585,6 +590,52 @@ test('persists Cangyuan final progress and reported token usage to the task and 
   assert.equal(harness.finishedLogs[0].completionTokens, 121);
   assert.equal(harness.finishedLogs[0].totalTokens, 128);
   assert.equal(harness.finishedLogs[0].costUsd, undefined);
+});
+
+test('passes the original task prompt as the video review brief', async () => {
+  const harness = createHarness([]);
+  await harness.service.createVideoGeneration({
+    modelId: 'model-1',
+    idempotencyKey: 'video-review-brief',
+    input: { prompt: 'A quiet sunrise over the sea.', seconds: 5, aspectRatio: '16:9' },
+  });
+  harness.setPollResult({ status: 'done', videos: [{ url: 'https://cdn.example/review-brief.mp4' }] });
+  harness.setProviderTaskId('video-brief-task');
+  harness.makeRetryEligible();
+
+  const completed = await harness.service.refreshVideoTask('task-1');
+
+  assert.equal(completed.status, 'done');
+  assert.equal(harness.reviewInputs.length, 1);
+  assert.equal(harness.reviewInputs[0].brief, 'A quiet sunrise over the sea.');
+  assert.equal(harness.reviewInputs[0].generationPrompt, undefined);
+});
+
+test('cancelling a video task aborts its active local visual review and preserves cancelled status', async () => {
+  const harness = createHarness([]);
+  await harness.service.createVideoGeneration({
+    modelId: 'model-1',
+    idempotencyKey: 'video-review-cancel',
+    input: { prompt: 'A quiet sunrise over the sea.', seconds: 5, aspectRatio: '16:9' },
+  });
+  harness.setPollResult({ status: 'done', videos: [{ url: 'https://cdn.example/review-cancel.mp4' }] });
+  harness.setProviderTaskId('video-review-cancel-provider-task');
+  harness.makeRetryEligible();
+  let finishReview;
+  harness.setReviewHandler((input) => new Promise((resolve) => { finishReview = resolve; }));
+
+  const refreshing = harness.service.refreshVideoTask('task-1');
+  for (let attempt = 0; attempt < 50 && !finishReview; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof finishReview, 'function', 'the persisted video reaches its local visual review');
+  const signal = harness.reviewInputs[0].signal;
+  assert.ok(signal instanceof AbortSignal);
+
+  const cancelled = await harness.service.cancelVideoTask('task-1');
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(signal.aborted, true);
+  finishReview({ artifactRef: 'task-1:1' });
+  const settled = await refreshing;
+  assert.equal(settled.status, 'cancelled', 'late review completion must not overwrite cancellation');
 });
 
 test('preserves disabled Cangyuan audio generation through task input cleaning and payload creation', async () => {

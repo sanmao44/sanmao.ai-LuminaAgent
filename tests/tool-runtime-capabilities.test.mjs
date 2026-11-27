@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import test from 'node:test';
 import { createTsRequire } from './ts-require.mjs';
 
 const load = createTsRequire(process.cwd());
 const capabilities = load('./packages/tool-runtime/native-capabilities');
 const mcpCapabilities = load('./packages/tool-runtime/mcp-capability');
+const AgentMcpDetailDock = load('./components/AgentMcpDetailDock').default;
 const artifacts = load('./lib/artifacts/index');
 const artifactLimits = load('./lib/artifacts/limits');
 const imageStorage = load('./lib/image-storage');
@@ -225,7 +228,7 @@ test('image capability normalizes ordered prompt batches at the runtime boundary
   assert.equal(result.count, 1);
 });
 
-test('reference image generation keeps its operation on an accepted async task', async () => {
+test('reference image generation submits selected images through the provider image-input port', async () => {
   const image = load('./packages/tool-runtime/image-capability');
   const accepted = Object.assign(new Error('provider accepted'), {
     providerPossiblyAccepted: true,
@@ -259,8 +262,13 @@ test('reference image generation keeps its operation on an accepted async task',
       startGenerationLog: async (log) => { finished.push({ started: log }); return 'media-log-1'; },
       referenceRecords: [],
       getRuntimeImageModelCandidates: () => [],
-      editImage: async () => { throw new Error('reference generation must not call image edit'); },
-      generateImage: async () => { throw accepted; },
+      editImage: async () => { throw new Error('reference generation must not be classified as edit'); },
+      generateImageWithReferences: async (_provider, _model, input) => {
+        assert.deepEqual(input.references, ['data:image/png;base64,reference']);
+        assert.equal(input.prompt, 'a test image');
+        throw accepted;
+      },
+      generateImage: async () => { throw new Error('reference generation must use the provider image-input port'); },
       persistGenerationResult: async () => ({ images: [] }),
       imageDownloadAuth: () => undefined,
       finishGenerationLog: async (id, patch) => { finished.push({ id, patch }); },
@@ -280,6 +288,86 @@ test('reference image generation keeps its operation on an accepted async task',
   assert.equal(finished[1].patch.taskId, 'agent-run-1');
   assert.equal(finished[1].patch.mode, 'generate');
   assert.equal(finished[1].patch.operation, 'reference-generate');
+});
+
+test('image generation returns its structured creative review to the Agent', async () => {
+  const image = load('./packages/tool-runtime/image-capability');
+  const artifactRefs = ['/api/storage/file?name=generated-1.png', '/api/storage/file?name=generated-2.png'];
+  const generated = [];
+  const review = {
+    version: 'p1', mediaKind: 'image', artifactRef: artifactRefs[0], checkedAt: '2026-11-26T00:00:00.000Z',
+    capability: { status: 'fail', evidence: [{ dimension: 'requested_aspect_ratio', status: 'fail', criterion: '2% tolerance', observed: '1:1', expected: '16:9', reason: 'ratio mismatch', source: 'rule' }] },
+    safety: { status: 'unknown', evidence: [{ dimension: 'content_safety', status: 'unknown', criterion: 'calibrated review required', reason: 'not calibrated', source: 'vision' }] },
+  };
+  const result = await image.executeImageCapability({
+    state: { generated, batchItems: [], generations: [] },
+    call: { id: 'image-review-1', function: { name: 'image_generate' } },
+    args: { prompt: 'coffee product photo' },
+    results: [],
+    ports: {
+      requestController: new AbortController(), imageToolsAllowed: true,
+      isBareImageExecution: () => false, extractBatchPrompts: () => [], fallbackImagePrompt: 'fallback',
+      latestRefs: [], trackedChatCompletion: async () => ({ choices: [{ message: { content: '' } }] }),
+      agentRuntime: { provider: { name: 'chat' }, model: { rawId: 'chat-model' } },
+      requestedAgentImageModelId: 'auto',
+      getRuntimeImageGenerationModel: async () => ({ provider: { name: 'image-provider' }, model: { id: 'image-model', rawId: 'image-raw', displayName: 'Image' } }),
+      getRuntimeImageModelForCapability: async () => null,
+      appendGenerationLog: async () => {}, sourceForLog: 'agent', taskContext: {},
+      startGenerationLog: async () => 'media-log-1', referenceRecords: [],
+      getRuntimeImageModelCandidates: () => [], editImage: async () => [],
+      generateImage: async () => [{ url: 'data:image/png;base64,ZmFrZTE=' }, { url: 'data:image/png;base64,ZmFrZTI=' }],
+      persistGenerationResult: async () => ({ images: artifactRefs.map((url) => ({ url })) }),
+      reviewImageArtifact: async (input) => { assert.ok(artifactRefs.includes(input.artifactRef)); assert.equal(input.brief, '请生成 16:9 咖啡广告图'); assert.equal(input.generationPrompt, 'coffee product photo'); return { ...review, artifactRef: input.artifactRef }; },
+      imageDownloadAuth: () => undefined, finishGenerationLog: async () => {}, skipCaption: true,
+      latestInstruction: '请生成 16:9 咖啡广告图',
+      executionPublicState: { settings: { imageStoragePath: 'C:\authorized-images' } },
+    },
+  });
+  const payload = JSON.parse(String(result.results[0].content));
+  assert.equal(payload.ok, true);
+  assert.deepEqual(payload.images.map((image) => image.ref), artifactRefs);
+  assert.deepEqual(payload.creativeReview.map((report) => report.artifactRef), artifactRefs);
+  assert.equal(payload.creativeReview[0].capability.evidence[0].observed, '1:1');
+  assert.deepEqual(generated.map((image) => image.creativeReview.artifactRef), artifactRefs, 'the Agent response images keep each matching review');
+});
+
+test('Filesystem edit_file dry-runs are reported as previews in the MCP call summary', async () => {
+  const { state, input } = createWindowsMcpTestContext({ mcpCall: async () => ({ isError: false, text: 'diff preview' }) });
+  const server = { id: 'filesystem-test', name: '本地文件', url: 'stdio://filesystem', catalogId: 'filesystem', enabled: true, allowWrite: true };
+  const meta = { serverId: server.id, serverName: server.name, toolName: 'edit_file', readOnly: false, blocked: false };
+  const call = { id: 'filesystem-preview' };
+  const args = { path: 'C:\\Temp\\fixture\\note.txt', edits: [{ oldText: 'before', newText: 'after' }], dryRun: true };
+  Object.assign(input, {
+    call,
+    args,
+    policy: { tool: { mcp: meta, risk: 'external_side_effect' } },
+    stepCalls: [call],
+    mcpServerById: new Map([[server.id, server]]),
+    mcpCall: async (_targetServer, _toolName, receivedArgs) => {
+      assert.equal(receivedArgs.dryRun, true);
+      return { isError: false, text: 'diff preview' };
+    },
+  });
+
+  const result = await mcpCapabilities.executeMcpCapability(input);
+  assert.equal(JSON.parse(result.results[0].content).ok, true);
+  assert.deepEqual(state.usedMcpTools, [{ server: '本地文件', name: 'edit_file', readOnly: false, ok: true, preview: true }]);
+});
+
+test('MCP call summary distinguishes previews from writes', () => {
+  const markup = renderToStaticMarkup(createElement(AgentMcpDetailDock, {
+    tools: [
+      { server: '本地文件', name: 'edit_file', readOnly: false, ok: true, preview: true },
+      { server: '本地文件', name: 'write_file', readOnly: false, ok: true },
+    ],
+    Icon: () => null,
+    onClose: () => {},
+  }));
+  assert.match(markup, /预览/);
+  assert.match(markup, /预览完成/);
+  assert.match(markup, /写入/);
+  assert.match(markup, /已完成/);
+  assert.match(markup, /预览调用只返回差异，不会落盘/);
 });
 
 test('Windows-MCP stops immediately after user input takes control instead of polling for 30 seconds', async () => {

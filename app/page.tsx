@@ -108,6 +108,7 @@ import { appendTextReferenceContext, creativeReferenceUrl, normalizeCreativeRefe
 import { buildOneTakeVideoRequest, normalizeOneTakeDuration, ONE_TAKE_DEFAULT_DURATION } from '@/lib/one-take-video-duration';
 import { applyTheme, readStoredTheme, saveTheme, subscribeToThemeChanges } from '@/lib/theme';
 import AgentApprovalCard from '@/components/AgentApprovalCard';
+import { applyApprovalOutcomeToSession, mergeResolvedApprovalOutcomes, queueSessionMutation } from '@/lib/agent/approval-session';
 import WelcomeExperience, { WELCOME_SEEN_STORAGE_KEY } from '@/components/WelcomeExperience';
 import WorkspaceShell from '@/components/WorkspaceShell';
 import MainColumn from '@/components/MainColumn';
@@ -6577,6 +6578,9 @@ export default function Page() {
         setChatSessions((old)=>old.map((session)=>session.id === sessionId ? next : session));
         notify(next.persona ? '角色设定已保存' : '角色设定已清空');
     }
+    function queueChatSave(id, save) {
+        return queueSessionMutation(chatSaveQueuesRef.current, id, save);
+    }
     async function persistAgentSession(id, nextMessages) {
         const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending).map(({ pending: _pending, ...message })=>message));
         if (!storedMessages.length) return;
@@ -6593,20 +6597,23 @@ export default function Page() {
             persona: id === activeChatIdRef.current ? (agentPersonaRef.current || existing?.persona || agentPersonaDraft) : existing?.persona || '',
             memory: validConversationMemory(chatMemoryRef.current.get(id), storedMessages)
         };
-        const previous = chatSaveQueuesRef.current.get(id) || Promise.resolve();
-        const operation = previous.catch(()=>undefined).then(async ()=>{
-            await conversationRepository.save(session);
+        await queueChatSave(id, async ()=>{
+            const persisted = await conversationRepository.get(id);
+            const messages = mergeResolvedApprovalOutcomes(storedMessages, persisted?.messages || []);
+            const next = { ...session, messages, memory: validConversationMemory(chatMemoryRef.current.get(id), messages) };
+            await conversationRepository.save(next);
             setChatSessions((old)=>[
-                    session,
+                    next,
                     ...old.filter((item)=>item.id !== id)
                 ].sort((a, b)=>b.updatedAt - a.updatedAt));
+            const inFlight = pendingChatMessagesRef.current.get(id);
+            if (persisted && inFlight) {
+                pendingChatMessagesRef.current.set(id, mergeResolvedApprovalOutcomes(inFlight, persisted.messages));
+            }
+            if (activeChatIdRef.current === id && persisted) {
+                setMessages((current)=>mergeResolvedApprovalOutcomes(current, persisted.messages));
+            }
         });
-        chatSaveQueuesRef.current.set(id, operation);
-        try {
-            await operation;
-        } finally {
-            if (chatSaveQueuesRef.current.get(id) === operation) chatSaveQueuesRef.current.delete(id);
-        }
     }
     function setChatBusy(id, busy) {
         const next = new Set(busyChatIdsRef.current);
@@ -6762,9 +6769,7 @@ export default function Page() {
     async function deleteChatSessions(ids) {
         const selectedIds = new Set(ids.filter((id)=>!busyChatIdsRef.current.has(id)));
         if (!selectedIds.size) return;
-        await Promise.all([
-            ...selectedIds
-        ].map((id)=>conversationRepository.remove(id)));
+        await Promise.all([...selectedIds].map((id)=>queueChatSave(id, ()=>conversationRepository.remove(id))));
         const remaining = chatSessions.filter((item)=>!selectedIds.has(item.id));
         setChatSessions(remaining);
         for (const id of selectedIds)pendingChatMessagesRef.current.delete(id);
@@ -6869,7 +6874,7 @@ export default function Page() {
             pendingChatMessagesRef.current.set(sessionId, nextMessages);
             if (nextMessages.length) await persistAgentSession(sessionId, nextMessages);
             else {
-                await conversationRepository.remove(sessionId);
+                await queueChatSave(sessionId, ()=>conversationRepository.remove(sessionId));
                 pendingChatMessagesRef.current.delete(sessionId);
                 setChatSessions((old)=>old.filter((item)=>item.id !== sessionId));
                 if (activeChatIdRef.current === sessionId) {
@@ -7505,20 +7510,23 @@ export default function Page() {
             }
         }
     }
-    async function resolveAgentApprovalMessage(messageId, outcome) {
-        const activeId = activeChatIdRef.current;
-        const source = pendingChatMessagesRef.current.get(activeId) || messages;
-        const next = source.map((item)=>item.id === messageId ? {
-                ...item,
-                approval: undefined,
-                approvalResult: String(outcome && outcome.message ? outcome.message : (outcome && outcome.rejected ? '已取消这一步操作，没有执行。' : '已执行完成。')),
-                mcpTools: Array.isArray(outcome && outcome.mcpTools) && outcome.mcpTools.length ? [
-                    ...(item.mcpTools || []),
-                    ...outcome.mcpTools
-                ] : item.mcpTools
-            } : item);
-        if (activeChatIdRef.current === activeId) setMessages(next);
-        await persistAgentSession(activeId, next).catch(()=>undefined);
+    async function resolveAgentApprovalMessage(sessionId, message, outcome) {
+        await queueChatSave(sessionId, async ()=>{
+            const session = await conversationRepository.get(sessionId);
+            if (!session) return;
+            const updated = applyApprovalOutcomeToSession(session, message.id, outcome, Date.now(), message);
+            if (!updated) return;
+            await conversationRepository.save(updated);
+            setChatSessions((old)=>[
+                updated,
+                ...old.filter((item)=>item.id !== sessionId)
+            ].sort((a, b)=>b.updatedAt - a.updatedAt));
+            const inFlight = pendingChatMessagesRef.current.get(sessionId);
+            if (inFlight) pendingChatMessagesRef.current.set(sessionId, mergeResolvedApprovalOutcomes(inFlight, updated.messages));
+            if (activeChatIdRef.current === sessionId) {
+                setMessages((current)=>mergeResolvedApprovalOutcomes(current, updated.messages));
+            }
+        });
     }
     async function toggleFavorite(item) {
         await assetRepository.patchGallery(item.id, {
@@ -8948,10 +8956,12 @@ export default function Page() {
                                                                 }),
                                                                 message.role === 'assistant' && !message.pending && message.approval && /*#__PURE__*/ _jsx(AgentApprovalCard, {
                                                                     approval: message.approval,
-                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(message.id, outcome)
+                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(activeChatId, message, outcome)
                                                                 }),
                                                                 message.role === 'assistant' && !message.pending && message.approvalResult && /*#__PURE__*/ _jsx(AgentApprovalResult, {
-                                                                    message: message.approvalResult
+                                                                    message: message.approvalResult,
+                                                                    filesystemUndos: message.filesystemUndos,
+                                                                    onResolved: (outcome)=>resolveAgentApprovalMessage(activeChatId, message, outcome)
                                                                 }),
                                                                 message.references?.length ? /*#__PURE__*/ _jsx(AgentMessageReferences, {
                                                                     references: message.references,

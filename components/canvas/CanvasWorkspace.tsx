@@ -130,6 +130,7 @@ import {
   loadCanvasRuntime,
   preciselyTrimCanvasVideo,
   asDataUrl,
+  uploadCanvasProjectPackageImages,
   uploadCanvasAsset,
   type CanvasAgentTask,
 } from "@/lib/canvas/api";
@@ -147,7 +148,17 @@ import {
   takeCanvasStorageAutomaticCheckpointCleanupCount,
 } from "@/lib/canvas/storage";
 import { CanvasProjectSession } from "@/lib/canvas/project-session";
-import { parseCanvasProjectPackage, serializeCanvasProjectPackage } from "@/lib/canvas/project-package";
+import {
+  CANVAS_PROJECT_PACKAGE_MAX_EMBEDDED_IMAGE_BYTES,
+  CANVAS_PROJECT_PACKAGE_MAX_FILE_BYTES,
+  CANVAS_PROJECT_PACKAGE_MAX_IMAGE_BYTES,
+  canvasProjectPackageImageByteSize,
+  canvasProjectPackageFromDocument,
+  canvasProjectPackageImageUrls,
+  embedCanvasProjectPackageImages,
+  parseCanvasProjectPackage,
+  restoreCanvasProjectPackageImages,
+} from "@/lib/canvas/project-package";
 import { emitWorkspaceChange, registerWorkspaceDraft } from "@/lib/workspace-events";
 import { canvasSourceColorKey } from "@/lib/canvas/appearance";
 import { formatCanvasAudioDuration, formatCanvasVideoDuration } from "@/lib/canvas/media";
@@ -199,8 +210,10 @@ import {
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
 import {
-  createCanvasImageZip,
+  canvasGroupDownloadItems,
+  createCanvasMediaZip,
   orderCanvasImageItems,
+  type CanvasMediaDownloadItem,
 } from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
@@ -4737,43 +4750,126 @@ export default function SuperCanvas() {
     addLog("已导出工作流 JSON");
     notify("工作流已导出");
   }, [addLog, currentProject?.name, document, notify]);
-  const exportProjectPackage = useCallback(() => {
+  const exportProjectPackage = useCallback(async () => {
     const currentCreativeProject = creativeProjects.find((project) => project.id === currentProject?.projectId);
     const currentBrief = currentCreativeProject?.brief;
-    const content = serializeCanvasProjectPackage({
-      name: currentProject?.name || "SANMAO 无限画布",
-      projectId: currentProject?.projectId,
-      brief: currentBrief,
-      referenceAssetIds: currentCreativeProject?.referenceAssetIds,
-      versions: projectVersions.map((version) => ({
-        id: version.id,
-        canvasId: version.canvasId,
-        label: version.label,
-        createdAt: version.createdAt,
-        ...(version.parentVersionId ? { parentVersionId: version.parentVersionId } : {}),
-        ...(Object.prototype.hasOwnProperty.call(version, "brief") ? { brief: version.brief } : {}),
-        ...(Object.prototype.hasOwnProperty.call(version, "referenceAssetIds") ? { referenceAssetIds: version.referenceAssetIds } : {}),
-        snapshot: version.snapshot,
-      })),
-      document,
-    });
-    const blob = new Blob([content], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = window.document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${currentProject?.name || "SANMAO项目"}-项目包.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-    addLog("已导出项目包 JSON");
-    notify("项目包已导出，包含项目设定与素材来源索引");
+    try {
+      const packageValue = canvasProjectPackageFromDocument({
+        name: currentProject?.name || "SANMAO 无限画布",
+        projectId: currentProject?.projectId,
+        brief: currentBrief,
+        referenceAssetIds: currentCreativeProject?.referenceAssetIds,
+        versions: projectVersions.map((version) => ({
+          id: version.id,
+          canvasId: version.canvasId,
+          label: version.label,
+          createdAt: version.createdAt,
+          ...(version.parentVersionId ? { parentVersionId: version.parentVersionId } : {}),
+          ...(Object.prototype.hasOwnProperty.call(version, "brief") ? { brief: version.brief } : {}),
+          ...(Object.prototype.hasOwnProperty.call(version, "referenceAssetIds") ? { referenceAssetIds: version.referenceAssetIds } : {}),
+          snapshot: version.snapshot,
+        })),
+        document,
+      });
+      const images = [] as Array<{ id: string; name: string; dataUrl: string; sourceUrl: string }>;
+      let embeddedBytes = 0;
+      for (const [index, sourceUrl] of canvasProjectPackageImageUrls(packageValue).entries()) {
+        const manifest = packageValue.assets.find((asset) => asset.url === sourceUrl);
+        let dataUrl = "";
+        try {
+          dataUrl = await asDataUrl(sourceUrl);
+        } catch {
+          if (/^https?:\/\//i.test(sourceUrl)) {
+            const archived = await archiveCanvasImages([sourceUrl]);
+            const localUrl = archived.get(sourceUrl);
+            if (localUrl) dataUrl = await asDataUrl(localUrl);
+          }
+        }
+        if (!/^data:image\/(?:png|jpeg|webp|gif|bmp|svg\+xml);base64,[a-z0-9+/=\s]+$/i.test(dataUrl)) {
+          throw new Error(`图片“${manifest?.name || `素材 ${index + 1}`}”无法读取，项目包未导出。请先确认这张图仍可预览。`);
+        }
+        const imageBytes = canvasProjectPackageImageByteSize(dataUrl);
+        if (imageBytes === null || imageBytes <= 0 || imageBytes > CANVAS_PROJECT_PACKAGE_MAX_IMAGE_BYTES) {
+          throw new Error(`图片“${manifest?.name || `素材 ${index + 1}`}”超过 100MB 或数据格式无效，项目包未导出。`);
+        }
+        embeddedBytes += imageBytes;
+        if (embeddedBytes > CANVAS_PROJECT_PACKAGE_MAX_EMBEDDED_IMAGE_BYTES) {
+          throw new Error("项目图片本体总量超过 256MB，未生成不完整项目包。请先移除不需要交接的图片后重试。");
+        }
+        images.push({ id: `image-${index + 1}`, name: manifest?.name || `素材 ${index + 1}`, sourceUrl, dataUrl });
+      }
+      const portablePackage = embedCanvasProjectPackageImages(packageValue, images);
+      const content = JSON.stringify(portablePackage, null, 2);
+      const blob = new Blob([content], { type: "application/json" });
+      if (blob.size > CANVAS_PROJECT_PACKAGE_MAX_FILE_BYTES) {
+        throw new Error("项目包生成后超过 384MB，未导出不完整文件。请先移除不需要交接的素材后重试。");
+      }
+      const url = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${currentProject?.name || "SANMAO项目"}-项目包.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      addLog("已导出便携项目包 JSON");
+      notify(`项目包已导出，已打包 ${images.length} 张图片${projectVersions.length ? `及 ${projectVersions.length} 个版本` : ""}`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "项目包导出失败，未生成文件。", "error");
+    }
   }, [addLog, creativeProjects, currentProject?.name, currentProject?.projectId, document, notify, projectVersions]);
   const importWorkflow = useCallback(
     async (file: File) => {
       const projectTask = captureProjectTask();
       const { commit } = projectTask;
       try {
+        if (file.size > CANVAS_PROJECT_PACKAGE_MAX_FILE_BYTES)
+          throw new Error("项目包超过 384MB，无法安全导入。请确认文件完整并移除不需要的素材后重试。");
         const payload: unknown = JSON.parse(await file.text());
-        const projectPackage = parseCanvasProjectPackage(payload);
+        let projectPackage = parseCanvasProjectPackage(payload);
+        if (!projectPackage && payload && typeof payload === "object" && "schema" in payload
+          && payload.schema === "sanmao.canvas.project") {
+          throw new Error("项目包损坏或图片数据不完整，未导入任何画布内容。请重新从原电脑导出项目包。");
+        }
+        if (projectPackage) {
+          if (!projectPackage.embeddedImages?.length) {
+            const sourceUrls = canvasProjectPackageImageUrls(projectPackage);
+            const legacyImages: Array<{ id: string; name: string; sourceUrl: string; dataUrl: string }> = [];
+            let legacyImageBytes = 0;
+            for (const [index, sourceUrl] of sourceUrls.entries()) {
+              let dataUrl = sourceUrl;
+              if (!/^data:image\//i.test(sourceUrl)) {
+                let isCurrentMachineStorage = false;
+                try {
+                  const parsedUrl = new URL(sourceUrl, window.location.origin);
+                  isCurrentMachineStorage = parsedUrl.origin === window.location.origin
+                    || ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsedUrl.hostname.toLowerCase());
+                } catch { /* the actionable legacy-package error below explains the missing source */ }
+                if (!isCurrentMachineStorage) {
+                  throw new Error("这个旧版项目包只保存了图片地址，没有包含图片本体。请在原电脑打开原项目，用新版重新导出后再导入；旧包无法在另一台电脑恢复图片。");
+                }
+                try {
+                  dataUrl = await asDataUrl(sourceUrl);
+                } catch {
+                  throw new Error(`旧版项目包中的图片 ${index + 1} 在当前电脑也无法读取。请回原电脑重新导出；旧包本身不含图片数据。`);
+                }
+              }
+              const imageBytes = canvasProjectPackageImageByteSize(dataUrl);
+              if (!/^data:image\/(?:png|jpeg|webp|gif|bmp|svg\+xml);base64,/i.test(dataUrl)
+                || imageBytes === null || imageBytes <= 0 || imageBytes > CANVAS_PROJECT_PACKAGE_MAX_IMAGE_BYTES) {
+                throw new Error(`旧版项目包图片 ${index + 1} 数据无效或超过 100MB，未导入画布。`);
+              }
+              legacyImageBytes += imageBytes;
+              if (legacyImageBytes > CANVAS_PROJECT_PACKAGE_MAX_EMBEDDED_IMAGE_BYTES)
+                throw new Error("旧版项目包图片总量超过 256MB，未导入画布。");
+              const manifest = projectPackage.assets.find((asset) => asset.url === sourceUrl);
+              legacyImages.push({ id: `legacy-image-${index + 1}`, name: manifest?.name || `项目图片 ${index + 1}`, sourceUrl, dataUrl });
+            }
+            if (legacyImages.length) projectPackage = embedCanvasProjectPackageImages(projectPackage, legacyImages);
+          }
+          if (projectPackage.embeddedImages?.length) {
+            const uploads = await uploadCanvasProjectPackageImages(projectPackage.embeddedImages);
+            projectPackage = restoreCanvasProjectPackageImages(projectPackage, uploads);
+          }
+        }
         const next = normalizeDocument(projectPackage?.document || payload);
         if (!await commit(() => next)) return;
         let importedBrief = false;
@@ -12327,26 +12423,26 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "分享版下载失败", "error");
     }
   }, [notify]);
-  const downloadSelectedImages = useCallback(async (groupItems?: typeof selectedImageDownloads) => {
-    const downloadItems = groupItems ?? selectedImageDownloads;
+  const downloadSelectedImages = useCallback(async (groupItems?: CanvasMediaDownloadItem[]) => {
+    const downloadItems: CanvasMediaDownloadItem[] = groupItems ?? selectedImageDownloads.map((item) => ({ ...item, kind: "image" }));
     if (!downloadItems.length || batchDownloading) return;
     setBatchDownloading(true);
     try {
-      const { blob } = await createCanvasImageZip(downloadItems);
+      const { blob } = await createCanvasMediaZip(downloadItems);
       const objectUrl = URL.createObjectURL(blob);
       const anchor = window.document.createElement("a");
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       anchor.href = objectUrl;
-      anchor.download = `SANMAO-画布图片-${stamp}.zip`;
+      anchor.download = `SANMAO-画布素材-${stamp}.zip`;
       anchor.rel = "noreferrer";
       anchor.style.display = "none";
       window.document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-      notify(`已开始下载 ${downloadItems.length} 张图片`);
+      notify(`已开始下载 ${downloadItems.length} 个素材`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "批量下载图片失败", "error");
+      notify(error instanceof Error ? error.message : "批量下载素材失败", "error");
     } finally {
       setBatchDownloading(false);
     }
@@ -13436,12 +13532,8 @@ export default function SuperCanvas() {
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
-    const groupImages = groupNodes(document, group.id).filter(
-      (node) =>
-        isCanvasReferenceableNode(node) &&
-        node.data.kind === "image" &&
-        Boolean(node.data.url),
-    );
+    const groupDownloads = canvasGroupDownloadItems(groupNodes(document, group.id));
+    const groupImages = groupDownloads.filter((item) => item.kind === "image");
     const layerActions: CanvasQuickAction[] = [
       {
         id: "bring-to-front",
@@ -13538,11 +13630,9 @@ export default function SuperCanvas() {
               id: "download-group",
               icon: "download",
               label: "批量下载",
-              title: "按组内顺序打包下载图片",
-              disabled: !groupImages.length || batchDownloading,
-              onClick: () => void downloadSelectedImages(groupImages.map((node) => ({
-                id: node.id, name: String(node.data.name || "图片"), url: String(node.data.url),
-              }))),
+              title: "按组内顺序打包下载图片和视频",
+              disabled: !groupDownloads.length || batchDownloading,
+              onClick: () => void downloadSelectedImages(groupDownloads),
             },
           ],
         },

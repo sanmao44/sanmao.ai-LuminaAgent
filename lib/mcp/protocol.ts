@@ -102,7 +102,15 @@ export function resultText(result: any) {
   }
   if (result?.structuredContent !== undefined) {
     try {
-      parts.push(JSON.stringify(result.structuredContent));
+      const structured = result.structuredContent;
+      const renderedContent = parts.join('\n').trim();
+      const isContentWrapper = structured
+        && typeof structured === 'object'
+        && !Array.isArray(structured)
+        && Object.keys(structured).length === 1
+        && typeof structured.content === 'string'
+        && structured.content.trim() === renderedContent;
+      if (!isContentWrapper) parts.push(JSON.stringify(structured));
     } catch {}
   }
   const text = parts.join('\n').trim();

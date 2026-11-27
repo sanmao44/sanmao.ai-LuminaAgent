@@ -201,6 +201,10 @@ test('识别浏览器连续操作请求，并排除普通联网搜索', () => {
   assert.ok(chainedNavigation.steps.includes('navigate'));
   assert.ok(chainedNavigation.steps.includes('interact'));
 
+  const chineseChainNavigation = web.classifyBrowserAutomation('打开 https://example.com/foo.ts 并搜索 issue');
+  assert.equal(chineseChainNavigation.shouldAutomate, true);
+  assert.equal(chineseChainNavigation.destination, 'https://example.com/foo.ts');
+
   for (const input of ['Can you open bilibili?', 'How do I open bilibili?', 'Search for the latest OpenAI API version']) {
     assert.equal(web.likelyBrowserAutomationRequest(input), false, input);
   }
@@ -217,6 +221,13 @@ test('Windows 系统控制目标优先于未限定的浏览器导航', () => {
   assert.equal(web.classifyBrowserAutomation('打开 bilibili').shouldAutomate, true);
 });
 
+test('does not treat positive file reminders as delivery prohibitions', () => {
+  for (const input of ['不要忘了生成一个 JSON 文件', '别忘了创建附件']) {
+    assert.equal(web.prohibitsFileDelivery(input), false, input);
+    assert.equal(web.likelyFileGenerationRequest(input), true, input);
+  }
+});
+
 test('识别本地文件和项目操作请求', () => {
   for (const input of [
     '请读取我授权的项目文件夹，列出目录结构',
@@ -224,6 +235,7 @@ test('识别本地文件和项目操作请求', () => {
     '搜索项目里的 API Key 配置',
     '修改项目首页标题',
     '查看工作区里的 package.json',
+    'update.json 里 sha256 校验失败的完整调用链在哪？给出文件路径、行号和对应代码原文',
   ]) {
     assert.equal(web.likelyFilesystemRequest(input), true, input);
   }

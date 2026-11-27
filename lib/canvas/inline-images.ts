@@ -1,6 +1,6 @@
 import type { CanvasNode } from './types';
 
-const CANVAS_INLINE_IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp);base64,/i;
+const CANVAS_INLINE_IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|webp|gif|bmp|svg\+xml);base64,/i;
 
 export function canvasInlineImageUrls(nodes: readonly CanvasNode[]) {
   const urls = new Set<string>();

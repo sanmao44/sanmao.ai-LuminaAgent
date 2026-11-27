@@ -23,12 +23,12 @@ export default function AgentMcpDetailDock({ tools, Icon, onClose }: AgentMcpDet
             <li className={tool.ok ? 'is-ok' : 'is-failed'} key={`mcp-${index}`}>
               <b>{tool.server}</b>
               <code>{tool.name}</code>
-              <span className="message-mcp-detail-tag">{tool.readOnly ? '只读' : '写入'}</span>
-              <span className="message-mcp-detail-state">{tool.ok ? '已完成' : '失败'}</span>
+              <span className="message-mcp-detail-tag">{tool.preview ? '预览' : tool.readOnly ? '只读' : '写入'}</span>
+              <span className="message-mcp-detail-state">{tool.preview ? (tool.ok ? '预览完成' : '预览失败') : tool.ok ? '已完成' : '失败'}</span>
             </li>
           ))}
         </ul>
-        <small className="message-mcp-detail-note">写入类操作要先经你确认才会执行；被拒绝的调用不计入这里。</small>
+        <small className="message-mcp-detail-note">预览调用只返回差异，不会落盘；实际写入按 MCP 写入权限与审批策略执行。</small>
       </div>
     </section>
   );

@@ -96,6 +96,65 @@ test('stdio：超长结果截断并说明，不把 9000 字灌进上下文', asy
   mcp.closeStdioServer('big');
 });
 
+test('local Filesystem returns exact numbered source lines beyond the regular MCP text limit', async () => {
+  const server = stdioServer({ id: 'filesystem-lines', catalogId: 'filesystem', env: { MCP_FIXTURE_FILE_LINES: '1' } });
+  try {
+    const [tool] = mcp.mcpToolDefinitions(server, [{
+      name: 'read_text_file', annotations: { readOnlyHint: true },
+      inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    }]);
+    assert.deepEqual(tool.schema.required, ['path']);
+    assert.equal(tool.schema.properties.startLine.type, 'integer');
+    assert.equal(tool.schema.properties.endLine.type, 'integer');
+    assert.equal(tool.schema.properties.findText.type, 'string');
+    const raw = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts' });
+    assert.equal(raw.isError, false);
+    assert.match(raw.text, /结果过长已截断/);
+    const required = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', startLine: 275, endLine: 276 });
+    assert.equal(required.isError, false);
+    assert.deepEqual(required.text.split('\n'), [275, 276].map((line) => `${line}:   const line${line} = '${'x'.repeat(80)}';`));
+    const found = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', findText: 'LINE275 ' });
+    assert.equal(found.isError, false);
+    assert.deepEqual(found.text.split('\n'), [273, 274, 275, 276, 277].map((line) => `${line}:   const line${line} = '${'x'.repeat(80)}';`));
+    const notFound = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', findText: 'not-in-fixture' });
+    assert.deepEqual(notFound, { isError: false, text: '没有找到指定文本。', fileTextEvidence: false });
+    const mixed = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', findText: 'line275', startLine: 1, endLine: 2 });
+    assert.equal(mixed.isError, true);
+    const last = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', startLine: 280, endLine: 280 });
+    assert.deepEqual(last, { isError: false, text: `280:   const line280 = '${'x'.repeat(80)}';\n（已到文件末尾。）` });
+    const outside = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', startLine: 281, endLine: 281 });
+    assert.equal(outside.isError, true);
+    assert.match(outside.text, /没有可引用的行/);
+    const oversized = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', startLine: 101, endLine: 200 });
+    assert.match(oversized.text, /结果长度达到上限/);
+    assert.ok(oversized.text.length < 4200);
+    const invalid = await mcp.callMcpTool(server, 'read_text_file', { path: 'source.ts', startLine: 101, endLine: 201 });
+    assert.equal(invalid.isError, true);
+    assert.equal(invalid.errorCode, 'FILESYSTEM_INVALID_TEXT_RANGE');
+    const missing = await mcp.callMcpTool(server, 'read_text_file', { path: 'missing.ts', startLine: 1, endLine: 2 });
+    assert.deepEqual(missing, { isError: true, text: 'ENOENT: file unavailable' });
+  } finally {
+    mcp.closeStdioServer('filesystem-lines');
+  }
+});
+
+test('local Filesystem text search returns complete hits before spending its budget on context', async () => {
+  const server = stdioServer({ id: 'filesystem-wide-lines', catalogId: 'filesystem', env: { MCP_FIXTURE_FILE_LINES: '1' } });
+  try {
+    const result = await mcp.callMcpTool(server, 'read_text_file', { path: 'wide-source.ts', findText: 'needle' });
+    const lines = result.text.split('\n');
+    assert.equal(result.isError, false);
+    assert.deepEqual(lines.filter((line) => /^\d+: /.test(line)), [
+      '2:   const needleA = 1;',
+      '5:   // nearby context',
+      '6:   const needleB = 222222222222;',
+    ]);
+    assert.match(lines.at(-1), /第 4 行/);
+  } finally {
+    mcp.closeStdioServer('filesystem-wide-lines');
+  }
+});
+
 test('stdio：同一个服务复用同一个进程', async () => {
   const server = stdioServer({ id: 'reuse' });
   await mcp.callMcpTool(server, 'ping', {});

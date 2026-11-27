@@ -4,7 +4,7 @@ import path from 'node:path';
 const nextConfig: NextConfig = {
   distDir: process.env.SANMAO_QA_DIST_DIR || '.next',
   reactStrictMode: true,
-  serverExternalPackages: ['@anthropic-ai/claude-agent-sdk'],
+  serverExternalPackages: ['@anthropic-ai/claude-agent-sdk', '@huggingface/transformers'],
   outputFileTracingRoot: path.resolve(process.cwd()),
   outputFileTracingIncludes: {
     '/api/canvas/video-trim': ['./node_modules/ffmpeg-static/ffmpeg*'],

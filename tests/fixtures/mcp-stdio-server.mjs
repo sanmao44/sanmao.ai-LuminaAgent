@@ -75,6 +75,23 @@ function handle(message) {
     return reply(id, { result: next ? { tools: page, nextCursor: next } : { tools: page } });
   }
   if (message?.method === 'tools/call') {
+    if (process.env.MCP_FIXTURE_FILE_LINES === '1' && message.params.name === 'read_text_file') {
+      const args = message.params.arguments;
+      const wide = args.path === 'wide-source.ts';
+      if ((!wide && args.path !== 'source.ts') || args.startLine !== undefined || args.endLine !== undefined || args.findText !== undefined) {
+        return reply(id, { result: { isError: true, content: [{ type: 'text', text: 'ENOENT: file unavailable' }] } });
+      }
+      const source = wide ? [
+        'x'.repeat(3950),
+        '  const needleA = 1;',
+        'y'.repeat(4200),
+        `  const needleTooLong = '${'z'.repeat(4200)}';`,
+        '  // nearby context',
+        '  const needleB = 222222222222;',
+      ] : Array.from({ length: 280 }, (_, index) => `  const line${index + 1} = '${'x'.repeat(80)}';`);
+      const content = source.slice(0, args.head).map((line) => `${line}\r`).join('\n');
+      return reply(id, { result: { content: [{ type: 'text', text: content }], structuredContent: { content } } });
+    }
     if (process.env.MCP_FIXTURE_BROWSER === '1') {
       if (message.params.name === 'browser_snapshot') return reply(id, { result: { content: [{type:'text',text:'### Snapshot\n- generic [ref=e1]: 评论'}] } });
       if (message.params.name === 'browser_evaluate') return reply(id, { result: { content: [{type:'text',text:'### Result '+JSON.stringify({sanmaoEditors:[{target:'custom-editor div#editor',tag:'div',contenteditable:true,label:'评论',shadowHost:'custom-editor'}]})}] } });

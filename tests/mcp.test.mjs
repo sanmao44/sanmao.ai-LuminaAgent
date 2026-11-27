@@ -145,6 +145,41 @@ test('客户端完成握手、翻页列工具，并在调用后带回会话 id',
   assert.equal(probe.readOnly, 1);
 });
 
+test('MCP structuredContent removes only an exact text-content wrapper', async () => {
+  mcp.resetMcpSessions();
+  const body = 'source text that should appear once';
+  let toolResult = {
+    content: [{ type: 'text', text: body }],
+    structuredContent: { content: body },
+  };
+  const fetchImpl = async (_url, init) => {
+    const payload = JSON.parse(String(init.body));
+    if (payload.method === 'initialize') return jsonRpc(payload.id, { protocolVersion: mcp.MCP_PROTOCOL_VERSION });
+    if (payload.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (payload.method === 'tools/call') return jsonRpc(payload.id, toolResult);
+    throw new Error('unexpected method ' + payload.method);
+  };
+
+  const server = serverConfig({ id: 'structured-duplicate' });
+  const call = await mcp.callMcpTool(server, 'read_text_file', { path: 'C:\\Temp\\source.ts' }, { fetchImpl });
+  assert.equal(call.isError, false);
+  assert.equal(call.text, body);
+
+  toolResult = {
+    content: [{ type: 'text', text: body }],
+    structuredContent: { content: body, id: 'source-1' },
+  };
+  const additionalFields = await mcp.callMcpTool(server, 'read_text_file', { path: 'C:\\Temp\\source.ts' }, { fetchImpl });
+  assert.equal(additionalFields.text, body + '\n' + JSON.stringify(toolResult.structuredContent));
+
+  toolResult = {
+    content: [{ type: 'text', text: body }, { type: 'text', text: 'second item' }],
+    structuredContent: { content: body },
+  };
+  const multipleItems = await mcp.callMcpTool(server, 'read_text_file', { path: 'C:\\Temp\\source.ts' }, { fetchImpl });
+  assert.equal(multipleItems.text, body + '\nsecond item\n' + JSON.stringify(toolResult.structuredContent));
+  mcp.resetMcpSessions();
+});
 test('协议版本对不上只记录不报错，后续请求按协商结果走', async () => {
   mcp.resetMcpSessions();
   const seen = [];
@@ -317,6 +352,17 @@ test('远程工具翻译成注册表条目：命名带前缀、权限由 annotat
 
   const selected = mcp.mcpToolDefinitions(serverConfig({ enabledTools: ['create_issue'] }), [READ_TOOL, WRITE_TOOL]);
   assert.deepEqual(selected.map((tool) => tool.name), ['gh__create_issue'], '只放行用户勾选的工具');
+});
+
+test('Filesystem stdio 在上游工具表没有全文搜索时补充受控 search_text', () => {
+  const server = serverConfig({ id: 'filesystem', name: '本地文件', catalogId: 'filesystem', transport: 'stdio', url: 'stdio://filesystem' });
+  const definitions = mcp.mcpToolDefinitions(server, [{ name: 'read_text_file', inputSchema: { type: 'object', properties: { path: { type: 'string' } } }, annotations: { readOnlyHint: true } }]);
+  const search = definitions.find((tool) => tool.name === 'filesystem__search_text');
+  assert.ok(search);
+  assert.equal(search.mcp.readOnly, true);
+  assert.equal(search.mcp.blocked, false);
+  assert.deepEqual(search.schema.required, ['path', 'query']);
+  assert.equal(definitions.filter((tool) => tool.name === 'filesystem__search_text').length, 1);
 });
 
 test('统一执行点：未知工具、本轮没下发的工具、未授权写入都拒绝', () => {

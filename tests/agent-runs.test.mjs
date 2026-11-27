@@ -12,6 +12,7 @@ const page = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8')
 const { ToolRuntime } = await buildToolRuntimeModule();
 const { streamAgentResult } = createTsRequire(process.cwd())('./apps/api/agent-stream');
 
+
 test('风险调用不当场执行，而是整批延后等确认', async () => {
 
   // MCP 调用先过本机一侧的路径检查（Filesystem、上传来源），再进审批判定。
@@ -59,6 +60,8 @@ test('续跑接口只认 approve / reject，执行哪个调用由服务端记录
   // 请求体里没有任何字段能影响「执行什么」：前端伪造不出一个调用。
   assert.doesNotMatch(resume, /input\.calls|input\.tool|input\.args/);
   assert.match(runRoute, /action: \(body as \{ action\?: unknown \}\)\?\.action/);
+  assert.match(runRoute, /allowLocalProjectTypecheck: true/);
+  assert.match(runRoute, /AbortSignal\.any\(\[request\.signal/);
   assert.match(runRoute, /isTrustedAppRequest\(request\)/);
   assert.match(runRoute, /beginRuntimeRequest\('agent'\)/);
 });
@@ -105,8 +108,8 @@ test('消息上的待确认卡片会随结果定稿，刷新后不再重复弹�
   assert.match(page, /import AgentApprovalCard from '@\/components\/AgentApprovalCard';/);
   assert.match(page, /approval: data\.approval \|\| undefined,/);
   assert.match(page, /_jsx\(AgentApprovalCard, \{/);
-  assert.match(page, /async function resolveAgentApprovalMessage\(messageId, outcome\)/);
-  assert.match(page, /approvalResult: String\(/);
+  // Session-bound approval resolution and persistence are covered by agent-approval-session.test.mjs.
+  assert.match(page, /applyApprovalOutcomeToSession/);
   assert.match(page, /import AgentApprovalResult from '@\/components\/AgentApprovalResult';/);
 });
 

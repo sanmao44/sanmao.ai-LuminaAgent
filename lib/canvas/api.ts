@@ -610,6 +610,53 @@ export async function uploadCanvasAsset(file: File) {
   };
 }
 
+/** Store a portable project image on this machine without re-encoding its original bytes. */
+export async function uploadCanvasProjectPackageImages(
+  images: ReadonlyArray<{ id: string; dataUrl: string }>,
+) {
+  const prepared: Array<{ id: string; blob: Blob; extension: string }> = [];
+  for (const image of images) {
+    const response = await fetch(image.dataUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`项目包图片 ${image.id} 无法解码。`);
+    const blob = await response.blob();
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const mime = blob.type.toLowerCase();
+    const hasSignature = (offset: number, ...signature: number[]) => signature.every((value, index) => bytes[offset + index] === value);
+    const matchesMime = mime === "image/png" ? hasSignature(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+      : mime === "image/jpeg" ? hasSignature(0, 0xff, 0xd8, 0xff)
+        : mime === "image/webp" ? hasSignature(0, 0x52, 0x49, 0x46, 0x46) && hasSignature(8, 0x57, 0x45, 0x42, 0x50) && bytes.length >= 12
+          : mime === "image/gif" ? hasSignature(0, 0x47, 0x49, 0x46, 0x38) && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+            : mime === "image/bmp" ? hasSignature(0, 0x42, 0x4d)
+              : mime === "image/svg+xml" ? /<svg(?:\s|>)/i.test(new TextDecoder().decode(bytes.subarray(0, 64 * 1024)))
+                : false;
+    if (!matchesMime || blob.size <= 0)
+      throw new Error(`项目包图片 ${image.id} 的 MIME 类型与文件内容不匹配。`);
+    if (blob.size > 100 * 1024 * 1024)
+      throw new Error(`项目包图片 ${image.id} 超过 100MB，无法导入。`);
+    const extension = mime === "image/jpeg" ? "jpg"
+      : mime === "image/webp" ? "webp"
+        : mime === "image/gif" ? "gif"
+          : mime === "image/bmp" ? "bmp"
+            : mime === "image/svg+xml" ? "svg" : "png";
+    prepared.push({ id: image.id, blob, extension });
+  }
+
+  const uploaded = new Map<string, { url: string; storageKey?: string }>();
+  for (const image of prepared) {
+    const asset = await request<CanvasAsset>("/api/canvas/assets", {
+      method: "POST",
+      headers: {
+        "Content-Type": image.blob.type,
+        "X-File-Name": encodeURIComponent(`project-image-${image.id}.${image.extension}`),
+      },
+      body: image.blob,
+    });
+    if (!asset.url) throw new Error(`项目包图片 ${image.id} 上传后没有返回本机地址。`);
+    uploaded.set(image.id, { url: asset.url, ...(asset.storageKey ? { storageKey: asset.storageKey } : {}) });
+  }
+  return uploaded;
+}
+
 export async function preciselyTrimCanvasVideo(
   file: File,
   clip: { startTime: number; endTime: number; playbackRate: number; muted: boolean },
