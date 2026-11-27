@@ -2,10 +2,12 @@ import { finishGenerationLog, startGenerationLog } from './generation-log';
 import { getPublicState, getProviderWithKey, getRuntimeVideoModel, markProviderCredentialFailure } from './store';
 import { persistGeneratedVideos } from './video-storage';
 import { reviewStoredVideoArtifact } from './creative-review/video';
+import { reviewCreativeVisualsLocally } from './creative-review/local-vision';
 import { resolveFfmpeg } from './video-trim-service';
 import { canRecoverVideoTaskResult, claimFailedVideoTaskRetry, claimVideoTaskSubmission, createVideoTask, findVideoTask, releaseFailedVideoTaskRetry, resumeVideoTaskResultRecovery, updateActiveVideoTask, updateVideoTask, VIDEO_TASK_SUBMISSION_TIMEOUT_MS, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
+import type { CreativeReviewReport } from '@/packages/contracts/creative-review';
 import { getVideoModelLimits, getVideoModelLimitsForInput, VIDEO_INPUT_SAFETY_LIMITS } from './video-model-limits';
 import { validateCangyuanVideoInput } from './cangyuan-video-capabilities';
 import { usesCangyuanVideoProtocol } from './cangyuan-provider';
@@ -263,6 +265,8 @@ async function applyProviderUpdate(id: string, patch: Partial<VideoTask>) {
   return await updateActiveVideoTask(id, patch) || await findVideoTask(id);
 }
 
+const videoReviewControllers = new Map<string, AbortController>();
+
 async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const state = await getPublicState();
   const shouldNormalizeAspect = /agnes-video-2\.5/i.test(task.providerModel || '');
@@ -287,15 +291,24 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
   if (stored.videos.length) {
     try { ffmpegPath = (await resolveFfmpeg()).command; } catch { /* A missing decoder is recorded as unknown by the reviewer. */ }
   }
-  const creativeReview = await Promise.all(result.videos.map((video, index) => reviewStoredVideoArtifact({
-    artifactRef: task.id + ':' + String(index + 1),
-    storedRef: stored.videos[index]?.url || video.url,
-    storagePath: stored.path,
-    brief: task.input.prompt,
-    expectedAspectRatio: task.input.aspectRatio,
-    expectedDurationSeconds: task.input.seconds,
-    ffmpegPath,
-  })));
+  const reviewController = new AbortController();
+  videoReviewControllers.set(task.id, reviewController);
+  let creativeReview: CreativeReviewReport[];
+  try {
+    creativeReview = await Promise.all(result.videos.map((video, index) => reviewStoredVideoArtifact({
+      artifactRef: task.id + ':' + String(index + 1),
+      storedRef: stored.videos[index]?.url || video.url,
+      storagePath: stored.path,
+      brief: task.input.prompt,
+      expectedAspectRatio: task.input.aspectRatio,
+      expectedDurationSeconds: task.input.seconds,
+      visualReviewer: reviewCreativeVisualsLocally,
+      signal: reviewController.signal,
+      ffmpegPath,
+    })));
+  } finally {
+    if (videoReviewControllers.get(task.id) === reviewController) videoReviewControllers.delete(task.id);
+  }
   const completedAt = new Date().toISOString();
   const updated = await updateActiveVideoTask(task.id, {
     status: 'done',
@@ -641,6 +654,7 @@ export async function cancelVideoTask(id: string) {
   if (!task) return null;
   if (!videoTaskRuntime.canCancel(task.status)) return task;
   const cancelledAt = new Date().toISOString();
+  videoReviewControllers.get(id)?.abort();
   const updated = await updateVideoTask(id, { status: 'cancelled', cancelledAt, completedAt: cancelledAt, nextPollAt: undefined });
   await finishGenerationLog(id, { status: 'error', durationMs: Date.now() - new Date(task.createdAt).getTime(), error: '用户已取消', errorCode: 'CANCELLED' }).catch(() => undefined);
   return updated;

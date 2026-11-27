@@ -102,7 +102,7 @@ function previousReport(manifest, manifestSha256, fingerprint) {
   return {
     formatVersion: 1,
     runId: 'R1',
-    evaluator: 'creative-review-p1-structure',
+    evaluator: 'creative-review-p1-qwen3.5-0.8b-onnx',
     evaluatorFingerprint: fingerprint,
     manifestSha256,
     sampleCount: 20,
@@ -117,18 +117,21 @@ test('passes the exact original brief to both image and video reviewers', async 
   const imageSample = { ...manifest.samples[0], brief };
   const videoSample = { ...manifest.samples[10], brief };
   const calls = [];
+  const visualReviewer = async () => ({ status: 'unknown' });
   const report = { capability: { status: 'unknown' }, safety: { status: 'unknown' } };
   const dependencies = {
     imageReviewer: { reviewImageArtifact: async (input) => { calls.push({ mediaKind: 'image', ...input }); return report; } },
     videoReviewer: { reviewStoredVideoArtifact: async (input) => { calls.push({ mediaKind: 'video', ...input }); return report; } },
     mediaRoot: 'sample-media',
     ffmpegPath: 'ffmpeg',
+    visualReviewer,
   };
 
   await evaluator.reviewSample(imageSample, dependencies);
   await evaluator.reviewSample(videoSample, dependencies);
 
   assert.deepEqual(calls.map((call) => [call.mediaKind, call.brief]), [['image', brief], ['video', brief]]);
+  assert.ok(calls.every((call) => call.visualReviewer === visualReviewer));
 });
 
 test('includes video signal thresholds in the R1/R2 evaluator fingerprint inputs', () => {

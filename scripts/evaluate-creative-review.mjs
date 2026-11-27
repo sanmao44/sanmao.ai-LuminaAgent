@@ -8,7 +8,7 @@ import { buildLibModules } from '../tests/lib-build.mjs';
 
 const MINIMUM_SAMPLES = 20;
 const MINIMUM_PER_LABEL_AND_MEDIA = 2;
-const EVALUATOR_ID = 'creative-review-p1-structure';
+const EVALUATOR_ID = 'creative-review-p1-qwen3.5-0.8b-onnx';
 export const REVIEWER_SOURCE_FILES = Object.freeze([
   'package.json',
   'package-lock.json',
@@ -19,6 +19,7 @@ export const REVIEWER_SOURCE_FILES = Object.freeze([
   'lib/creative-review/video.ts',
   'lib/creative-review/video-signal-diagnostics.ts',
   'lib/creative-review/visual-evidence.ts',
+  'lib/creative-review/local-vision.ts',
   'lib/creative-review/benchmark.ts',
   'tests/lib-build.mjs',
 ]);
@@ -123,7 +124,7 @@ export function validatePreviousReport(previous, manifest, manifestSha256, finge
   }
 }
 
-export async function reviewSample(sample, { imageReviewer, videoReviewer, mediaRoot, ffmpegPath }) {
+export async function reviewSample(sample, { imageReviewer, videoReviewer, mediaRoot, ffmpegPath, visualReviewer }) {
   const artifactRef = sample.mediaKind === 'image'
     ? `/api/storage/file?name=${sample.fileName}`
     : `${sample.id}:${sample.fileName}`;
@@ -133,6 +134,7 @@ export async function reviewSample(sample, { imageReviewer, videoReviewer, media
       brief: sample.brief,
       expectedAspectRatio: sample.expectedAspectRatio,
       storagePath: mediaRoot,
+      visualReviewer,
     })
     : videoReviewer.reviewStoredVideoArtifact({
       artifactRef,
@@ -142,6 +144,7 @@ export async function reviewSample(sample, { imageReviewer, videoReviewer, media
       expectedAspectRatio: sample.expectedAspectRatio,
       expectedDurationSeconds: sample.expectedDurationSeconds,
       ffmpegPath,
+      visualReviewer,
     });
 }
 
@@ -255,6 +258,10 @@ async function main() {
     readFile(new URL(import.meta.url)).then((bytes) => ['scripts/evaluate-creative-review.mjs', bytes]),
     ...REVIEWER_SOURCE_FILES.map(async (fileName) => [fileName, await readFile(path.resolve(fileName))]),
   ]);
+  const { main: localVision } = await buildLibModules(['lib/creative-review/local-vision'], 'lib/creative-review/local-vision');
+  const visualReviewer = localVision.createLocalCreativeVisualReviewer();
+  const modelIdentity = await visualReviewer.getModelIdentity();
+  if (modelIdentity) reviewerSources.push(['local-vision-model', Buffer.from([modelIdentity.id, modelIdentity.revision, modelIdentity.sha256].join('\0'))]);
   const evaluatorFingerprint = reviewerFingerprint(reviewerSources);
   const { main: metrics } = await buildLibModules(['lib/creative-review/benchmark'], 'lib/creative-review/benchmark');
   let previous = null;
@@ -286,7 +293,7 @@ async function main() {
   const startedAt = Date.now();
   for (const sample of manifest.samples) {
     const sampleStartedAt = Date.now();
-    const report = await reviewSample(sample, { imageReviewer, videoReviewer, mediaRoot, ffmpegPath });
+    const report = await reviewSample(sample, { imageReviewer, videoReviewer, mediaRoot, ffmpegPath, visualReviewer });
     const capabilityAfter = await hashLocalFile(mediaRoot, sample.fileName);
     if (capabilityAfter.toLowerCase() !== sample.sha256.toLowerCase()) throw new Error(`评审样本 ${sample.id} 时文件内容发生变化；该轮无效。`);
     records.push({
@@ -303,6 +310,7 @@ async function main() {
     });
   }
 
+  const visualUsage = visualReviewer.getUsage();
   const summary = metrics.summarizeCreativeReviewBenchmark(records.map((record) => ({
     mediaKind: record.mediaKind,
     expectedCapability: record.expected.capability,
@@ -316,6 +324,7 @@ async function main() {
     formatVersion: 1,
     evaluator: EVALUATOR_ID,
     evaluatorFingerprint,
+    modelIdentity,
     runId,
     previousRun: previous ? {
       runId: previous.runId,
@@ -328,7 +337,7 @@ async function main() {
     elapsedMs: Date.now() - startedAt,
     manifestSha256,
     sampleCount: records.length,
-    cost: { modelCalls: 0, tokens: null, estimatedUsd: null, note: '当前结构评审不调用模型；token 与模型费用不适用。' },
+    cost: { ...visualUsage, estimatedUsd: null, note: modelIdentity ? '本地模型推理不产生服务商调用费；CPU/GPU硬件成本未估价。' : '本地模型缺失；视觉语义评审为 unknown，未发起推理。' },
     summary,
     samples: records,
   };
@@ -337,7 +346,7 @@ async function main() {
   console.log(`能力检查：${statusCounts(summary.capability)}`);
   console.log(`安全判断：${statusCounts(summary.safety)}`);
   console.log(`不安全样本误报为安全：${summary.safety.unsafeMarkedSafe}（必须为 0）`);
-  console.log(`耗时：${result.elapsedMs} ms；模型调用：0；token/费用：不适用`);
+  console.log(`耗时：${result.elapsedMs} ms；本地模型调用：${visualUsage.modelCalls}；输入/输出 token：${visualUsage.inputTokens}/${visualUsage.outputTokens}；本地推理：${visualUsage.inferenceMs} ms；供应商费用：不适用`);
   console.log(`P1 门槛：${summary.gate.passed ? '通过' : '未通过'}；完整报告已保存，unknown 按未命中计分。`);
   if (!summary.gate.passed) process.exitCode = 2;
 }
