@@ -7,11 +7,12 @@ const MAX_FRAMES = 3;
 const MAX_FRAME_DATA_URL_CHARS = 1024 * 1024;
 const MAX_EVIDENCE_CHARS = 500;
 
-function unknownEvidence(dimension: string, reason: string): CreativeReviewEvidence {
+function unknownEvidence(dimension: string, reason: string, observed?: string): CreativeReviewEvidence {
   return {
     dimension,
     status: 'unknown',
     criterion: '画面主体、构图与风格符合原始创作需求',
+    ...(observed ? { observed } : {}),
     reason,
     source: 'vision',
   };
@@ -57,10 +58,12 @@ export async function reviewCreativeBrief(input: {
   if (!brief) return unknownEvidence(dimension, '没有保留到原始创作需求，无法判断画面是否符合 brief。');
   if (input.signal?.aborted) return unknownEvidence(dimension, '评审在抽取或分析画面前已取消；本次结论为 unknown。');
 
+  let reviewerInvoked = false;
   try {
     const frames = await input.loadFrames();
     if (!safeFrames(frames)) return unknownEvidence(dimension, '本地画面帧数量、格式或大小超出评审边界；本次结论为 unknown。');
     if (input.signal?.aborted) return unknownEvidence(dimension, '抽取画面期间评审已取消；本次结论为 unknown。');
+    reviewerInvoked = true;
     const result = await input.visualReviewer({
       mediaKind: input.mediaKind,
       brief,
@@ -68,13 +71,13 @@ export async function reviewCreativeBrief(input: {
       frames,
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    if (!result || !isReviewStatus(result.status)) return unknownEvidence(dimension, '视觉评审器未返回可识别的 pass/fail/unknown 判定。');
+    if (!result || !isReviewStatus(result.status)) return unknownEvidence(dimension, '视觉评审器未返回可识别的 pass/fail/unknown 判定。', '视觉评审器已调用，但未形成可复核结论。');
     const criterion = boundedText(result.criterion, 200);
     const observed = boundedEvidenceValue(result.observed);
     const expected = boundedEvidenceValue(result.expected) ?? brief;
     const reason = boundedText(result.reason);
     if (!criterion || !reason || (result.status !== 'unknown' && observed === undefined)) {
-      return unknownEvidence(dimension, '视觉评审器的判定缺少可复核的检查标准、实测值或理由；本次不接受其 pass/fail 结论。');
+      return unknownEvidence(dimension, '视觉评审器的判定缺少可复核的检查标准、实测值或理由；本次不接受其 pass/fail 结论。', '视觉评审器已调用，但未形成可复核结论。');
     }
     const location = frames.map((frame) => boundedText(frame.location, 120)).filter(Boolean).join('；');
     return {
@@ -88,6 +91,6 @@ export async function reviewCreativeBrief(input: {
       ...(location ? { location } : {}),
     };
   } catch {
-    return unknownEvidence(dimension, '视觉评审未能在本地评审边界内完成；本次结论为 unknown。');
+    return unknownEvidence(dimension, '视觉评审未能在本地评审边界内完成；本次结论为 unknown。', reviewerInvoked ? '视觉评审器已调用，但未形成可复核结论。' : undefined);
   }
 }

@@ -75,4 +75,5 @@ test('fails closed for absent briefs, unsafe frame shapes, and reviewer errors',
   const failedReviewer = await reviewCreativeBrief({ mediaKind: 'image', dimension: 'brief_visual_compliance', brief: 'A product.', visualReviewer: async () => { throw new Error('provider failure'); }, loadFrames: async () => [validFrame] });
   assert.equal(failedReviewer.status, 'unknown');
   assert.match(failedReviewer.reason, /unknown|评审/u);
+  assert.equal(failedReviewer.observed, '视觉评审器已调用，但未形成可复核结论。');
 });
