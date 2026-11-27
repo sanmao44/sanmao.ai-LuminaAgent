@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import path from 'node:path';
 import { resolveLocalDataDir } from '@/lib/data-paths';
 import type { ToolDefinition, ToolGatingContext, ToolRisk } from '@/lib/tools/registry';
-import type { AgentApprovalCall, AgentFilesystemUndo } from '@/packages/contracts/agent';
+import type { AgentApprovalCall, AgentFilesystemUndo, AgentProjectTypecheckRequest } from '@/packages/contracts/agent';
 import type { FilesystemEditApproval, FilesystemEditUndo } from '@/packages/contracts/mcp';
 
 /** 审批有效期：过期就作废，免得几天后一个旧请求突然被执行。 */
@@ -114,6 +114,7 @@ export type PendingToolCall = {
   reason: string;
   args: unknown;
   filesystemEdit?: FilesystemEditApproval;
+  projectTypecheck?: AgentProjectTypecheckRequest;
 };
 
 /**
@@ -538,6 +539,7 @@ export function approvalMessageFor(pending: readonly PendingToolCall[]) {
   // 否则用户会以为点下去是在做一件有副作用的事。
   if (pending.length === 1) {
     const [call] = pending;
+    if (call.projectTypecheck) return `请确认在本机运行一次固定 TypeScript 检查：${call.projectTypecheck.directory}。`;
     if (call.filesystemEdit) return '请核对文件差异，确认后写入。';
     const lead = call.readOnly ? '这一步要读取本机文件，确认后我再继续' : '这一步会改动外部数据，确认后我再继续';
     return `${lead}：${call.serverName} · ${call.toolName}（${call.reason}）。`;
@@ -559,5 +561,6 @@ export function describePendingCall(call: PendingToolCall): AgentApprovalCall {
     reason: call.reason,
     argsPreview: call.filesystemEdit || argsPreview === '{}' ? '' : argsPreview,
     ...(call.filesystemEdit ? { filesystemDiff: call.filesystemEdit.diff } : {}),
+    ...(call.projectTypecheck ? { operation: { type: 'project-typecheck', directory: call.projectTypecheck.directory } } : {}),
   };
 }

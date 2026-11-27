@@ -90,7 +90,42 @@ export type AgentApprovalCall = {
   reason: string;
   argsPreview?: string;
   filesystemDiff?: string;
+  operation?: {
+    type: 'project-typecheck';
+    directory: string;
+  };
 };
+
+/** Fixed local TypeScript check; callers cannot supply a command or arguments. */
+export type AgentProjectTypecheckRequest = { directory: string };
+
+export type AgentProjectTypecheckResult = {
+  directory: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  cancelled: boolean;
+  outputTruncated: boolean;
+  error?: string;
+};
+
+export type AgentProjectTypecheckSelection =
+  | { ok: true; directory: string }
+  | { ok: false; reason: string };
+
+/** Application port backed by the locally installed trusted TypeScript compiler. */
+export interface AgentProjectTypecheckPort {
+  listAuthorizedRoots(): readonly string[];
+  selectDirectory(input: {
+    instruction: string;
+    cwd: string;
+    authorizedRoots: readonly string[];
+  }): AgentProjectTypecheckSelection;
+  validateDirectory(directory: string, authorizedRoots: readonly string[]): AgentProjectTypecheckSelection;
+  run(input: AgentProjectTypecheckRequest, options?: { signal?: AbortSignal }): Promise<AgentProjectTypecheckResult>;
+}
 
 /** One user action to restore a reviewed local file edit. */
 export type AgentFilesystemUndo = {

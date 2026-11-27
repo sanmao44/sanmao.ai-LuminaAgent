@@ -19,6 +19,7 @@ import { ToolRuntime, type ToolRuntimeCall } from '@/packages/tool-runtime/runti
 import type { RuntimeObserver } from '@/packages/contracts/observability';
 import type { AgentIntentPreview, AgentIntentPreviewRoute, AgentRequestMode } from '@/packages/contracts/planning';
 import type { VideoDownloadBrowserSession } from '@/packages/contracts/video-download';
+import type { CreativeReviewReport } from '@/packages/contracts/creative-review';
 import { AGENT_INLINE_TEXT_MAX_CHARS, AgentContextBudgetExceededError, boundAgentChatPayload, boundAgentContext, boundToolResult } from '@/lib/agent/context-budget';
 import { createBrowserMetricsCollector } from '@/lib/agent/browser-metrics';
 import { browserMutationObservationGap, browserToolName, isBrowserMutationTool } from '@/lib/agent/browser-freshness';
@@ -29,7 +30,7 @@ import type { WebSearchDecisionMeta, WebSearchMeta } from '@/lib/types';
 import { normalizeGenerationSource, type GenerationSource } from '@/lib/generation-source';
 import { agentInstructionText, classifyAgentDeliverable, isImageEditRequest, needsSemanticIntent, parseSemanticIntent, resolveCreativeRoute, type AgentDeliverable } from '@/lib/agent-intent';
 import type { CreativeRoute } from '@/packages/contracts/creative';
-import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, isCommandExecutionToolName, isExplicitCommandExecutionRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
+import { artifactRouteIsGenerated, canUseCompactPlainTurn, classifyAgentRequest, isCommandExecutionToolName, isExplicitCommandExecutionRequest, isExplicitProjectTypecheckRequest, needsMcpCapabilityDiscovery, resolveAgentToolPlan, routeNeedsSemanticReview, routeToolSummary, selectAgentContextMessages } from '@/lib/agent-routing';
 import { contextualImagePrompt, isBareImageExecution, isImageAspectRatioCorrection } from '@/lib/agent-context';
 import { normalizeCreativeReferences, type CreativeReference } from '@/lib/creative-references';
 import { memoryContextMessage } from '@/lib/agent-memory';
@@ -506,6 +507,8 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     data: dataInfrastructure,
     video: videoInfrastructure,
     transcription: transcriptionInfrastructure,
+    projectTypecheck,
+    creativeReview,
   } = infrastructure;
   const { chatCompletion, chatCompletionStream, describeProviderFailure, editImage, generateImage, imageDownloadAuth } = providerInfrastructure;
   const { collectArchiveEntries, generateArchiveArtifact, generateDocumentArtifact, generatePresentationArtifact, generateSpreadsheetArtifact, isValidArtifactId, getStorageRoots } = artifactInfrastructure;
@@ -822,6 +825,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     let requestModeAllowsExecution = planning.requestModeAllowsExecution;
     let requestedDeliverable = plannedDeliverable;
     let requestedIntentReason = plannedIntentReason;
+    const projectTypecheckRequest = requestModeAllowsExecution
+      && !isCanvasNodeExecution
+      && isExplicitProjectTypecheckRequest(latestInstruction);
     let intentPreviewMode: AgentRequestMode = intentDecision.mode;
     let intentPreviewConfidence = intentDecision.confidence;
     buildIntentPreview = () => {
@@ -1414,13 +1420,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // do not let the generic URL + download browser heuristic load Playwright.
     const browserAutomationRequest = !videoDownloadRequest && !isCanvasNodeExecution && requestRoute.browserAutomation;
     const tabbitAvailable = browserAutomationRequest && isTabbitCliAvailable();
-    const filesystemRequest = !isCanvasNodeExecution && (requestRoute.filesystem || likelyFilesystemRequest(latestInstruction, previousAssistantText));
-    const filesystemActionRequest = filesystemRequest && !/(?:可以吗|能不能|怎么|如何|[?？]$)/.test(latestInstruction);
+    const filesystemRequest = !projectTypecheckRequest && !isCanvasNodeExecution && (requestRoute.filesystem || likelyFilesystemRequest(latestInstruction, previousAssistantText));
+    const filesystemActionRequest = !projectTypecheckRequest && filesystemRequest && !/(?:可以吗|能不能|怎么|如何|[?？]$)/.test(latestInstruction);
     const requestedFilesystemRoots = filesystemActionRequest ? listFilesystemRoots() : [];
     if (requestModeAllowsExecution && filesystemActionRequest && !requestedFilesystemRoots.length) {
       requestedDeliverable = 'CLARIFY';
       intentPreviewMode = 'ask';
-      const clarification = '我还不能查看本地源码：请先在工具面板的“本地文件”中添加包含项目的文件夹，然后重试。此请求不会读取或写入文件。';
+      const clarification = '我还不能查看本地源码：请在工具面板检查“本地文件（Filesystem）”已启用或连接，并添加包含项目的授权文件夹，然后重试。此请求不会读取或写入文件。';
       requestedIntentReason = '请求需要读取本地文件，但当前没有已授权的本地文件夹。';
       llmResponseChars = clarification.length;
       return wantsStream
@@ -2037,10 +2043,99 @@ const auditMcpCall = (
       : textFileFallbackRequested
         ? callableTools.filter((tool) => tool.function.name === 'file_generate')
         : callableTools;
+    const callableFilesystemToolAvailable = mcpTools.some((tool) => {
+      if (!tool.mcp || tool.mcp.blocked === true) return false;
+      const catalogId = mcpServerById.get(tool.mcp.serverId)?.catalogId;
+      const isCallableEditTool = tool.mcp.toolName === 'edit_file';
+      if (catalogId !== 'filesystem' && !isCallableEditTool) return false;
+      return initialCallableTools.some((schema) => schema.function.name === tool.name);
+    });
+    if (requestModeAllowsExecution && filesystemActionRequest && !callableFilesystemToolAvailable) {
+      requestedDeliverable = 'CLARIFY';
+      intentPreviewMode = 'ask';
+      const clarification = '我还不能执行本地文件任务：请先在工具面板启用或连接“本地文件（Filesystem）”，并添加包含项目的授权文件夹，然后重试。此请求不会读取或写入文件。';
+      requestedIntentReason = '请求需要本地文件能力，但当前没有可调用的 Filesystem 工具。';
+      llmResponseChars = clarification.length;
+      await settleLlmLog?.({ status: 'error', responseChars: clarification.length, error: clarification });
+      return wantsStream
+        ? streamResult(null, { fallback: clarification, images: [], files: [], generations: [], model: agentRuntime.model.displayName })
+        : applicationJson({ ok: true, message: clarification, images: [], files: [], deliverable: requestedDeliverable });
+    }
     const commandExecutionRequest = requestModeAllowsExecution
       && !isCanvasNodeExecution
+      && !projectTypecheckRequest
       && isExplicitCommandExecutionRequest(latestInstruction);
     const commandExecutionToolAvailable = initialCallableTools.some((tool) => isCommandExecutionToolName(tool?.function?.name));
+    if (projectTypecheckRequest) {
+      const selection = projectTypecheck.selectDirectory({
+        instruction: latestInstruction,
+        cwd: process.cwd(),
+        authorizedRoots: projectTypecheck.listAuthorizedRoots(),
+      });
+      if (!selection.ok) {
+        const message = selection.reason;
+        llmResponseChars = message.length;
+        await settleLlmLog?.({ status: 'error', responseChars: message.length, error: message });
+        return applicationJson({ ok: false, error: message, message, model: agentRuntime.model.displayName, deliverable: 'CLARIFY' }, { status: 400 });
+      }
+      const pendingCall: PendingToolCall = {
+        callId: `project-typecheck-${Date.now()}`,
+        name: 'project_typecheck',
+        toolId: 'native:project-typecheck',
+        serverId: 'native:project-typecheck',
+        serverName: '本地项目检查',
+        toolName: 'TypeScript typecheck',
+        readOnly: true,
+        risk: 'read',
+        reason: '使用应用内 TypeScript 编译器和固定 no-emit 参数；不会运行 package.json 脚本或生成编译产物。tsconfig 可能引用授权目录外的文件，检查进程继承 SANMAO.AI 的系统权限，不是操作系统沙箱。',
+        args: {},
+        projectTypecheck: { directory: selection.directory },
+      };
+      const approvalMessage = approvalMessageFor([pendingCall]);
+      const approvalRecord = createApproval({
+        provider: agentRuntime.provider.name,
+        model: agentRuntime.model.id,
+        messages: [],
+        assistant: { content: null, tool_calls: [] },
+        executed: [],
+        pending: [pendingCall],
+        gating: gatingContext,
+      });
+      const approval = {
+        id: approvalRecord.id,
+        expiresAt: approvalRecord.expiresAt,
+        message: approvalMessage,
+        policy: 'always',
+        calls: [describePendingCall(pendingCall)],
+      };
+      requestedIntentReason = '本轮将等待用户确认后，运行一次固定的本地 TypeScript 检查。';
+      llmResponseChars = approvalMessage.length;
+      if (wantsStream) {
+        return streamResult(null, {
+          fallback: approvalMessage,
+          images: [],
+          files: [],
+          generations: [],
+          model: agentRuntime.model.displayName,
+          mcpTools: [],
+          statuses: [{ type: 'status', stage: 'approval', message: '等你确认这次项目检查…' }],
+          approval,
+        });
+      }
+      return applicationJson({
+        ok: true,
+        message: approvalMessage,
+        needsApproval: true,
+        approval,
+        images: [],
+        files: [],
+        generations: [],
+        model: agentRuntime.model.displayName,
+        deliverable: requestedDeliverable,
+        toolSupport: true,
+        mcpTools: [],
+      });
+    }
     if (commandExecutionRequest && !commandExecutionToolAvailable) {
       const message = '能力缺失：当前下发工具中没有受控命令执行器，因此没有运行请求中的命令，也没有真实退出码、stdout 或 stderr。';
       llmResponseChars = message.length;
@@ -2520,7 +2615,7 @@ const auditMcpCall = (
       }
     }
 
-    const generated: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string; localFileName?: string }> = [];
+    const generated: Array<{ url: string; revisedPrompt?: string; modelId?: string; modelName?: string; providerName?: string; localFileName?: string; creativeReview?: CreativeReviewReport }> = [];
     const batchItems: Array<{ batchId: string; index: number; total: number; prompt: string; status: 'succeeded' | 'failed'; error?: string; imageCount?: number }> = [];
     let canvasPatch: CanvasPatch | undefined;
     const generations: Array<{ prompt: string; aspectRatio: string; modelId: string; modelName: string; providerName: string; mode: 'generate' | 'edit' }> = [];
@@ -2652,6 +2747,7 @@ const auditMcpCall = (
         editImage,
         generateImage,
         persistGenerationResult,
+        reviewImageArtifact: creativeReview?.reviewImageArtifact,
         imageDownloadAuth,
         finishGenerationLog,
         latestInstruction,

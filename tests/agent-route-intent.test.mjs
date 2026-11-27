@@ -700,13 +700,38 @@ test("source tracing without an authorized folder asks for access and performs n
 
   assert.equal(result.deliverable, "CLARIFY");
   assert.match(result.message, /还不能查看本地源码/);
-  assert.match(result.message, /添加包含项目的文件夹/);
+  assert.match(result.message, /检查“本地文件（Filesystem）”已启用或连接/);
+  assert.match(result.message, /添加包含项目的授权文件夹/);
   assert.match(result.message, /不会读取或写入文件/);
   assert.deepEqual(result.files, []);
   assert.equal(agent.modelCalls.length, 0);
   assert.equal(agent.mcpCalls.length, 0);
   assert.equal(agent.runtimeLoads.length, 0);
 });
+test('Filesystem requests with an authorized folder but no callable Filesystem tool ask for setup', async () => {
+  for (const { mcpServers, mcpTools } of [
+    { mcpServers: [], mcpTools: [] },
+    { mcpServers: [filesystemReadTestServer], mcpTools: [] },
+    { mcpServers: [filesystemReadTestServer], mcpTools: [blockedFilesystemEditTestTool] },
+  ]) {
+    const agent = harness({
+      filesystemRoots: ['C:\\Temp\\repo'],
+      filesystemWriteRoots: ['C:\\Temp\\repo'],
+      mcpServers,
+      mcpTools,
+      reply: () => { throw new Error('the model must not be asked to invent a source trace'); },
+    });
+    const result = await agent.post([filesystemReadTestMessage]);
+
+    assert.equal(result.deliverable, 'CLARIFY');
+    assert.match(result.message, /启用或连接“本地文件（Filesystem）”/);
+    assert.match(result.message, /授权文件夹/);
+    assert.match(result.message, /不会读取或写入文件/);
+    assert.equal(agent.modelCalls.length, 0);
+    assert.equal(agent.mcpCalls.length, 0);
+  }
+});
+
 test('read-only Filesystem lookup errors stay in the trace but do not block a later completed answer', async () => {
   const agent = harness({
     mcpServers: [filesystemReadTestServer],
@@ -1085,7 +1110,7 @@ test('an offered command executor that the model skips is reported as not used',
   });
   const output = await agent.postRaw(new Request('http://localhost/api/agent', {
     method: 'POST',
-    body: JSON.stringify({ messages: [{ role: 'user', content: '请在项目目录运行一次 npm run typecheck，贴出真实退出码。' }], webMode: 'off', stream: true }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: '请使用受控命令执行器，在项目目录运行一次 npm run typecheck，贴出真实退出码。' }], webMode: 'off', stream: true }),
   }));
   const offeredNames = agent.calls.flatMap((call) => (call.tools || []).map((tool) => tool.function.name));
 

@@ -1,6 +1,8 @@
 import { finishGenerationLog, startGenerationLog } from './generation-log';
 import { getPublicState, getProviderWithKey, getRuntimeVideoModel, markProviderCredentialFailure } from './store';
 import { persistGeneratedVideos } from './video-storage';
+import { reviewStoredVideoArtifact } from './creative-review/video';
+import { resolveFfmpeg } from './video-trim-service';
 import { canRecoverVideoTaskResult, claimFailedVideoTaskRetry, claimVideoTaskSubmission, createVideoTask, findVideoTask, releaseFailedVideoTaskRetry, resumeVideoTaskResultRecovery, updateActiveVideoTask, updateVideoTask, VIDEO_TASK_SUBMISSION_TIMEOUT_MS, type VideoTask } from './video-task-store';
 import { idempotencyKey, pollJimengVideo, pollRemoteVideo, runJimengVideo, submitRemoteVideo, VideoProviderError, type VideoProviderTask } from './video-providers';
 import type { GeneratedVideo, VideoGenerationInput } from './types';
@@ -281,6 +283,19 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
   const videoUrls = stored.videos.length
     ? stored.videos.map((video) => video.url)
     : remoteVideoUrls;
+  let ffmpegPath = '';
+  if (stored.videos.length) {
+    try { ffmpegPath = (await resolveFfmpeg()).command; } catch { /* A missing decoder is recorded as unknown by the reviewer. */ }
+  }
+  const creativeReview = await Promise.all(result.videos.map((video, index) => reviewStoredVideoArtifact({
+    artifactRef: task.id + ':' + String(index + 1),
+    storedRef: stored.videos[index]?.url || video.url,
+    storagePath: stored.path,
+    brief: task.input.prompt,
+    expectedAspectRatio: task.input.aspectRatio,
+    expectedDurationSeconds: task.input.seconds,
+    ffmpegPath,
+  })));
   const completedAt = new Date().toISOString();
   const updated = await updateActiveVideoTask(task.id, {
     status: 'done',
@@ -289,6 +304,7 @@ async function persistResult(task: VideoTask, result: VideoProviderTask) {
     videoUrls,
     remoteVideoUrls,
     localVideoPaths: stored.videos.map((video) => video.localPath).filter((item): item is string => Boolean(item)),
+    creativeReview,
     // A provider can finish successfully even when the local download fails.
     // Keep the task usable with its remote URL and expose the recoverable
     // storage error so the UI can offer "再次保存".
@@ -406,8 +422,14 @@ async function keepVideoSubmissionPending(task: VideoTask, error: unknown, provi
 }
 
 export async function createVideoGeneration(options: { modelId?: string; input: VideoGenerationInput; idempotencyKey?: string; source?: GenerationSource; retryOf?: string }) {
-  const runtime = await getRuntimeVideoModel(options.modelId || 'auto');
-  if (!runtime) throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
+  const requestedModelId = options.modelId?.trim() || 'auto';
+  const runtime = await getRuntimeVideoModel(requestedModelId);
+  if (!runtime) {
+    if (requestedModelId !== 'auto') {
+      throw new Error('所选视频模型不可用或已变更。请刷新模型库并重新选择；系统不会自动切换到其他模型。');
+    }
+    throw new Error('没有可用的视频模型。请先在模型库启用并发布视频模型。');
+  }
   const cangyuanVideo = isCangyuanVideoProvider(runtime.provider);
   if (cangyuanVideo) validateCangyuanVideoInput(runtime.model.rawId, options.input, { requirePublicMedia: false });
   const baseModelLimits = getVideoModelLimits(runtime.model, runtime.provider);

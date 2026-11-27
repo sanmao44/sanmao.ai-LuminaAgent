@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../contracts/chat';
 import type { ToolCall, RuntimeImage, ToolRuntimeState } from './capability-state';
 import type { RuntimeObserver } from '../contracts/observability';
+import type { CreativeReviewReport } from '../contracts/creative-review';
 import { invokeMediaModelCandidates } from '../model-runtime/media';
 
 export type ImageCapabilityPorts = {
@@ -28,6 +29,7 @@ export type ImageCapabilityPorts = {
   editImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
   generateImage: (provider: unknown, model: string, input: Record<string, unknown>, signal: AbortSignal) => Promise<RuntimeImage[]>;
   persistGenerationResult: (options: Record<string, unknown>) => Promise<{ images: RuntimeImage[] }>;
+  reviewImageArtifact?: (input: { artifactRef: string; expectedAspectRatio?: string; storagePath?: string; brief?: string; generationPrompt?: string; signal?: AbortSignal }) => Promise<CreativeReviewReport>;
   imageDownloadAuth: (provider: unknown) => unknown;
   finishGenerationLog: (id: string, patch: Record<string, unknown>) => Promise<void>;
   latestInstruction?: string;
@@ -64,7 +66,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
     trackedChatCompletion, agentRuntime, requestedAgentImageModelId, getRuntimeImageGenerationModel,
     getRuntimeImageModelForCapability, appendGenerationLog, sourceForLog, taskContext, startGenerationLog,
     referenceRecords, getRuntimeImageModelCandidates, editImage, generateImage,
-    persistGenerationResult, imageDownloadAuth, finishGenerationLog, latestInstruction, agentRunId, skipCaption, executionPublicState,
+    persistGenerationResult, imageDownloadAuth, finishGenerationLog, reviewImageArtifact, latestInstruction, agentRunId, skipCaption, executionPublicState,
   } = input.ports;
   let { generated, preparedCaption, batchItems, generations } = state;
       const startedAt = Date.now();
@@ -247,25 +249,39 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           ...(mediaLogId ? { logId: mediaLogId } : { log: { mode, operation, taskKind: 'media' as const, source: sourceForLog, prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), count, references: referenceRecords.length ? referenceRecords : undefined, ...taskContext } }),
         });
         if (!stored.images.length) throw new Error('图片结果未能保存，本轮没有可交付的图片');
-        generated.push(...stored.images.map((image: RuntimeImage, index: number) => {
+        const generatedImageOutputs: Array<Record<string, unknown>> = stored.images.map((image: RuntimeImage, index: number) => {
           const itemRuntime = images[index]?.itemRuntime || selectedImageRuntime;
           return {
-          ...image,
-          modelId: itemRuntime.model.id,
-          modelName: itemRuntime.model.displayName,
-          providerName: String((itemRuntime.provider as { name?: unknown }).name || ''),
-          ...(batchId ? {
-            batchId,
-            batchIndex: images[index]?.batchIndex,
-            batchTotal: prompts.length,
-            batchPrompt: images[index]?.batchPrompt || prompt,
-            batchStatus: 'succeeded',
-          } : {}),
+            ...image,
+            modelId: itemRuntime.model.id,
+            modelName: itemRuntime.model.displayName,
+            providerName: String((itemRuntime.provider as { name?: unknown }).name || ''),
+            ...(batchId ? {
+              batchId,
+              batchIndex: images[index]?.batchIndex,
+              batchTotal: prompts.length,
+              batchPrompt: images[index]?.batchPrompt || prompt,
+              batchStatus: 'succeeded',
+            } : {}),
           };
-        }));
+        });
+        generated.push(...generatedImageOutputs);
         generations.push({ prompt, aspectRatio, modelId: selectedImageRuntime.model.id, modelName: selectedImageRuntime.model.displayName, providerName: String((selectedImageRuntime.provider as { name?: unknown }).name || ''), mode });
         // 把本地引用回给模型：它是后面把这些图放进 Word / PPT 的唯一合法 ref。
         const storedRefs = stored.images.map((image) => String(image?.url || '')).filter(Boolean);
+        const creativeReviews = reviewImageArtifact
+          ? await Promise.all(stored.images.map((image, index) => reviewImageArtifact({
+            artifactRef: String(image?.url || ''),
+            expectedAspectRatio: aspectRatio,
+            storagePath: executionPublicState.settings.imageStoragePath,
+            brief: String(latestInstruction || '').slice(0, 4000),
+            generationPrompt: String(images[index]?.batchPrompt || prompt).slice(0, 4000),
+            signal: requestController.signal,
+          })))
+          : [];
+        creativeReviews.forEach((report, index) => {
+          if (generatedImageOutputs[index]) generatedImageOutputs[index].creativeReview = report;
+        });
         results.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -278,6 +294,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
             ...(storedRefs.length
               ? {
                 images: storedRefs.map((ref: string) => ({ ref })),
+                creativeReview: creativeReviews,
                 instruction: '要把这些图放进 Word/PPT 时，把 ref 原样传给 document_generate 或 presentation_generate，不要自己编 ref。',
               }
               : {}),

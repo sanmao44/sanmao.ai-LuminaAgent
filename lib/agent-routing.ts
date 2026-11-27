@@ -119,6 +119,21 @@ export function isExplicitCommandExecutionRequest(input: string) {
     && !/(?:怎么|如何|怎样|为什么|解释|介绍|说明|教我|告诉我)\s*$/i.test(beforeAction);
 }
 
+/** Match the one built-in, fixed-argument project check; this is not a shell detector. */
+export function isExplicitProjectTypecheckRequest(input: string) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!isExplicitCommandExecutionRequest(text)) return false;
+  // Generic shell/command-executor capability tests keep using the offered command tool; this native route is only for the dedicated fixed TypeScript operation.
+  if (/(?:受控\s*(?:shell|命令|终端)|命令执行(?:能力|器|测试)|command\s+(?:executor|runner)|\bshell\b|\bterminal\b)/i.test(text)) return false;
+  if (!/\btype[\s-]?check\b/i.test(text)) return false;
+  const negatesTypecheck = /(?:不要|别|禁止|不必|无需|don't|do not|never)\s*(?:再)?(?:运行|执行|跑|run|execute)?[^。！？!?，,;；]{0,24}\btype[\s-]?check\b/i.test(text);
+  const protectsFilesBeforeTypecheck = /(?:不要|别|禁止)\s*[^。！？!?，,;；]{0,18}(?:修改|改动|写入|创建)[^。！？!?，,;；]{0,12}(?:后|之后|再)\s*(?:运行|执行|跑|run|execute)\s*(?:一次|一遍|一下)?\s*type[\s-]?check\b/i.test(text);
+  if (negatesTypecheck && !protectsFilesBeforeTypecheck) return false;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?!type[\s-]?check\b)[\w:-]+/i.test(text)) return false;
+  if (/\b(?:test|lint|build|install|format)\b|(?:并|然后|同时|之后)\s*(?:修复|修改|改正|格式化)|\b(?:fix|edit)\b/i.test(text)) return false;
+  return true;
+}
+
 /** Match an explicitly named command runner in this turn's offered tools. */
 export function isCommandExecutionToolName(value: unknown) {
   const name = String(value || '').trim().toLowerCase();

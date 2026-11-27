@@ -1,8 +1,9 @@
 "use client";
 
 import type { AgentDeliverable } from "./agent-intent";
-import type { AgentApprovalCall, AgentFilesystemUndo } from "@/packages/contracts/agent";
+import type { AgentApprovalCall, AgentFilesystemUndo, AgentProjectTypecheckResult } from "@/packages/contracts/agent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
+import type { CreativeReviewReport } from "@/packages/contracts/creative-review";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
 import type { AgentIntentPreview } from "@/packages/contracts/planning";
 import type { CreativeReference } from "./creative-references";
@@ -102,6 +103,7 @@ export type AgentGeneratedImage = {
   batchPrompt?: string;
   batchStatus?: "succeeded" | "failed";
   batchError?: string;
+  creativeReview?: CreativeReviewReport;
 };
 
 /** 这一轮真正落到外部 MCP 服务上的调用，用于给用户看"助手用了哪个外部工具"。 */
@@ -129,6 +131,7 @@ export type AgentResumeResult = {
   message?: string;
   mcpTools?: AgentMcpToolUse[];
   filesystemUndos?: AgentFilesystemUndo[];
+  projectTypecheckResult?: AgentProjectTypecheckResult;
   error?: string;
   consumed?: boolean;
 };

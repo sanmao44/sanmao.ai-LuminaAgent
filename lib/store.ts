@@ -1030,8 +1030,13 @@ export async function getRuntimeVideoModel(id: string | null | undefined) {
     const provider = state.providers.find((candidate) => candidate.id === item.providerId);
     return isProviderModelLibraryEnabled(provider) && item.kind === 'video' && item.enabled && item.published && (item.capabilities.includes('video-generate') || item.capabilities.some((capability) => capability.startsWith('video-')));
   });
-  const explicit = id && id !== 'auto' ? compatible.find((item) => item.id === id) : undefined;
-  const model = explicit || selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultVideoModelId);
+  const requestedId = id && id !== 'auto' ? id : undefined;
+  // An explicitly selected model is an instruction, not a preference. If it
+  // has gone stale or is no longer usable, never silently submit to another
+  // provider (for example, OpenAI instead of the selected Cangyuan model).
+  const model = requestedId
+    ? compatible.find((item) => item.id === requestedId)
+    : selectAutomaticModel(compatible, state.settings.defaultProviderId, state.settings.defaultVideoModelId);
   if (!model) return null;
   const provider = state.providers.find((item) => item.id === model.providerId);
   if (!provider) return null;

@@ -49,6 +49,8 @@ import {
 import type { PublicState } from "@/lib/types";
 import type { WorkspaceContext } from "@/lib/workspace-context";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
+import { isCreativeReviewReport } from "@/packages/contracts/creative-review";
+import CreativeReviewPanel from "@/components/CreativeReviewPanel";
 import type { CanvasDocument } from "@/lib/canvas/types";
 import type { CanvasPatch } from "@/lib/canvas/patch";
 import { filterModelsByActiveProviders } from "@/lib/provider-availability";
@@ -533,6 +535,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
                   ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
                   ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
                   ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
+                  ...(isCreativeReviewReport(image.creativeReview) ? { creativeReview: image.creativeReview } : {}),
                 })) }
               : {}),
             ...(readStoredReferences(message.references).length
@@ -1368,6 +1371,7 @@ export default function CanvasAgentDock({
               ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
               ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
               ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
+              ...(isCreativeReviewReport(image.creativeReview) ? { creativeReview: image.creativeReview } : {}),
             }))
           .filter((image) => Boolean(image.url));
         const plan = pastedReferences.length ? null : buildCanvasAgentDockPlan(text, {
@@ -2115,6 +2119,9 @@ export default function CanvasAgentDock({
                   </button>
                 ))}
               </div>
+            ) : null}
+            {message.images?.some((image) => image.creativeReview) ? (
+              <CreativeReviewPanel reports={message.images.flatMap((image) => image.creativeReview ? [image.creativeReview] : [])} />
             ) : null}
             {message.plan ? (
               <div className={`canvas-agent-dock-plan${message.plan.applied ? " is-applied" : message.plan.dismissed ? " is-dismissed" : message.plan.failed ? " is-failed" : ""}`}>

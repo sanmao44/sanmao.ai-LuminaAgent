@@ -60,6 +60,8 @@ test('续跑接口只认 approve / reject，执行哪个调用由服务端记录
   // 请求体里没有任何字段能影响「执行什么」：前端伪造不出一个调用。
   assert.doesNotMatch(resume, /input\.calls|input\.tool|input\.args/);
   assert.match(runRoute, /action: \(body as \{ action\?: unknown \}\)\?\.action/);
+  assert.match(runRoute, /allowLocalProjectTypecheck: true/);
+  assert.match(runRoute, /AbortSignal\.any\(\[request\.signal/);
   assert.match(runRoute, /isTrustedAppRequest\(request\)/);
   assert.match(runRoute, /beginRuntimeRequest\('agent'\)/);
 });

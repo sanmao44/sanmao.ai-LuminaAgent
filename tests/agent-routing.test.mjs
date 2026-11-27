@@ -248,6 +248,11 @@ test('explicit command execution is distinct from filesystem discovery and comma
   assert.equal(routing.isCommandExecutionToolName('run_shell_command'), true);
   assert.equal(routing.isCommandExecutionToolName('filesystem-test__read_text_file'), false);
   assert.equal(routing.isCommandExecutionToolName('windows-mcp__App'), false);
+  assert.equal(routing.isExplicitProjectTypecheckRequest('跑一下 typecheck'), true);
+  assert.equal(routing.isExplicitProjectTypecheckRequest('不要运行 typecheck'), false);
+  assert.equal(routing.isExplicitProjectTypecheckRequest('不要修改任何文件后运行 typecheck'), true);
+  assert.equal(routing.isExplicitProjectTypecheckRequest('先运行 typecheck，然后修复错误'), false);
+  assert.equal(routing.isExplicitProjectTypecheckRequest('请使用受控命令执行器运行 npm run typecheck'), false);
 });
 
 test('keeps local file preview requests out of downloadable-file generation', () => {

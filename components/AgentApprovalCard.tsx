@@ -21,7 +21,7 @@ const RISK_LABELS: Record<string, string> = {
 const POLICY_NOTES: Record<string, string> = {
   always: "当前档位：每次确认（非只读的 MCP 调用都要你点一次）。",
   trusted: "当前档位：标准信任（导航、截图这类不改动外部数据的动作不问；提交、付款、删除这类不可逆操作仍然会问）。",
-  full: "当前档位：完全访问（所有 MCP 调用直接执行，不再询问）。",
+  full: "当前档位：完全访问。本次操作仍需确认，请查看上方的操作说明。",
 };
 
 type Props = {
@@ -82,6 +82,9 @@ export default function AgentApprovalCard({ approval, onResolved }: Props) {
               <span className="agent-approval-server">{call.server}</span>
               <code>{call.tool}</code>
               <em>{RISK_LABELS[call.risk] || call.risk}</em>
+              {call.operation?.type === "project-typecheck" ? (
+                <small className="agent-approval-args">项目目录：{call.operation.directory}</small>
+              ) : null}
               <small>{call.reason}</small>
               {call.filesystemDiff ? <pre className="agent-approval-diff" aria-label="文件改动预览">{call.filesystemDiff}</pre> : null}
               {call.argsPreview ? <small className="agent-approval-args">{call.argsPreview}</small> : null}

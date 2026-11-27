@@ -21,10 +21,11 @@ import { toModelToolSchema } from '@/lib/tools/registry';
 import { selectToolsForTurn } from '@/lib/tools/selector';
 import { resolveToolPolicy } from '@/lib/tools/policy';
 import { claimApproval, claimFilesystemEditUndo, discardFilesystemEditUndo, saveFilesystemEditUndo, toolApprovalPolicy, type PendingToolCall } from '@/lib/agent/approval';
+import { createProjectTypecheckPort } from '@/lib/agent/project-typecheck';
 import { guardMcpServerCall } from '@/lib/mcp/filesystem-policy';
 import { callFilesystemEdit, isFilesystemEditCall, undoFilesystemEdit } from '@/lib/mcp/filesystem-edit';
 import { listMcpServers } from '@/lib/mcp/store';
-import type { AgentFilesystemUndo } from '@/packages/contracts/agent';
+import type { AgentFilesystemUndo, AgentProjectTypecheckResult } from '@/packages/contracts/agent';
 import { listFilesystemRoots, listFilesystemWriteRoots } from '@/lib/mcp/filesystem-roots';
 import { recordMcpCall, type McpAuditDecision } from '@/lib/mcp/audit';
 import { resolveLocalDataDir } from '@/lib/data-paths';
@@ -44,6 +45,173 @@ export const RESUME_TIMEOUT_MS = MCP_TURN_TIME_BUDGET_MS + 30_000;
 export type AgentResumeOutcome = { status: number; body: Record<string, unknown> };
 
 export type AgentResumeMcpToolUse = { server: string; name: string; readOnly: boolean; ok: boolean };
+
+const PROJECT_TYPECHECK_TOOL_ID = 'native:project-typecheck';
+const PROJECT_TYPECHECK_NAME = 'project_typecheck';
+
+function projectTypecheckResult(
+  directory: string,
+  fields: Partial<AgentProjectTypecheckResult> = {},
+): AgentProjectTypecheckResult {
+  return {
+    directory,
+    exitCode: null,
+    stdout: '',
+    stderr: '',
+    durationMs: 0,
+    timedOut: false,
+    cancelled: false,
+    outputTruncated: false,
+    ...fields,
+  };
+}
+
+function projectTypecheckMessage(result: AgentProjectTypecheckResult) {
+  const status = result.cancelled
+    ? '本次 TypeScript 检查已取消。'
+    : result.timedOut
+      ? '本次 TypeScript 检查超时，进程已终止。'
+      : result.error && result.exitCode === null
+        ? `本次 TypeScript 检查未执行：${result.error}`
+        : result.exitCode === 0
+          ? '本次 TypeScript 检查通过。'
+          : `本次 TypeScript 检查失败（真实退出码：${result.exitCode === null ? '无' : result.exitCode}）。`;
+  const stdout = result.stdout || '（无 stdout 输出）';
+  const stderr = result.stderr || '（无 stderr 输出）';
+  return [
+    status,
+    `项目目录：${result.directory}`,
+    `真实退出码：${result.exitCode === null ? '无（未正常退出）' : result.exitCode}`,
+    `耗时：${result.durationMs} ms`,
+    `stdout:\n${stdout}`,
+    `stderr:\n${stderr}`,
+    ...(result.outputTruncated ? ['诊断输出已达到上限，以上内容已截断。'] : []),
+  ].join('\n\n');
+}
+
+function isProjectTypecheckPending(pending: PendingToolCall) {
+  return pending.toolId === PROJECT_TYPECHECK_TOOL_ID
+    || pending.serverId === PROJECT_TYPECHECK_TOOL_ID
+    || pending.name === PROJECT_TYPECHECK_NAME
+    || Boolean(pending.projectTypecheck);
+}
+
+function auditProjectTypecheck(
+  approvalId: string,
+  result: AgentProjectTypecheckResult,
+  decision: McpAuditDecision,
+  allowed: boolean,
+) {
+  // Do not put source text or compiler diagnostics in the audit log. The approval
+  // id and outcome metadata are enough to correlate this local operation.
+  recordMcpCall({
+    serverId: PROJECT_TYPECHECK_TOOL_ID,
+    serverName: '本地项目检查',
+    tool: PROJECT_TYPECHECK_NAME,
+    risk: 'read',
+    allowed,
+    decision,
+    ok: allowed && result.exitCode === 0 && !result.error && !result.cancelled && !result.timedOut,
+    durationMs: result.durationMs,
+    summary: `approvalId=${approvalId}; exitCode=${result.exitCode === null ? 'null' : result.exitCode}; cancelled=${result.cancelled}; timedOut=${result.timedOut}`,
+  });
+}
+
+async function resumeProjectTypecheck(input: {
+  approvalId: string;
+  pending: readonly PendingToolCall[];
+  action: 'approve' | 'reject';
+  signal?: AbortSignal;
+  allowLocalProjectTypecheck?: boolean;
+}): Promise<AgentResumeOutcome> {
+  const rawDirectory = input.pending.length === 1 && input.pending[0].projectTypecheck
+    ? String(input.pending[0].projectTypecheck.directory || '')
+    : '';
+
+  if (input.action === 'reject') {
+    const result = projectTypecheckResult(rawDirectory, { error: '用户拒绝了这次本地 TypeScript 检查。' });
+    auditProjectTypecheck(input.approvalId, result, 'rejected', false);
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        rejected: true,
+        message: '已取消这次本地 TypeScript 检查，没有执行。',
+        projectTypecheckResult: result,
+      },
+    };
+  }
+
+  if (input.allowLocalProjectTypecheck !== true) {
+    const result = projectTypecheckResult(rawDirectory, { error: '当前续跑请求没有获得本地项目检查执行授权。' });
+    auditProjectTypecheck(input.approvalId, result, 'policy', false);
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        message: projectTypecheckMessage(result),
+        projectTypecheckResult: result,
+      },
+    };
+  }
+
+  if (
+    input.pending.length !== 1
+    || input.pending[0].toolId !== PROJECT_TYPECHECK_TOOL_ID
+    || input.pending[0].name !== PROJECT_TYPECHECK_NAME
+    || input.pending[0].serverId !== PROJECT_TYPECHECK_TOOL_ID
+    || input.pending[0].toolName !== 'TypeScript typecheck'
+    || !input.pending[0].projectTypecheck
+    || typeof input.pending[0].projectTypecheck.directory !== 'string'
+  ) {
+    const result = projectTypecheckResult(rawDirectory, { error: '审批记录中的本地项目检查请求无效，已拒绝执行。' });
+    auditProjectTypecheck(input.approvalId, result, 'guard', false);
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        message: projectTypecheckMessage(result),
+        projectTypecheckResult: result,
+      },
+    };
+  }
+
+  const directory = input.pending[0].projectTypecheck.directory;
+  const port = createProjectTypecheckPort();
+  const authorizedRoots = port.listAuthorizedRoots();
+  const current = port.validateDirectory(directory, authorizedRoots);
+  if (!current.ok || current.directory !== directory) {
+    const error = !current.ok
+      ? current.reason
+      : '项目目录在等待确认期间发生变化，当前路径不是审批时核对过的目录。';
+    const result = projectTypecheckResult(directory, { error });
+    auditProjectTypecheck(input.approvalId, result, 'guard', false);
+    return {
+      status: 200,
+      body: {
+        ok: false,
+        message: projectTypecheckMessage(result),
+        projectTypecheckResult: result,
+      },
+    };
+  }
+
+  let result: AgentProjectTypecheckResult;
+  try {
+    result = await port.run({ directory }, { signal: input.signal });
+  } catch (error) {
+    result = projectTypecheckResult(directory, { error: error instanceof Error ? error.message : '本地 TypeScript 检查执行失败。' });
+  }
+  auditProjectTypecheck(input.approvalId, result, 'approval', true);
+  return {
+    status: 200,
+    body: {
+      ok: result.exitCode === 0 && !result.error && !result.cancelled && !result.timedOut,
+      message: projectTypecheckMessage(result),
+      projectTypecheckResult: result,
+    },
+  };
+}
 
 function toolFailure(call: PendingToolCall, error: string): ChatMessage {
   return { role: 'tool', tool_call_id: call.callId, content: JSON.stringify({ ok: false, error }) };
@@ -114,7 +282,12 @@ async function resumeFilesystemUndo(id: unknown, signal?: AbortSignal): Promise<
     : { status: 200, body: { ok: true, message: result.text } };
 }
 
-export async function resumeAgentRun(input: { id: unknown; action: unknown; signal?: AbortSignal }): Promise<AgentResumeOutcome> {
+export async function resumeAgentRun(input: {
+  id: unknown;
+  action: unknown;
+  signal?: AbortSignal;
+  allowLocalProjectTypecheck?: boolean;
+}): Promise<AgentResumeOutcome> {
   if (input.action === 'undo') return resumeFilesystemUndo(input.id, input.signal);
   const action = input.action === 'approve' ? 'approve' : input.action === 'reject' ? 'reject' : null;
   if (!action) return { status: 400, body: { error: '未知操作，只支持 approve、reject 或 undo。' } };
@@ -122,6 +295,19 @@ export async function resumeAgentRun(input: { id: unknown; action: unknown; sign
   // 认领即销毁：上面两条分支都先拿到「唯一执行权」，拿不到就说明这条已经用过或过期了。
   const record = claimApproval(input.id);
   if (!record) return { status: 404, body: { error: '这条待确认操作已失效（超过 10 分钟会作废），请重新发起。' } };
+
+  // A project typecheck is a fixed local capability, not an MCP call. Keep it
+  // outside the generic MCP continuation so approval cannot accidentally turn
+  // into a model follow-up or an arbitrary tool invocation.
+  if (record.pending.some(isProjectTypecheckPending)) {
+    return resumeProjectTypecheck({
+      approvalId: record.id,
+      pending: record.pending,
+      action,
+      signal: input.signal,
+      allowLocalProjectTypecheck: input.allowLocalProjectTypecheck,
+    });
+  }
 
   if (action === 'reject') {
     // 拒绝也要留痕：用户明确说过「不做」，这和「从没发生过」不是一回事。
