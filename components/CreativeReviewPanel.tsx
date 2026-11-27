@@ -1,4 +1,4 @@
-import type { CreativeReviewEvidence, CreativeReviewReport, CreativeReviewSection } from '@/packages/contracts/creative-review';
+import type { CreativeReviewEvidence, CreativeReviewReport } from '@/packages/contracts/creative-review';
 
 type Props = {
   reports?: readonly CreativeReviewReport[];
@@ -29,10 +29,6 @@ function statusLabel(evidence: CreativeReviewEvidence) {
   if (evidence.status === 'fail') return '发现问题';
   return isUnevaluated(evidence) ? '未评估' : '未得出结论';
 }
-function sectionStatusLabel(status: CreativeReviewSection['status']) {
-  return status === 'pass' ? '已检查项符合' : status === 'fail' ? '发现问题' : '部分检查无结论';
-}
-
 function sourceLabel(evidence: CreativeReviewEvidence) {
   if (evidence.status === 'unknown') return null;
   if (evidence.source === 'rule') return '规则检查';
@@ -61,10 +57,6 @@ function unevaluatedCause(evidence: CreativeReviewEvidence): string | null {
   }
   return null;
 }
-function unevaluatedLabel(evidence: CreativeReviewEvidence) {
-  return DIMENSION_LABELS[evidence.dimension] || evidence.dimension.replaceAll('_', ' ');
-}
-
 function valueLabel(value: CreativeReviewEvidence['observed'] | CreativeReviewEvidence['expected']) {
   return value === undefined ? null : String(value);
 }
@@ -88,17 +80,12 @@ function ReviewEvidence({ evidence }: { evidence: CreativeReviewEvidence }) {
   </li>;
 }
 
-function ReviewSection({ title, value }: { title: string; value: CreativeReviewSection }) {
-  const visibleEvidence = value.evidence.filter((evidence) => !isUnevaluated(evidence));
-  const hasUnevaluated = visibleEvidence.length !== value.evidence.length;
-  const status = value.status === 'unknown' && hasUnevaluated && !visibleEvidence.some((evidence) => evidence.status === 'unknown')
-    ? '部分检查未评估'
-    : sectionStatusLabel(value.status);
+function ReviewSection({ title, evidence }: { title: string; evidence: readonly CreativeReviewEvidence[] }) {
+  if (evidence.length === 0) return null;
+
   return <section className="creative-review-section">
-    <header><strong>{title}</strong><span className={'creative-review-status ' + value.status}>{status}</span></header>
-    {visibleEvidence.length > 0
-      ? <ul>{visibleEvidence.map((evidence, index) => <ReviewEvidence key={evidence.dimension + '-' + index} evidence={evidence} />)}</ul>
-      : <p className="creative-review-note">本节有未评估的检查项，原因见上方说明。</p>}
+    <header><strong>{title}</strong></header>
+    <ul>{evidence.map((item, index) => <ReviewEvidence key={item.dimension + '-' + index} evidence={item} />)}</ul>
   </section>;
 }
 
@@ -110,34 +97,43 @@ export default function CreativeReviewPanel({ reports }: Props) {
     + report.safety.evidence.filter((item) => item.status === 'fail').length, 0);
   if (issues === 0) return null;
 
-  const unevaluatedEvidence = reports.flatMap((report) => [...report.capability.evidence, ...report.safety.evidence])
-    .filter(isUnevaluated);
-  const unevaluated = unevaluatedEvidence.map(unevaluatedLabel);
-  const unevaluatedCounts = [...new Set(unevaluated)].map((label) => ({
-    label,
-    count: unevaluated.filter((item) => item === label).length,
-  }));
-  const unevaluatedCauses = [...new Set(unevaluatedEvidence.map(unevaluatedCause).filter((cause): cause is string => cause !== null))];
+  const findingLabels = [...new Set(reports.flatMap((report) => [...report.capability.evidence, ...report.safety.evidence])
+    .filter((evidence) => evidence.status === 'fail')
+    .map((evidence) => DIMENSION_LABELS[evidence.dimension] || evidence.dimension.replaceAll('_', ' ')))];
 
   return <details className="creative-review-panel">
     <summary>
-      产物检查明细
-      {issues > 0 && <span className="creative-review-status fail">发现 {issues} 项问题</span>}
+      查看产物检查
+      <span className="creative-review-status fail">发现 {issues} 项问题</span>
+      <span className="creative-review-summary-findings">{findingLabels.slice(0, 2).join('、')}{findingLabels.length > 2 ? '等' : ''}</span>
     </summary>
     <div className="creative-review-panel-content">
       <p className="creative-review-note">
-        检查结果按项目记录。
-        {unevaluatedCounts.length > 0
-          ? ` ${unevaluatedCounts.map(({ label, count }) => `${label}${count > 1 ? `（${count} 项）` : ''}`).join('、')}暂未评估（${unevaluatedCauses.join('；')}）；这不代表图片失败。`
-          : ' 未评估的项目暂无通过或失败结论。'}
+        这里只列出检查发现的问题。未评估表示没有可用的对应评审器，不代表产物失败。
       </p>
-      {reports.map((report, index) => <article className="creative-review-report" key={report.artifactRef + '-' + index}>
-        {reports.length > 1 && <h4>第 {index + 1} {report.mediaKind === 'image' ? '张图片' : '个视频'}</h4>}
-        <div className="creative-review-sections">
-          <ReviewSection title="能力检查" value={report.capability} />
-          <ReviewSection title="安全判断" value={report.safety} />
-        </div>
-      </article>)}
+      {reports.map((report, index) => {
+        const sections = [report.capability, report.safety];
+        const findings = sections.flatMap((section) => section.evidence.filter((evidence) => evidence.status === 'fail'));
+        const remaining = sections.flatMap((section) => section.evidence.filter((evidence) => evidence.status !== 'fail'));
+        const passedCount = remaining.filter((evidence) => evidence.status === 'pass').length;
+        const unevaluatedCount = remaining.filter(isUnevaluated).length;
+        const inconclusiveCount = remaining.filter((evidence) => evidence.status === 'unknown' && !isUnevaluated(evidence)).length;
+
+        return <article className="creative-review-report" key={report.artifactRef + '-' + index}>
+          {reports.length > 1 && <h4>第 {index + 1} {report.mediaKind === 'image' ? '张图片' : '个视频'}</h4>}
+          <section className="creative-review-section">
+            <header><strong>需要关注</strong><span className="creative-review-status fail">{findings.length} 项</span></header>
+            <ul>{findings.map((evidence, itemIndex) => <ReviewEvidence key={evidence.dimension + '-' + itemIndex} evidence={evidence} />)}</ul>
+          </section>
+          {remaining.length > 0 && <details className="creative-review-additional">
+            <summary>其余检查结果：通过 {passedCount} 项 · 未评估 {unevaluatedCount} 项 · 无结论 {inconclusiveCount} 项</summary>
+            <div className="creative-review-sections">
+              <ReviewSection title="能力检查" evidence={report.capability.evidence.filter((evidence) => evidence.status !== 'fail')} />
+              <ReviewSection title="安全判断" evidence={report.safety.evidence.filter((evidence) => evidence.status !== 'fail')} />
+            </div>
+          </details>}
+        </article>;
+      })}
     </div>
   </details>;
 }
