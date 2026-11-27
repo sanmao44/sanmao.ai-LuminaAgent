@@ -331,7 +331,7 @@ test('image generation returns its structured creative review to the Agent', asy
   assert.deepEqual(generated.map((image) => image.creativeReview.artifactRef), artifactRefs, 'the Agent response images keep each matching review');
 });
 
-test('image generation summarizes non-failing creative reviews for the Agent', async () => {
+test('image generation keeps non-failing creative reviews internal', async () => {
   const image = load('./packages/tool-runtime/image-capability');
   const artifactRef = '/api/storage/file?name=generated-summary.png';
   const generated = [];
@@ -367,7 +367,7 @@ test('image generation summarizes non-failing creative reviews for the Agent', a
   });
   const payload = JSON.parse(String(result.results[0].content));
   assert.deepEqual(payload.images.map((entry) => entry.ref), [artifactRef]);
-  assert.deepEqual(payload.creativeReviewSummary, [{ artifactRef, status: 'unknown', failed: 0, passed: 1, unknown: 1 }]);
+  assert.equal('creativeReviewSummary' in payload, false, 'review summaries stay out of the user-visible tool result');
   assert.equal('creativeReview' in payload, false, 'the Agent does not receive a long report without a concrete failure');
   assert.equal('creativeReview' in generated[0], false, 'non-failing reports stay out of the user-visible image metadata');
   assert.deepEqual(persistedReview, [review], 'the full report remains in the internal generation record');

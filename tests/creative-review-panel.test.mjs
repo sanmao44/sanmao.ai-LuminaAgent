@@ -47,7 +47,7 @@ test('does not add review noise when an older task has no saved review record', 
 });
 
 
-test('labels multiple image reports as images', () => {
+test('labels multiple image reports and keeps unknown checks hidden', () => {
   const html = renderToStaticMarkup(createElement(CreativeReviewPanel, {
     reports: [report({ mediaKind: 'image' }), report({ mediaKind: 'image', artifactRef: 'image-2' })],
   }));
