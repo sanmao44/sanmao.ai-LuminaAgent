@@ -2742,6 +2742,39 @@ test('HTML delivery preserves a provider failure during the tool-call retry', as
   assert.equal(data.files?.length || 0, 0);
 });
 
+for (const failure of [
+  Object.assign(new Error('请求内容超过服务商限制：body too large (request id: req-size)'), { providerStatus: 413, providerFailureKind: 'http' }),
+  Object.assign(new Error('HTTP 429: rate limit exceeded (request id: req-rate)'), { providerStatus: 429, providerFailureKind: 'http' }),
+]) {
+  test(`HTML delivery preserves the original provider failure: ${failure.message}`, async () => {
+    const described = [];
+    const agent = harness({
+      describeProviderFailure: (error) => { described.push(error); return error.message; },
+      reply: () => { throw failure; },
+    });
+    const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+    assert.equal(data.error, failure.message);
+    assert.equal(agent.modelCalls.length, 1, 'do not repeat a failed tool request as a plain chat request');
+    assert.ok(described.every((error) => error === failure), 'preserve the original error metadata');
+    assert.equal(data.files?.length || 0, 0);
+  });
+}
+
+test('HTML delivery preserves a provider failure during the tool-call retry', async () => {
+  const failure = Object.assign(new Error('HTTP 429: retry rate limit (request id: req-retry)'), { providerStatus: 429, providerFailureKind: 'http' });
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (_payload, count) => {
+      if (count > 1) throw failure;
+      return { content: '我会生成 HTML 文件。' };
+    },
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(data.error, failure.message);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files?.length || 0, 0);
+});
+
 test('HTML delivery returns a downloadable chat file after file_generate succeeds', async () => {
   const content = '<!doctype html><html><body><svg aria-label="鹅骑自行车"></svg></body></html>';
   const agent = harness({
@@ -2871,6 +2904,87 @@ test('HTML delivery refuses an invalid tool-free fallback without creating a fil
   assert.equal(data.files?.length || 0, 0);
   assert.match(data.error, /没有生成可下载文件|未返回可验证的文本文件内容/);
   assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+});
+
+test('HTML delivery repairs invalid file content once using the actual tool error', async () => {
+  const content = '<!doctype html><html><body>修复后的页面</body></html>';
+  const agent = harness({ reply: (payload, count) => {
+    if (count === 2) {
+      const result = payload.messages.findLast((message) => message.role === 'tool');
+      assert.match(result.content, /没有收到有效的文件内容/);
+      assert.ok(payload.tools.some((tool) => tool.function.name === 'file_generate'));
+    }
+    return { tool_calls: [{ id: `repair-${count}`, function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'page.html', content: count === 1 ? '' : content }] }) } }] };
+  } });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files.length, 1);
+  assert.equal(data.files[0].content, content);
+  assert.match(data.message, /已完成 1 个文件/);
+  assert.doesNotMatch(data.message, /错误|不能据此断定|未完成/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+  assert.equal(agent.generationLogFinishes.at(-1).error, undefined);
+});
+
+test('HTML delivery reports the actual file error when its one repair also fails', async () => {
+  const agent = harness({
+    describeProviderFailure: (error) => error.message,
+    reply: (_payload, count) => ({ tool_calls: [{ id: `invalid-${count}`, function: { name: 'file_generate', arguments: '{"files":[{"filename":"page.html","content":""}]}' } }] }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.match(data.error, /没有收到有效的文件内容/);
+  assert.doesNotMatch(data.error, /切换.*模型|未能发起工具调用/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+  assert.match(agent.generationLogFinishes.at(-1).error, /没有收到有效的文件内容/);
+});
+
+test('HTML delivery keeps a failed target visible when repair creates a different file', async () => {
+  const agent = harness({ reply: (_payload, count) => ({
+    tool_calls: [{ id: `different-target-${count}`, function: { name: 'file_generate', arguments: JSON.stringify({
+      files: [{ filename: count === 1 ? 'requested.html' : 'other.html', content: count === 1 ? '' : '<html>other</html>' }],
+    }) } }],
+  }) });
+  const data = await agent.post([{ role: 'user', content: '生成一个 HTML 文件' }]);
+  assert.equal(agent.modelCalls.length, 2);
+  assert.equal(data.files[0].name, 'other.html');
+  assert.match(data.message, /没有收到有效的文件内容/);
+  assert.doesNotMatch(data.message, /已完成 1 个文件/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'error');
+});
+
+test('a large successfully generated HTML file is delivered without another context-limited call', async () => {
+  const content = '<!doctype html><html><body>' + 'x'.repeat(100_000) + '</body></html>';
+  const agent = harness({
+    reply: () => ({ tool_calls: [{ id: 'large-html', function: { name: 'file_generate', arguments: JSON.stringify({ files: [{ filename: 'large.html', content }] }) } }] }),
+  });
+  const data = await agent.post([{ role: 'user', content: '画只鹅骑自行车的svg动画，html交付，带交互控件！' }]);
+  assert.equal(data.error, undefined);
+  assert.equal(data.files[0].content, content);
+  assert.equal(agent.modelCalls.length, 1);
+});
+
+test('complex delivery trims old multibyte history and reserves tools before calling the model', async () => {
+  const latest = '画只鹅骑自行车的svg动画，html交付，带交互控件！';
+  const agent = harness({
+    contextWindow: 12_000,
+    reply: (payload) => {
+      const messageBytes = Buffer.byteLength(JSON.stringify(payload.messages));
+      const toolBytes = Buffer.byteLength(JSON.stringify(payload.tools || []));
+      assert.ok(messageBytes + toolBytes < (12_000 - 4096) * 3);
+      assert.ok(payload.messages.some((message) => message.role === 'user' && message.content === latest));
+      assert.ok(!payload.messages.some((message) => message.content === '旧上下文'.repeat(10_000)));
+      return { tool_calls: [{ id: 'trimmed-html', function: { name: 'file_generate', arguments: '{"files":[{"filename":"page.html","content":"<html>ok</html>"}]}' } }] };
+    },
+    describeProviderFailure: (error) => error.message,
+  });
+  const data = await agent.post([
+    { role: 'user', content: '旧上下文'.repeat(10_000) },
+    { role: 'assistant', content: '已了解。' },
+    { role: 'user', content: latest },
+  ]);
+  assert.equal(data.error, undefined);
+  assert.equal(data.files.length, 1);
 });
 
 test('HTML delivery repairs invalid file content once using the actual tool error', async () => {

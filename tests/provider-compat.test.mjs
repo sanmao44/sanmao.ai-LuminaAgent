@@ -1157,7 +1157,7 @@ test('DeepSeek Search and Fetch use dedicated endpoints, auth and validated bodi
   assert.equal(calls[0].headers.Authorization, 'Bearer test-key');
   assert.deepEqual(calls[0].body, { query: 'DeepSeek V4', count: 5, ori_question: '原问题', localization: '1.2.3.4', need_content: true });
   assert.deepEqual(calls[1].body, { url: 'https://example.test/page' });
-  assert.deepEqual(calls[2].body, { query: '默认参数', count: 10 });
+  assert.deepEqual(calls[2].body, { query: '默认参数', count: 10, localization: '', need_content: false });
   await assert.rejects(providers.deepSeekToolSearch(provider, { query: '' }), /1 至 128/);
   await assert.rejects(providers.deepSeekToolFetch(provider, 'ftp://example.test/page'), /HTTP 或 HTTPS/);
 });
@@ -1203,7 +1203,7 @@ test('DeepSeek Search and Fetch retry transient HTTP failures without double-cou
 
 test('DeepSeek Search preserves billable request metadata when a 200 response has malformed rows', async () => {
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({ results: [{ title: '缺少字段', url: 'https://example.test' }] }), { status: 200 });
+  globalThis.fetch = async () => new Response(JSON.stringify({ results: [{ title: '缺少必需 URL' }] }), { status: 200 });
   const provider = { id: 'deepseek', name: 'DeepSeek', type: 'openai-compatible', platform: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'test-key' };
   try {
     await assert.rejects(providers.deepSeekToolSearch(provider, { query: 'schema' }), (error) => {
