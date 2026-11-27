@@ -632,7 +632,7 @@ export async function reviewVideoBuffer(input: ReviewVideoBufferInput): Promise<
     return makeReport(
       artifactRef,
       evidence,
-      '本次仅完成本地结构与解码检查，没有分析视频语义；不能确认画面内容安全。',
+      'Brief 核对（如有）仅基于最多三张抽样静帧；未评审内容安全、连续运动或字幕时序，因此安全结论为 unknown。',
     );
   } catch {
     return unknownReport(artifactRef, 'video_review', '评审器未能完成本地视频检查；本次结论为 unknown。', '本地评审应在资源限制内完成并返回可复核证据');

@@ -220,6 +220,9 @@ test('sends bounded representative frames and the original brief to an injected 
     assert.equal(alignment?.source, 'vision');
     assert.match(String(alignment?.reason), /没有移动/);
     assert.match(String(alignment?.location), /秒|抽样画面/);
+    assert.equal(report.safety.status, 'unknown');
+    assert.match(String(report.safety.evidence[0]?.reason), /最多三张抽样静帧/);
+    assert.match(String(report.safety.evidence[0]?.reason), /内容安全、连续运动或字幕时序/);
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }
