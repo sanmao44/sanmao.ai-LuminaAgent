@@ -212,8 +212,10 @@ import {
   placeCanvasNodeToolbar,
 } from "@/lib/canvas/editor-layout";
 import {
-  createCanvasImageZip,
+  canvasGroupDownloadItems,
+  createCanvasMediaZip,
   orderCanvasImageItems,
+  type CanvasMediaDownloadItem,
 } from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
 import {
@@ -12428,26 +12430,26 @@ export default function SuperCanvas() {
       notify(error instanceof Error ? error.message : "分享版下载失败", "error");
     }
   }, [notify]);
-  const downloadSelectedImages = useCallback(async (groupItems?: typeof selectedImageDownloads) => {
-    const downloadItems = groupItems ?? selectedImageDownloads;
+  const downloadSelectedImages = useCallback(async (groupItems?: CanvasMediaDownloadItem[]) => {
+    const downloadItems: CanvasMediaDownloadItem[] = groupItems ?? selectedImageDownloads.map((item) => ({ ...item, kind: "image" }));
     if (!downloadItems.length || batchDownloading) return;
     setBatchDownloading(true);
     try {
-      const { blob } = await createCanvasImageZip(downloadItems);
+      const { blob } = await createCanvasMediaZip(downloadItems);
       const objectUrl = URL.createObjectURL(blob);
       const anchor = window.document.createElement("a");
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       anchor.href = objectUrl;
-      anchor.download = `SANMAO-画布图片-${stamp}.zip`;
+      anchor.download = `SANMAO-画布素材-${stamp}.zip`;
       anchor.rel = "noreferrer";
       anchor.style.display = "none";
       window.document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-      notify(`已开始下载 ${downloadItems.length} 张图片`);
+      notify(`已开始下载 ${downloadItems.length} 个素材`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "批量下载图片失败", "error");
+      notify(error instanceof Error ? error.message : "批量下载素材失败", "error");
     } finally {
       setBatchDownloading(false);
     }
@@ -13537,12 +13539,8 @@ export default function SuperCanvas() {
   const groupQuickActions = useMemo<CanvasQuickToolbarActions>(() => {
     const group = contextGroup || selectedGroup;
     if (!group) return { primaryActions: [], menuGroups: [] };
-    const groupImages = groupNodes(document, group.id).filter(
-      (node) =>
-        isCanvasReferenceableNode(node) &&
-        node.data.kind === "image" &&
-        Boolean(node.data.url),
-    );
+    const groupDownloads = canvasGroupDownloadItems(groupNodes(document, group.id));
+    const groupImages = groupDownloads.filter((item) => item.kind === "image");
     const layerActions: CanvasQuickAction[] = [
       {
         id: "bring-to-front",
@@ -13639,11 +13637,9 @@ export default function SuperCanvas() {
               id: "download-group",
               icon: "download",
               label: "批量下载",
-              title: "按组内顺序打包下载图片",
-              disabled: !groupImages.length || batchDownloading,
-              onClick: () => void downloadSelectedImages(groupImages.map((node) => ({
-                id: node.id, name: String(node.data.name || "图片"), url: String(node.data.url),
-              }))),
+              title: "按组内顺序打包下载图片和视频",
+              disabled: !groupDownloads.length || batchDownloading,
+              onClick: () => void downloadSelectedImages(groupDownloads),
             },
           ],
         },
