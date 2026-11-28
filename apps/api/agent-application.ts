@@ -52,7 +52,7 @@ import { creativeProjectBriefInstruction } from '@/packages/agent-core/project-b
 import { planAgentRequest } from '@/packages/agent-core/request-planning';
 import { mcpFollowupIncompleteMessage, mcpFollowupPartialMessage, mcpFollowupStopMessage, mcpFollowupSummaryPrompt, runCapabilityFollowups, runMcpCapabilityFollowup } from '@/apps/api/agent-execution';
 import type { AgentHttpInput } from '@/apps/api/agent-http-contract';
-import { applicationJson as createApplicationJson } from '@/apps/api/agent-application-contract';
+import { applicationJson as createApplicationJson, type AgentAssistantExecutionControl } from '@/apps/api/agent-application-contract';
 import { formatAgentCapabilitySnapshot } from '@/packages/agent-core/capability-snapshot';
 import type { YtDlpDownloadRequest } from '@/lib/yt-dlp-adapter';
 import { is65535ClaudeModelProvider } from '@/lib/providers';
@@ -487,7 +487,7 @@ async function transcribeAudioAttachment(
 /** MCP 管理动作在界面徽标上的中文名。 */
 const MCP_MANAGE_LABELS: Record<string, string> = { list: '列出服务', probe: '连接自检', add: '添加服务', update: '修改配置', remove: '删除服务', install_from_repo: '安装 GitHub MCP', runtime_status: '查看本地运行时', runtime_start: '启动本地运行时', runtime_stop: '关闭本地运行时' };
 
-export type AgentApplicationInput = AgentHttpInput;
+export type AgentApplicationInput = AgentHttpInput & { execution?: AgentAssistantExecutionControl };
 
 export async function runAgentApplication(input: AgentApplicationInput, infrastructure: AgentApplicationInfrastructure): Promise<AgentApplicationOutput> {
   let buildIntentPreview: (() => AgentIntentPreview) | null = null;
@@ -533,10 +533,21 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   const skillDataDir = resolveLocalDataDir();
   const skillPorts = createCapabilityPorts(skillDataDir);
   const signal = input.signal;
+  const execution = input.execution;
+  const activeNow = execution ? () => execution.now() : Date.now;
   const requestController = new AbortController();
   let wantsStream = false;
   let streamOwnsRuntimeRequest = false;
   let releaseRuntimeRequest = async () => {};
+  let refreshExecutionPolicy: (() => Promise<void>) | undefined;
+  const checkpoint = (completedToolCall = false) => execution?.checkpoint({
+    completedToolCall,
+    beforePause: () => releaseRuntimeRequest(),
+    afterResume: async () => {
+      releaseRuntimeRequest = await beginRuntimeRequest('agent');
+      await refreshExecutionPolicy?.();
+    },
+  });
   let llmResponseChars = 0;
   let llmFailure = '';
   let forcedLlmSettlementError = '';
@@ -564,11 +575,12 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
   };
   try {
     releaseRuntimeRequest = await beginRuntimeRequest('agent');
+    if (execution) await checkpoint();
     const body = input.body;
     agentRunId = (await beginAgentRun((body as { runId?: unknown }).runId))?.runId || null;
     const preparedRequestContext = prepareAgentRequestContext({ body, runId: agentRunId, normalizeWorkspaceContext, normalizeDocument, normalizeGenerationSource });
     const { workspaceContext, canvasDocument, creativeProjectBrief, canvasTargetNodeIds, canvasTargetKind, canvasTargetOperation, taskContext, sourceForLog, isCanvasSource, isCanvasNodeExecution } = preparedRequestContext;
-    wantsStream = body.stream === true;
+    wantsStream = !execution && body.stream === true;
     const isReversePromptTask = body.task === 'reverse_prompt';
     const isOneTakeVideoPromptTask = body.task === 'one_take_video_prompt';
     const isCinematicDirectorTask = body.task === 'cinematic_shock_opening_director';
@@ -631,6 +643,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         if (bodyHasTranscriptionSelection && !modelSelection) {
           return applicationJson({ error: '字幕转写模型选择无效，请重新选择。' }, { status: 400 });
         }
+        if (execution) await checkpoint();
         const audioSubtitle = await transcribeAudioAttachment(
           latestMessage,
           transcriptionInfrastructure,
@@ -639,6 +652,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           modelSelection || undefined,
           'subtitle',
         );
+        if (execution) await checkpoint(Boolean(audioSubtitle));
         if (audioSubtitle && 'file' in audioSubtitle) {
         const referenceNote = audioSubtitle.referenceDocumentCount
           ? `已读取 ${audioSubtitle.referenceDocumentCount} 个参考文档；会用其中的专名提示识别，并谨慎校正与参考稿上下文高度匹配的错字，无法确认处保留识别原文。时间戳仍来自音频识别，并非按参考稿逐字强制对齐，字幕建议人工核对。`
@@ -683,6 +697,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         });
         }
       } else {
+        if (execution) await checkpoint();
         const audioRecognition = await transcribeAudioAttachment(
           latestMessage,
           transcriptionInfrastructure,
@@ -691,6 +706,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           undefined,
           'conversation',
         );
+        if (execution) await checkpoint(Boolean(audioRecognition));
         if (audioRecognition && 'transcript' in audioRecognition) {
           const transcript = audioRecognition.transcript.text.trim();
           const audioName = latestMessage.files?.find((file) => isAudioClientFile(file) && file.artifactId)?.name || '音频附件';
@@ -991,7 +1007,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       return boundAgentChatPayload(payload, model, { currentTurnStart });
     };
     const invokeChatModel = (payload: Parameters<typeof chatCompletion>[2], signal: AbortSignal) => composition.invokeChatModel(payload, signal);
-    const trackedChatCompletion = (
+    const invokeTrackedChatCompletion = (
       _provider: Parameters<typeof chatCompletion>[0],
       _rawModelId: Parameters<typeof chatCompletion>[1],
       payload: Parameters<typeof chatCompletion>[2],
@@ -1000,13 +1016,19 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       recordLlmUsage(response);
       return response;
     });
-    const trackedSelectedChatCompletion = (
+    const trackedChatCompletion: typeof invokeTrackedChatCompletion = async (...args) => {
+      if (execution) await checkpoint();
+      return invokeTrackedChatCompletion(...args);
+    };
+    const trackedSelectedChatCompletion = async (
       payload: Parameters<typeof chatCompletion>[2],
       signal: Parameters<typeof chatCompletion>[3] = requestController.signal,
-    ) => composition.invokeSpecificChatModel(agentRuntime, payload, signal).then((response) => {
+    ) => {
+      if (execution) await checkpoint();
+      const response = await composition.invokeSpecificChatModel(agentRuntime, payload, signal);
       recordLlmUsage(response);
       return response;
-    });
+    };
     const trackedChatCompletionStream = (
       _provider: Parameters<typeof chatCompletionStream>[0],
       _rawModelId: Parameters<typeof chatCompletionStream>[1],
@@ -1017,6 +1039,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       reportProgress({ stage: 'tool', message: '正在安装并连接 MCP 仓库…' });
       const mcpTools = [{ server: '本机配置', name: '安装 GitHub MCP', readOnly: false, ok: true }];
       try {
+        if (execution) await checkpoint();
         const outcome = await runMcpManageAction(
           { action: 'install_from_repo', repo: directGithubMcpRepo },
           {
@@ -1025,6 +1048,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
             signal: requestController.signal,
           },
         );
+        if (execution) await checkpoint(true);
         const server = outcome.result.server as { name?: string } | undefined;
         const message = `已完成：${server?.name || directGithubMcpRepo} 已安装并接入，下一轮对话即可使用。`;
         await settleLlmLog?.({ status: 'success', responseChars: message.length });
@@ -1124,6 +1148,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
           const classifierRuntime = await getRuntimeIntentClassifierModel?.();
           if (classifierRuntime) {
             intentClassifierModelId = classifierRuntime.model.id;
+            if (execution) await checkpoint();
             const planned = await withAgentOperationDeadline(requestController.signal, 2_000, 'intent classification',
               (classifierSignal) => (composition.invokeIntentClassifier || composition.invokeSpecificChatModel)(classifierRuntime, boundChatPayload(semanticPayload, classifierRuntime.model), classifierSignal));
             recordLlmUsage(planned);
@@ -1284,8 +1309,9 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const identityQuestion = isModelIdentityQuestion(latestInstruction);
     const canvasImageEditRequest = isCanvasSource && body.executionMode === 'agent-dock'
       && canvasTargetKind === 'image'
-      && canvasTargetOperation === 'edit'
-      && Boolean(latestInstruction.trim());
+      && Boolean(latestInstruction.trim())
+      && (canvasTargetOperation === 'edit'
+        || (latestReferenceImageCount > 0 && isImageEditRequest(latestInstruction)));
     if (canvasImageEditRequest) {
       // The Canvas dock has already supplied the target image and an explicit
       // edit operation. Treat this as an executable command even when the
@@ -1787,6 +1813,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         throw new Error('未找到支持图片分析的对话模型，请先启用视觉模型。');
       }
       if (requestController.signal.aborted) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
+      if (execution) await checkpoint();
       const response = await composition.invokeCandidateChatModels(directorCandidates, {
         messages: llmMessages,
         tool_choice: 'none',
@@ -1820,12 +1847,13 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
         });
     }
 
-    const webSearchStartedAt = needsWebSearch ? Date.now() : 0;
-    const remainingWebSearchMs = () => Math.max(0, AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS - (Date.now() - webSearchStartedAt));
+    const webSearchStartedAt = needsWebSearch ? activeNow() : 0;
+    const remainingWebSearchMs = () => Math.max(0, AGENT_WEB_SEARCH_TOTAL_TIMEOUT_MS - (activeNow() - webSearchStartedAt));
     if (needsWebSearch && nativeWebSearch && remainingWebSearchMs() > 0) {
       const searchStartedAt = Date.now();
       try {
         llmWebSearchStatus = 'searched';
+        if (execution) await checkpoint();
         const nativeResult = await withAgentOperationDeadline(
           requestController.signal,
           Math.min(AGENT_NATIVE_SEARCH_TIMEOUT_MS, remainingWebSearchMs()),
@@ -1850,6 +1878,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
       llmWebSearchStatus = 'searched';
       reportProgress({ stage: 'web_search', message: '正在联网搜索…' });
       try {
+        if (execution) await checkpoint();
         webSearchData = await withAgentOperationDeadline(
           requestController.signal,
           Math.min(AGENT_EXTERNAL_SEARCH_TIMEOUT_MS, remainingWebSearchMs()),
@@ -1948,6 +1977,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // a narrowed view for the deferred tool closures without forcing public
     // state loading on ordinary turns.
     const executionPublicState = publicState as NonNullable<typeof publicState>;
+    let executionApprovalPolicy = publicState?.settings.mcpApprovalPolicy;
     // MCP 工具是运行时按已配置服务拉取的远程工具：best-effort，没配置或连不上就当没有，
     // 绝不能让外部服务的可用性影响到普通对话。
     /* 拉取外部工具表可能是这一轮最慢的一步，先给用户一个交代。 */
@@ -1987,6 +2017,7 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     // const selectedMcpServers = creativeToolIsolation ? [] : mcpServersForTurn(listMcpServers(), mcpTurnText, priorityServerIds);
     if (!mcpAllowedThisTurn) selectedMcpServers.splice(0, selectedMcpServers.length);
     if (isCanvasNodeExecution) selectedMcpServers.splice(0, selectedMcpServers.length);
+    if (execution && selectedMcpServers.length) await checkpoint();
     const mcpRuntime = mcpAllowedThisTurn && !isCanvasNodeExecution
       ? await loadMcpToolRuntime({
         signal: requestController.signal,
@@ -2012,10 +2043,33 @@ export async function runAgentApplication(input: AgentApplicationInput, infrastr
     const desktopCaptureExplicitlyForbidden = desktopInstructionPolicy.screenshotExplicitlyForbidden;
 
     const mcpServerById = new Map(mcpRuntime.servers.map((server) => [server.id, server] as const));
-// 授权目录与数据目录在整轮里只读一次：中途用户在面板改授权，下一轮才生效。
-const mcpFilesystemRoots = mcpAllowedThisTurn ? requestedFilesystemRoots : [];
-// 「勾了写入」的目录是另一份：只读授权只换到读权限，写工具按这份清单把关。
-const mcpFilesystemWriteRoots = mcpAllowedThisTurn ? listFilesystemWriteRoots() : [];
+const mcpFilesystemRoots = mcpAllowedThisTurn ? [...requestedFilesystemRoots] : [];
+const mcpFilesystemWriteRoots = mcpAllowedThisTurn ? [...listFilesystemWriteRoots()] : [];
+const toolsRevokedDuringPause = new Set<string>();
+if (execution && mcpRuntime.servers.length) {
+  refreshExecutionPolicy = async () => {
+    // A paused run can keep its original capabilities or lose them. It cannot
+    // silently acquire newly enabled tools, targets or writable directories.
+    const retainAuthorized = (granted: string[], latest: string[]) => {
+      granted.splice(0, granted.length, ...granted.filter((root) => latest.includes(root)));
+    };
+    retainAuthorized(mcpFilesystemRoots, listFilesystemRoots());
+    retainAuthorized(mcpFilesystemWriteRoots, listFilesystemWriteRoots());
+    const currentState = await getPublicState();
+    executionApprovalPolicy = currentState.settings.mcpApprovalPolicy;
+    const serverConfigs = new Map(listMcpServers().map((server) => [server.id, server]));
+    const stillConfigured = mcpRuntime.servers.filter((server) => {
+      const current = serverConfigs.get(server.id);
+      // Do not reuse pending calls against a changed command, endpoint or account.
+      return current?.enabled && JSON.stringify(server) === JSON.stringify(current);
+    });
+    const refreshed = await loadMcpToolRuntime({ servers: stillConfigured, cache: false, signal: requestController.signal });
+    const stillAllowed = new Set(refreshed.tools.filter((tool) => !tool.mcp?.blocked).map((tool) => tool.name));
+    for (const tool of mcpRuntime.tools) {
+      if (!stillAllowed.has(tool.name)) toolsRevokedDuringPause.add(tool.name);
+    }
+  };
+}
 const filesystemEditScope = { roots: mcpFilesystemRoots, writeRoots: mcpFilesystemWriteRoots, get dataDir() { return localDataDir; } };
 const requestedFilesystemEditMode = mcpAllowedThisTurn ? filesystemEditRequestMode(latestInstruction) : null;
 const callMcpForTurn: typeof callMcpTool = (server, toolName, args, options) => isFilesystemEditCall(server, toolName)
@@ -2775,7 +2829,7 @@ const auditMcpCall = (
         fallbackImagePrompt,
         requestedImageCapability,
         latestRefs,
-        trackedChatCompletion,
+        trackedChatCompletion: invokeTrackedChatCompletion,
         agentRuntime,
         requestedAgentImageModelId,
         getRuntimeImageGenerationModel,
@@ -2849,7 +2903,13 @@ const auditMcpCall = (
       context: gatingContext,
       observer: runtimeObserver,
       extraTools: mcpTools,
-      resolvePolicy: resolveToolPolicy,
+      resolvePolicy: (name, context, tools) => {
+        const policy = resolveToolPolicy(name, context, tools);
+        return toolsRevokedDuringPause.has(String(name))
+          ? { ...policy, allowed: false, reason: '此工具的服务配置或权限在暂停期间发生变化，当前任务不会执行这一步。' }
+          : policy;
+      },
+      ...(execution ? { beforeCall: async () => { await checkpoint(); } } : {}),
       onPolicyDenied: async ({ policy }) => {
         const meta = policy.tool?.mcp;
         if (meta) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'policy', ok: false, summary: policy.reason }); }
@@ -2880,7 +2940,7 @@ const auditMcpCall = (
         const editArgs = localEdit && requestedFilesystemEditMode === 'preview' ? { ...guard.args, dryRun: true } : guard.args;
         const reviewBeforeWrite = localEdit && requestedFilesystemEditMode === 'review';
         const filesystemEditPreview = localEdit && !reviewBeforeWrite && editArgs.dryRun === true && !guard.approval;
-        const assessment = assessToolApproval({ definition: policy.tool, args: editArgs, pageText: recentPageText, sensitiveHint: guard.approval || '', policy: executionPublicState.settings.mcpApprovalPolicy, toolPolicy: rememberedToolPolicy, filesystemEditPreview });
+        const assessment = assessToolApproval({ definition: policy.tool, args: editArgs, pageText: recentPageText, sensitiveHint: guard.approval || '', policy: executionApprovalPolicy, toolPolicy: rememberedToolPolicy, filesystemEditPreview });
         if (assessment.blocked) { usedMcpTools.push({ server: meta.serverName, name: meta.toolName, readOnly: meta.readOnly, ok: false }); auditMcpCall(meta, { risk: policy.tool?.risk, allowed: false, decision: 'block', ok: false, summary: assessment.reason }); return { deny: assessment.reason }; }
         if (assessment.required || reviewBeforeWrite) return 'defer';
         return { allow: true, args: editArgs };
@@ -2973,7 +3033,12 @@ const auditMcpCall = (
                });
              }
            } catch {}
-
+        }
+        if (execution) {
+          // The image tool prepares its caption alongside generation. Both
+          // operations have to settle before the run can pause.
+          await (preparedCaption as Promise<string> | null)?.catch(() => undefined);
+          await checkpoint(!result.deferred);
         }
       },
     });
@@ -3035,7 +3100,7 @@ const auditMcpCall = (
           args: deferredArgs,
           pageText: recentPageText,
           sensitiveHint: deferredGuard.approval || '',
-          policy: executionPublicState.settings.mcpApprovalPolicy,
+          policy: executionApprovalPolicy,
           // 等待期间用户可能刚刚把这一步设成「直接拒绝」：那就不再进确认卡片。
         toolPolicy: deferredPolicy.tool.id ? toolApprovalPolicy(deferredPolicy.tool.id) : 'ask',
       });
@@ -3116,7 +3181,7 @@ const auditMcpCall = (
           gating: gatingContext,
         });
         // 把当时的档位带回前端：用户看到「为什么这次不问了」，才不用去翻设置。
-        approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, policy: normalizeMcpApprovalPolicy(executionPublicState.settings.mcpApprovalPolicy), calls: pendingCalls.map(describePendingCall) };
+        approvalPayload = { id: approvalRecord.id, expiresAt: approvalRecord.expiresAt, message: approvalMessage, policy: normalizeMcpApprovalPolicy(executionApprovalPolicy), calls: pendingCalls.map(describePendingCall) };
       } catch (error) {
         // 存不下就当场取消这一步：绝不执行一个自己都记不住的操作。
         if (error instanceof AgentContextBudgetExceededError) {
@@ -3183,6 +3248,7 @@ const auditMcpCall = (
         boundToolResult,
         signal: requestController.signal,
         toolRuntime,
+        now: activeNow,
         callModel: async ({ messages, tools }) => {
           const followup = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {
             messages: messages as ChatMessage[],
@@ -3225,6 +3291,7 @@ const auditMcpCall = (
         maxSteps: mcpFollowupMaxRounds,
         maxCalls: Math.max(1, mcpToolCallLimit - mcpToolCallCount),
         deadlineMs: extendedMcpRequest ? AGENT_BROWSER_EXECUTION_LIMITS.deadlineMs : undefined,
+        now: activeNow,
         signal: requestController.signal,
         callModel: async (messages) => {
           const reply = await trackedChatCompletion(agentRuntime.provider, agentRuntime.model.rawId, {

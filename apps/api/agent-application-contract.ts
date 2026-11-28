@@ -1,3 +1,14 @@
+/** Controls a live assistant application run between bounded operations. */
+export type AgentAssistantExecutionControl = {
+  signal: AbortSignal;
+  checkpoint(options?: {
+    completedToolCall?: boolean;
+    beforePause?: () => Promise<void>;
+    afterResume?: () => Promise<void>;
+  }): Promise<void>;
+  now(): number;
+};
+
 export type AgentJsonOutput = {
   kind: 'json';
   body: Record<string, unknown>;

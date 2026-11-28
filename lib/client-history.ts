@@ -97,6 +97,8 @@ export type ChatHistoryMessage = {
   followUp?: ChatFollowUp;
   webSearch?: WebSearchMeta;
   webSearchDecision?: WebSearchDecisionMeta;
+  /** Link to the active assistant run so this conversation can reconnect after a reload. */
+  assistantRun?: { runId: string; retryVersionId?: string; previousVersionIndex?: number; pendingSince: number; task?: string; durationSeconds?: number; deliverable?: string; model?: string; imageModelId?: string };
   /** Transient per-task ASR preference retained so retry can repeat the same subtitle engine. */
   audioTranscriptionModelId?: string;
 };

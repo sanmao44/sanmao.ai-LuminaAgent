@@ -11,6 +11,7 @@ export type CapabilityFollowupOptions = {
   messages: ChatMessage[];
   contextMaxChars?: number;
   signal: AbortSignal;
+  now?: () => number;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
   boundAgentContext?: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
   boundToolResult: (content: string) => string;
@@ -58,6 +59,7 @@ export type McpCapabilityFollowupOptions = {
   messages: ChatMessage[];
   contextMaxChars?: number;
   signal: AbortSignal;
+  now?: () => number;
   toolRuntime: Pick<ToolRuntime, 'runLoop' | 'executeCalls'>;
   boundAgentContext?: (messages: ToolLoopMessage[], maxChars: number) => ToolLoopMessage[];
   boundToolResult: (content: string) => string;
@@ -163,6 +165,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
       boundToolResult: options.boundToolResult,
       maxSteps: 2,
       signal: options.signal,
+      now: options.now,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...options.skillTools] }),
       runCalls: async (calls) => runCalls(calls, options.skillTools),
       shouldContinue: () => skillToolCalls < SKILL_TOOL_MAX_CALLS,
@@ -191,6 +194,7 @@ export async function runCapabilityFollowups(options: CapabilityFollowupOptions)
       boundToolResult: options.boundToolResult,
       maxSteps: repairFileOnly ? 1 : 2,
       signal: options.signal,
+      now: options.now,
       callModel: async ({ step, messages }) => options.callModel({ step, messages: messages as ChatMessage[], tools: [...followupArtifactTools] }),
       runCalls: async (calls) => runCalls(calls, followupArtifactTools),
       orderCalls: (calls) => [...calls].sort((left, right) => Number(isArchiveToolCall(left)) - Number(isArchiveToolCall(right))),
@@ -218,6 +222,7 @@ export async function runMcpCapabilityFollowup(options: McpCapabilityFollowupOpt
     maxCalls: options.maxCalls,
     deadlineMs: options.deadlineMs,
     signal: options.signal,
+    now: options.now,
     callModel: async ({ messages }) => {
       stepMessages = [...(messages as ChatMessage[])];
       stepReply = await options.callModel(messages as ChatMessage[]);

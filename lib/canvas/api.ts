@@ -1219,6 +1219,9 @@ export async function generateCanvasAgent(
     canvasDocument?: CanvasDocument;
     canvasTarget?: CanvasAgentTarget;
     signal?: AbortSignal;
+    managedRun?: boolean;
+    onRunStatus?: (status: import('@/packages/contracts/agent').AgentAssistantRunStatus) => void;
+    onRunConnectionIssue?: (message: string) => void;
   },
   onEvent?: (event: CanvasAgentStreamEvent) => void,
 ): Promise<AgentResponse> {
@@ -1227,7 +1230,7 @@ export async function generateCanvasAgent(
   const abortFromCaller = () => controller.abort(input.signal?.reason);
   if (input.signal?.aborted) abortFromCaller();
   else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
-  const timeout = setTimeout(() => {
+  const timeout = input.managedRun ? null : setTimeout(() => {
     timedOut = true;
     controller.abort(new Error("Agent 请求超时，请重试。"));
   }, CANVAS_AGENT_MAX_WAIT_MS);
@@ -1265,12 +1268,13 @@ export async function generateCanvasAgent(
           ...(input.creativeRoute ? { creativeRoute: input.creativeRoute } : {}),
           ...(input.intentText ? { intentText: input.intentText } : {}),
           ...(input.runId ? { runId: input.runId } : {}),
+          ...(input.managedRun ? { managedRun: true } : {}),
           ...(input.context ? { context: input.context } : {}),
           ...(input.projectBrief ? { projectBrief: input.projectBrief } : {}),
           ...(input.canvasDocument ? { canvasDocument: input.canvasDocument } : {}),
           ...(input.canvasTarget ? { canvasTarget: input.canvasTarget } : {}),
         },
-        { signal: controller.signal, onEvent },
+        { signal: controller.signal, onEvent, onRunStatus: input.onRunStatus, onRunConnectionIssue: input.onRunConnectionIssue },
       );
     } catch (error) {
       if (input.signal?.aborted) throw input.signal.reason || error;
@@ -1325,7 +1329,7 @@ export async function generateCanvasAgent(
     }
     throw error;
   } finally {
-    clearTimeout(timeout);
+    if (timeout) clearTimeout(timeout);
     input.signal?.removeEventListener("abort", abortFromCaller);
   }
 }

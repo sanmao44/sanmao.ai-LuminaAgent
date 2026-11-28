@@ -205,7 +205,7 @@ test('canvas Agent run context freezes the original selection and edit sources',
 test('canvas Agent target operation distinguishes edits from analysis and questions', () => {
   assert.equal(runContext.canvasAgentTargetOperation('改一下这段文案', 'text'), 'edit');
   assert.equal(runContext.canvasAgentTargetOperation('把背景换成深蓝色', 'image'), 'edit');
-  for (const instruction of ['把牛变成马', '把人物改为机器人', '把主体替换为白马', '换个美女角色，换个色调']) {
+  for (const instruction of ['把牛变成马', '把人物改为机器人', '把主体替换为白马', '换个美女角色，换个色调', '画面上多几只骆驼']) {
     assert.equal(runContext.canvasAgentTargetOperation(instruction, 'image'), 'edit', instruction);
   }
   assert.equal(runContext.canvasAgentTargetOperation('分析一下这张图怎么样？', 'image'), 'none');

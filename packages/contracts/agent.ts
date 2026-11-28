@@ -11,6 +11,22 @@ export type { ModelCapabilities, ModelDescriptor, ModelMessage, ModelProvider, M
 
 export type AgentRunId = string;
 
+export type AgentAssistantRunAction = 'pause' | 'resume' | 'cancel';
+
+/** Lifecycle of a user-facing assistant task, separate from tool approval. */
+export type AgentAssistantRunStatus = {
+  runId: AgentRunId;
+  state: 'running' | 'pausing' | 'paused' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+  completedToolCalls: number;
+  updatedAt: string;
+  error?: string;
+};
+
+export type AgentAssistantRunReply = {
+  run: AgentAssistantRunStatus;
+  result?: Record<string, unknown>;
+};
+
 export type AgentRunState =
   | 'created'
   | 'running'

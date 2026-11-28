@@ -38,6 +38,7 @@ const imageActionPattern = /(?:画(?!面|布|板|框|纸|册|廊)|绘制|描绘|
 const imageBatchPattern = /(?:套图|详情图|商品详情(?:页)?图|批量生图|批量出图|一套图|一组图|系列图|多张图|多张图片|组图|batch)/i;
 const imageTargetPattern = /(?:图片|图像|画面|海报|封面图|封面|插画|插图|漫画|头像|壁纸|表情包|图标|logo|banner|配图|信息图|概念图|效果图|宣传图|广告图|主视觉|场景图|吉祥物|IP形象|设计稿|设计图|mascot|image|picture|poster|cover|illustration|avatar|wallpaper|icon)/i;
 const imageEditPattern = /(?:修改|调整|改一下|改成|改为|换成|替换为|替换|变成|变为|变作|重绘|重制|修图|换背景|去掉|加上|增加|减少|保持主体|延续|继续|再来|更高级|更年轻|更简洁|优化构图|强化光线|调整色彩)/i;
+const contextualImageQuantityEditPattern = /(?:画面|图中|图片|图像|照片|场景)[^。！？?!]{0,16}(?:多(?:几|一些|一点)|少(?:几|一些|一点))/i;
 /*
  * Colloquial visual edits often omit the verb-object grammar used by the
  * formal commands above: “换个美女角色，换个色调”. Keep this as one shared
@@ -157,7 +158,9 @@ function clean(value: unknown) {
 /** Shared visual-edit signal for UI routing and server capability selection. */
 export function isImageEditRequest(input: string) {
   const text = clean(input);
-  return imageEditPattern.test(text) || colloquialImageEditPattern.test(text);
+  return imageEditPattern.test(text)
+    || colloquialImageEditPattern.test(text)
+    || contextualImageQuantityEditPattern.test(text);
 }
 
 function latestMessageWithImages(messages: AgentIntentMessage[]) {

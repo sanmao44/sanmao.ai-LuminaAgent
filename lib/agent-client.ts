@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentDeliverable } from "./agent-intent";
-import type { AgentApprovalCall, AgentFilesystemUndo, AgentProjectTypecheckResult } from "@/packages/contracts/agent";
+import type { AgentApprovalCall, AgentAssistantRunAction, AgentAssistantRunReply, AgentAssistantRunStatus, AgentFilesystemUndo, AgentProjectTypecheckResult } from "@/packages/contracts/agent";
 import type { CreativeRoute } from "@/packages/contracts/creative";
 import type { CreativeReviewReport } from "@/packages/contracts/creative-review";
 import type { CreativeProjectBrief } from "@/packages/contracts/creative";
@@ -69,6 +69,7 @@ export type AgentRequestPayload = {
   creativeRoute?: CreativeRoute;
   /** 长任务进度 id：服务端按它记录阶段快照，前端轮询 /api/agent/progress 读取。 */
   runId?: string;
+  managedRun?: boolean;
   context?: WorkspaceContext;
   projectBrief?: CreativeProjectBrief;
   /** Current Canvas document used only to validate an Agent-proposed patch. */
@@ -187,6 +188,8 @@ export type AgentStreamEvent = AgentResponse & {
 export type AgentRequestOptions = {
   signal?: AbortSignal;
   onEvent?: (event: AgentStreamEvent) => void;
+  onRunStatus?: (status: AgentAssistantRunStatus) => void;
+  onRunConnectionIssue?: (message: string) => void;
 };
 
 function abortError(signal: AbortSignal) {
@@ -386,7 +389,7 @@ export async function requestAgent(
   payload: AgentRequestPayload,
   options: AgentRequestOptions = {},
 ): Promise<AgentResponse> {
-  const response = await fetch("/api/agent", {
+  const request = fetch("/api/agent", {
     cache: "no-store",
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -394,15 +397,29 @@ export async function requestAgent(
     body: JSON.stringify({
       ...payload,
       messages: payload.messages.slice(-AGENT_CONTEXT_MESSAGE_LIMIT),
-      stream: true,
+      stream: payload.managedRun !== true,
     }),
   });
+  let response: Response;
+  try {
+    response = await request;
+  } catch (error) {
+    if (payload.managedRun && payload.runId && !options.signal?.aborted) {
+      return waitForAssistantRun(payload.runId, options);
+    }
+    throw error;
+  }
 
   let data: AgentResponse;
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     data = await readAgentEventStream(response, options);
   } else {
     data = (await response.json().catch(() => ({}))) as AgentResponse;
+  }
+  if (payload.managedRun && payload.runId && response.ok) {
+    const initial = data.runControl as AgentAssistantRunStatus | undefined;
+    if (isAssistantRunStatus(initial, payload.runId)) options.onRunStatus?.(initial);
+    return waitForAssistantRun(payload.runId, options);
   }
   if (data.pending || response.status === 202) {
     const pendingError = new Error(String(data.message || data.error || "任务仍在后台处理中，请勿重复提交")) as Error & { agentPending?: boolean; taskId?: string };
@@ -414,4 +431,92 @@ export async function requestAgent(
     throw new Error(String(data.error || data.message || `Agent 请求失败：${response.status}`));
   }
   return data;
+}
+
+export function assistantRunStatusLabel(status: AgentAssistantRunStatus) {
+  if (status.state === "paused") return "任务已暂停";
+  if (status.state === "pausing") return "暂停中，等待当前步骤结束";
+  if (status.state === "cancelling") return "停止中，等待当前步骤结束";
+  return "任务正在运行";
+}
+
+function isAssistantRunStatus(value: AgentAssistantRunStatus | undefined, runId: string): value is AgentAssistantRunStatus {
+  return value?.runId === runId && typeof value.updatedAt === "string" && Number.isFinite(value.completedToolCalls)
+    && ["running", "paused", "pausing", "cancelling", "succeeded", "failed", "cancelled", "interrupted"].includes(value.state);
+}
+
+export function canControlAssistantRun(status: AgentAssistantRunStatus, action: AgentAssistantRunAction) {
+  if (action === "pause") return status.state === "running";
+  if (action === "resume") return status.state === "paused";
+  return status.state === "running" || status.state === "pausing" || status.state === "paused";
+}
+
+export function shouldAcceptAssistantRunStatus(current: AgentAssistantRunStatus | undefined, next: AgentAssistantRunStatus) {
+  return !current || current.runId !== next.runId || next.updatedAt >= current.updatedAt;
+}
+
+async function assistantRunRequest(runId: string, signal?: AbortSignal, action?: AgentAssistantRunAction) {
+  const url = '/api/agent/runs/' + encodeURIComponent(runId) + '/execution';
+  const response = await fetch(url, {
+    cache: "no-store", signal,
+    ...(action ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) } : {}),
+  });
+  const data = await response.json().catch(() => null) as (AgentAssistantRunReply & { error?: string }) | null;
+  if (!response.ok || !isAssistantRunStatus(data?.run, runId)) {
+    throw Object.assign(new Error(data?.error || ('无法读取助手任务（' + response.status + '）')), { status: response.status });
+  }
+  return data;
+}
+
+export async function controlAssistantRun(runId: string, action: AgentAssistantRunAction, signal?: AbortSignal) {
+  return (await assistantRunRequest(runId, signal, action)).run;
+}
+
+function waitForAssistantPoll(delayMs: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      if (signal) reject(abortError(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
+/** Reattaching observes the existing run without re-submitting the Agent request. */
+export async function waitForAssistantRun(runId: string, options: AgentRequestOptions = {}, intervalMs = 900): Promise<AgentResponse> {
+  let misses = 0;
+  let disconnected = false;
+  while (true) {
+    if (options.signal?.aborted) throw abortError(options.signal);
+    let reply: AgentAssistantRunReply;
+    try {
+      reply = await assistantRunRequest(runId, options.signal);
+      misses = 0;
+      if (disconnected) options.onRunConnectionIssue?.("");
+      disconnected = false;
+    } catch (error) {
+      if (options.signal?.aborted) throw abortError(options.signal);
+      const status = (error as { status?: number } | null)?.status;
+      if (status === 404 && ++misses >= 4) throw new Error("找不到原助手任务。请检查已有产物或外部操作结果后再决定是否重试。");
+      if (!disconnected) options.onRunConnectionIssue?.("暂时无法读取任务状态，正在重新连接…");
+      disconnected = true;
+      await waitForAssistantPoll(intervalMs * 2, options.signal);
+      continue;
+    }
+    options.onRunStatus?.(reply.run);
+    if (reply.run.state === "succeeded") {
+      if (!reply.result) throw new Error("助手任务已结束，但未能读取交付结果。");
+      return reply.result as AgentResponse;
+    }
+    if (reply.run.state === "cancelled") throw new DOMException("已停止这一轮回答。", "AbortError");
+    if (reply.run.state === "failed" || reply.run.state === "interrupted") {
+      throw new Error(reply.run.error || String(reply.result?.error || reply.result?.message || "助手任务未完成。"));
+    }
+    await waitForAssistantPoll(reply.run.state === "paused" ? intervalMs * 2 : intervalMs, options.signal);
+  }
 }

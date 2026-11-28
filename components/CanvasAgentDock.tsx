@@ -17,7 +17,8 @@ import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import type { AgentWebMode } from "@/lib/creation/settings";
 import type { AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
-import { pollAgentProgress } from "@/lib/agent-client";
+import { controlAssistantRun, pollAgentProgress, shouldAcceptAssistantRunStatus, waitForAssistantRun } from "@/lib/agent-client";
+import AgentRunPauseButton from "@/components/AgentRunPauseButton";
 import { classifyAgentDeliverable, resolveCreativeRoute } from "@/lib/agent-intent";
 import { generateCanvasAgent, uploadCanvasAsset } from "@/lib/canvas/api";
 import {
@@ -118,6 +119,7 @@ export type CanvasAgentDockMessage = {
   canvasPatch?: CanvasPatch;
   canvasPatchApplied?: boolean;
   canvasPatchError?: string;
+  assistantRun?: { runId: string; pendingSince: number; prompt: string; autoApply: boolean; scopeKey: string };
 };
 
 type CanvasAgentDockSession = {

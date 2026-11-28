@@ -20,6 +20,17 @@ test('routes explicit visual requests to an image deliverable', () => {
   assert.notEqual(intent.classifyAgentDeliverable('怎么画只猫').deliverable, 'IMAGE');
 });
 
+test('routes a contextual image quantity change as an edit when an image is selected', () => {
+  const text = '画面上多几只骆驼。';
+  const decision = intent.classifyAgentDeliverable(text, { hasReferences: true });
+  const route = intent.resolveCreativeRoute(text, { hasReferences: true });
+
+  assert.equal(decision.deliverable, 'IMAGE');
+  assert.equal(route.lane, 'image');
+  assert.equal(route.operation, 'edit');
+  assert.equal(route.execution, 'run');
+});
+
 test('treats perspective and role-voice questions as creative execution', () => {
   for (const input of [
     '如果鲁迅能抽上电子烟他会怎么说',

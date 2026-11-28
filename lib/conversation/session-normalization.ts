@@ -107,6 +107,10 @@ export function normalizeChatSession(
   fallbackProjectId: string,
 ): ChatSession & { messages: ConversationMessage[] } {
   const messages = normalizeAssistantImageSources(session.messages).map((message) => {
+    // Managed runs remain pending while the client reconnects to their server run.
+    if (message.role === 'assistant' && message.assistantRun?.runId) {
+      return { ...message, pending: true, pendingSince: message.assistantRun.pendingSince, activity: { stage: 'answering', message: '正在连接原助手任务…' } };
+    }
     // Pending messages are transient UI state. If one was persisted by an
     // older build or restored after a crash, make it explicitly interrupted.
     if (message.pending) {

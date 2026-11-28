@@ -1,0 +1,21 @@
+.button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.button:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+}
+
+.button:disabled {
+  opacity: 0.55;
+}

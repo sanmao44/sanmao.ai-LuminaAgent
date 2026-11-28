@@ -43,7 +43,8 @@ import { downloadCanvasShareImage } from '@/lib/canvas/share';
 import { buildContinuationPrompt, extractAgentDirections, extractChatDirections, extractGithubRepositoryUrl, isGithubMcpInstallFollowUp, isGithubMcpInstallHandoff, isImageContinuationRequest, latestAssistantImage } from '@/lib/agent-web';
 import { agentDeliverableLabel, classifyAgentDeliverable, resolveCreativeRoute } from '@/lib/agent-intent';
 import { conversationImage, conversationMessageText } from '@/lib/agent-context';
-import { pollAgentProgress, requestAgent } from '@/lib/agent-client';
+import { controlAssistantRun, pollAgentProgress, requestAgent, shouldAcceptAssistantRunStatus, waitForAssistantRun } from '@/lib/agent-client';
+import AgentRunPauseButton from '@/components/AgentRunPauseButton';
 import { editConversationMemory, prepareConversationMemory, selectRelevantConversationMessages, validConversationMemory } from '@/lib/agent-memory';
 import AgentMemoryEditor from '@/components/AgentMemoryEditor';
 import AgentPersonaEditor from '@/components/AgentPersonaEditor';
@@ -2367,6 +2368,8 @@ export default function Page() {
     const generationLogsHydratedRef = useRef(false);
     const cangyuanTaskResultStatesRef = useRef(new Map<string, TaskResultOutcome>());
     const cangyuanTaskResultsHydratedRef = useRef(false);
+    const cloneTaskResultStatesRef = useRef(new Map<string, TaskResultOutcome>());
+    const cloneTaskResultsHydratedRef = useRef(false);
     const [state, setState] = useState(emptyState);
     const [loadingState, setLoadingState] = useState(true);
     const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>('idle');
@@ -3135,6 +3138,7 @@ export default function Page() {
     ]);
     const allChatSessionsSelected = selectableChatSessionIds.length > 0 && selectableChatSessionIds.every((id)=>selectedChatSessions.has(id));
     const activeAgentBusy = activeChatId ? busyChatIds.includes(activeChatId) : false;
+    const [activeAssistantRunStatus, setActiveAssistantRunStatus] = useState(null);
     const agentMessageSelectionActive = agentMessageSelectionMode || shareSelectionMode;
     /* 助手光球相位：欢迎页主视觉、输入区状态条、消息头像共用同一份判断。 */
     const agentOrbStatus = useMemo(()=>{
@@ -3892,6 +3896,7 @@ export default function Page() {
                 await Promise.all([
                     refreshGenerationLogs({ syncNotice: false }),
                     refreshCangyuanTaskResults(),
+                    refreshCloneTaskResults(),
                 ]);
             } finally {
                 refreshing = false;
@@ -4459,6 +4464,28 @@ export default function Page() {
             for (const change of changes) playTaskResultSound(change.outcome);
         } catch {}
     }
+    async function refreshCloneTaskResults() {
+        try {
+            const response = await fetch('/api/clone/jobs?limit=30', { cache: 'no-store' });
+            if (!response.ok) throw new Error('读取克隆任务失败');
+            const payload: unknown = await response.json();
+            const jobs = payload && typeof payload === 'object' && Array.isArray((payload as { jobs?: unknown }).jobs)
+                ? (payload as { jobs: unknown[] }).jobs
+                : [];
+            const current = taskResultOutcomes(jobs.map((job) => {
+                const value = job && typeof job === 'object' ? job as Record<string, unknown> : {};
+                return { id: value.id, status: value.stage };
+            }));
+            if (!cloneTaskResultsHydratedRef.current) {
+                cloneTaskResultStatesRef.current = current;
+                cloneTaskResultsHydratedRef.current = true;
+                return;
+            }
+            const changes = changedTaskResultOutcomes(cloneTaskResultStatesRef.current, current);
+            cloneTaskResultStatesRef.current = current;
+            for (const change of changes) playTaskResultSound(change.outcome);
+        } catch {}
+    }
     async function refreshVideoTasks(requestedPage = videoPage) {
         const source = historyFilter === 'canvas' ? 'canvas' : historyFilter === 'agent' ? 'agent' : historyFilter === 'generate' ? 'workspace' : historyFilter === 'all' ? 'all' : 'none';
         const media = historyMediaFilter === 'all' || historyMediaFilter === 'video' ? 'video' : 'none';
@@ -4957,6 +4984,11 @@ export default function Page() {
                 const hadPending = rawSession.messages.some((message) => Boolean((message as unknown as { pending?: boolean }).pending));
                 return hadPending ? conversationRepository.save(sessions[index]) : Promise.resolve();
             }));
+            for (const session of sessions) {
+                if (session.messages.some((message) => message.role === 'assistant' && message.assistantRun?.runId)) {
+                    attachManagedAssistantRun(session.id, session.messages);
+                }
+            }
             if (sessions.length) {
                 activeChatIdRef.current = sessions[0].id;
                 agentPersonaRef.current = sessions[0].persona || '';
@@ -6683,7 +6715,7 @@ export default function Page() {
         return queueSessionMutation(chatSaveQueuesRef.current, id, save);
     }
     async function persistAgentSession(id, nextMessages) {
-        const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending).map(({ pending: _pending, ...message })=>message));
+        const storedMessages = normalizeAssistantImageSources(nextMessages.filter((message)=>!message.pending || message.assistantRun?.runId).map(({ pending: _pending, activity: _activity, ...message })=>message));
         if (!storedMessages.length) return;
         const now = Date.now();
         const existing = chatSessions.find((session)=>session.id === id);
@@ -6728,6 +6760,106 @@ export default function Page() {
     function isCurrentAgentRequest(sessionId, requestId) {
         return agentRequestsRef.current.get(sessionId)?.requestId === requestId;
     }
+    function updateAssistantRunStatus(sessionId, request, status) {
+        if (!isCurrentAgentRequest(sessionId, request.requestId)) return;
+        if (request.runStatus && !shouldAcceptAssistantRunStatus(request.runStatus, status)) return;
+        request.accepted = true;
+        request.runStatus = status;
+        if (activeChatIdRef.current === sessionId) setActiveAssistantRunStatus(status);
+        const current = pendingChatMessagesRef.current.get(sessionId) || [];
+        const updated = current.map((message) => message.id === request.pendingId ? {
+            ...message,
+            ...(status.state === 'paused' || status.state === 'pausing' ? { activity: { stage: status.state, message: status.state === 'paused' ? '任务已暂停' : '正在安全暂停…' } } : status.state === 'cancelling' ? { activity: { stage: 'cancelling', message: '正在停止当前任务…' } } : message.activity?.stage === 'paused' || message.activity?.stage === 'pausing' ? { activity: { stage: 'answering', message: '任务已继续' } } : {})
+        } : message);
+        pendingChatMessagesRef.current.set(sessionId, updated);
+        if (activeChatIdRef.current === sessionId) setMessages(updated);
+    }
+    function attachManagedAssistantRun(sessionId, sessionMessages) {
+        if (agentRequestsRef.current.has(sessionId)) return;
+        const pendingMessage = sessionMessages.find((message) => message.role === 'assistant' && message.assistantRun?.runId);
+        const marker = pendingMessage?.assistantRun;
+        if (!pendingMessage || !marker?.runId) return;
+        const requestId = uid('agent-request');
+        const request = {
+            requestId, runId: marker.runId, controller: new AbortController(), pendingId: pendingMessage.id,
+            retryVersionId: marker.retryVersionId, kind: marker.retryVersionId ? 'retry' : 'send',
+            partialText: '', stopped: false, managed: true, submitted: true, accepted: true
+        };
+        agentRequestsRef.current.set(sessionId, request);
+        pendingChatMessagesRef.current.set(sessionId, sessionMessages);
+        setChatBusy(sessionId, true);
+        void (async () => {
+            try {
+                const result = await waitForAssistantRun(marker.runId, {
+                    signal: request.controller.signal,
+                    onRunStatus: (status) => updateAssistantRunStatus(sessionId, request, status),
+                    onRunConnectionIssue: (message) => { request.connectionIssue = message; }
+                });
+                if (!isCurrentAgentRequest(sessionId, requestId)) return;
+                await reconcileManagedAssistantResult(sessionId, request, result);
+            } catch (error) {
+                if (!isCurrentAgentRequest(sessionId, requestId)) return;
+                const message = error instanceof Error ? error.message : '';
+                const cancelled = request.stopped || request.controller.signal.aborted || error?.name === 'AbortError';
+                request.interruptionMessage = cancelled ? undefined : message || '刷新后未能恢复原助手任务。请检查已有产物后再决定是否重试。';
+                request.stopped = true;
+                await finalizeStoppedAgentRequest(sessionId, request);
+            } finally {
+                if (isCurrentAgentRequest(sessionId, requestId)) {
+                    agentRequestsRef.current.delete(sessionId);
+                    setChatBusy(sessionId, false);
+                }
+                if (activeChatIdRef.current === sessionId) setActiveAssistantRunStatus(null);
+            }
+        })();
+    }
+    async function reconcileManagedAssistantResult(sessionId, request, data) {
+        const current = pendingChatMessagesRef.current.get(sessionId) || [];
+        const pendingMessage = current.find((message) => message.id === request.pendingId);
+        if (!pendingMessage) return;
+        const latestUser = [...current].reverse().find((message) => message.role === 'user');
+        const references = latestUser?.references || [];
+        let images = [];
+        if (Array.isArray(data.images) && data.images.length) {
+            const generation = Array.isArray(data.generations) ? data.generations[0] : null;
+            images = await recordImages(data.images, {
+                prompt: generation?.prompt || latestUser?.content || '', modelId: generation?.modelId, modelName: generation?.modelName,
+                providerName: generation?.providerName, aspectRatio: generation?.aspectRatio || '自动', source: 'agent', references
+            }, undefined, undefined, request.runId);
+        }
+        const files = Array.isArray(data.files) ? data.files.filter((file) => file && typeof file.name === 'string' && (typeof file.content === 'string' || typeof file.artifactId === 'string' || typeof file.url === 'string' || typeof file.downloadUrl === 'string')).map((file) => ({
+            id: uid('file'), name: file.name, mimeType: typeof file.mimeType === 'string' ? file.mimeType : 'application/octet-stream',
+            ...(typeof file.content === 'string' ? { content: file.content, encoding: file.encoding === 'base64' ? 'base64' : 'utf8' } : {}),
+            ...(typeof file.artifactId === 'string' ? { artifactId: file.artifactId, downloadUrl: typeof file.downloadUrl === 'string' ? file.downloadUrl : '/api/artifacts/' + file.artifactId } : {}),
+            ...(typeof file.url === 'string' ? { downloadUrl: file.url } : {}), size: typeof file.size === 'number' ? file.size : undefined
+        })) : [];
+        const completed = current.map((message) => {
+            if (message.id !== request.pendingId) return message;
+            if (request.kind === 'retry') {
+                const versions = messageVersionsFor(message).map((version) => version.id === request.retryVersionId ? {
+                    ...version, content: data.message || '已完成。', images, files, webSearch: data.webSearch || undefined,
+                    webSearchDecision: data.webSearchDecision || undefined, skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                    mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined, approval: data.approval || undefined,
+                    deliverable: data.deliverable || 'TEXT', intentPreview: data.intentPreview || undefined
+                } : version);
+                const { assistantRun: _assistantRun, pendingSince: _pendingSince, ...rest } = message;
+                const result = applyMessageVersion({ ...rest, activity: undefined, retrying: false }, versions, versions.findIndex((version) => version.id === request.retryVersionId));
+                const { agentError: _agentError, agentErrorModelId: _agentErrorModelId, ...clean } = result;
+                return clean;
+            }
+            const { assistantRun: _assistantRun, pending: _pending, activity: _activity, pendingSince: _pendingSince, ...rest } = message;
+            return {
+                ...rest, content: data.message || '已完成。', images, files, webSearch: data.webSearch || undefined,
+                webSearchDecision: data.webSearchDecision || undefined, skills: Array.isArray(data.skills) && data.skills.length ? data.skills : undefined,
+                mcpTools: Array.isArray(data.mcpTools) && data.mcpTools.length ? data.mcpTools : undefined, fallbackFrom: data.fallbackFrom || undefined,
+                approval: data.approval || undefined, deliverable: data.deliverable || message.deliverable || 'TEXT', intentPreview: data.intentPreview || undefined,
+                ...(message.task ? { task: message.task, durationSeconds: data.durationSeconds || message.durationSeconds } : {})
+            };
+        });
+        pendingChatMessagesRef.current.set(sessionId, completed);
+        if (activeChatIdRef.current === sessionId) setMessages(completed);
+        await persistAgentSession(sessionId, completed);
+    }
     async function finalizeStoppedAgentRequest(sessionId, request) {
         const currentMessages = pendingChatMessagesRef.current.get(sessionId) || (activeChatIdRef.current === sessionId ? messages : []);
         const stoppedMessages = currentMessages.map((message)=>{
@@ -6735,16 +6867,17 @@ export default function Page() {
             if (request.kind === 'retry') {
                 const versions = messageVersionsFor(message).map((version)=>version.id === request.retryVersionId ? {
                         ...version,
-                        content: request.partialText?.trim() || '本轮回答已停止。',
+                        content: request.partialText?.trim() || request.interruptionMessage || '本轮回答已停止。'
                         interrupted: true
                     } : version);
+                const { assistantRun: _assistantRun, pendingSince: _pendingSince, ...rest } = message;
                 return applyMessageVersion({
-                    ...message,
+                    ...rest,
                     retrying: false,
                     activity: undefined
                 }, versions, versions.findIndex((version)=>version.id === request.retryVersionId));
             }
-            const { pending: _pending, activity: _activity, ...rest } = message;
+            const { pending: _pending, activity: _activity, assistantRun: _assistantRun, ...rest } = message;
             return {
                 ...rest,
                 content: request.partialText?.trim() || '本轮回答已停止。',
@@ -6756,11 +6889,43 @@ export default function Page() {
         setChatBusy(sessionId, false);
         await persistAgentSession(sessionId, stoppedMessages).catch(()=>undefined);
     }
+    async function controlActiveAssistantRun(action) {
+        const sessionId = activeChatIdRef.current;
+        const request = sessionId ? agentRequestsRef.current.get(sessionId) : null;
+        if (!request?.runId || !request.managed) return;
+        try {
+            const status = await controlAssistantRun(request.runId, action, request.controller.signal);
+            updateAssistantRunStatus(sessionId, request, status);
+        } catch (error) {
+            notify(error instanceof Error ? error.message : '无法控制助手任务');
+        }
+    }
     async function stopAgent() {
         const sessionId = activeChatIdRef.current;
         if (!sessionId) return;
         const request = agentRequestsRef.current.get(sessionId);
         if (!request) return;
+        if (request.managed && request.submitted) {
+            if (request.cancelRequested) return;
+            request.cancelRequested = true;
+            request.stopped = true;
+            try {
+                const status = await controlAssistantRun(request.runId, 'cancel', request.controller.signal);
+                updateAssistantRunStatus(sessionId, request, status);
+            } catch (error) {
+                if (error?.status === 404 && !request.accepted) {
+                    request.controller.abort(new Error('AGENT_CANCELLED'));
+                    await finalizeStoppedAgentRequest(sessionId, request);
+                    agentRequestsRef.current.delete(sessionId);
+                    setChatBusy(sessionId, false);
+                    return;
+                }
+                request.cancelRequested = false;
+                request.stopped = false;
+                notify(error instanceof Error ? error.message : '停止助手任务失败');
+            }
+            return;
+        }
         request.stopped = true;
         request.controller.abort(new Error('AGENT_CANCELLED'));
         agentRequestsRef.current.delete(sessionId);
@@ -6823,6 +6988,8 @@ export default function Page() {
         agentPersonaRef.current = session.persona || '';
         setActiveChatId(session.id);
         setMessages(pendingChatMessagesRef.current.get(session.id) || normalized.messages);
+        setActiveAssistantRunStatus(agentRequestsRef.current.get(session.id)?.runStatus || null);
+        if (!agentRequestsRef.current.has(session.id)) attachManagedAssistantRun(session.id, normalized.messages);
         setAgentRefs([]);
         setAgentFiles([]);
         setAgentSkillId('');
@@ -7062,19 +7229,23 @@ export default function Page() {
         ];
         const workingVersionIndex = workingVersions.length - 1;
         const retryStartedAt = Date.now();
+        const retryRunId = uid('run');
         const retryImageFlow = message.deliverable === 'IMAGE' || message.deliverable === 'BOTH';
         const workingMessages = messages.map((item)=>item.id === message.id ? {
             ...applyMessageVersion(item, workingVersions, workingVersionIndex, true),
+            assistantRun: { runId: retryRunId, retryVersionId, previousVersionIndex: originalActiveVersion, pendingSince: retryStartedAt },
             pendingSince: retryStartedAt,
             ...(retryImageFlow ? { activity: { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } } : {})
         } : item);
         const requestId = uid('agent-request');
         const requestController = new AbortController();
-        const agentRequest = { requestId, controller: requestController, pendingId: message.id, retryVersionId, kind: 'retry', partialText: '', stopped: false };
+        const agentRequest = { requestId, runId: retryRunId, controller: requestController, pendingId: message.id, retryVersionId, kind: 'retry', partialText: '', stopped: false, managed: true };
         agentRequestsRef.current.set(sessionId, agentRequest);
         pendingChatMessagesRef.current.set(sessionId, workingMessages);
         setMessages(workingMessages);
         setChatBusy(sessionId, true);
+        setActiveAssistantRunStatus(null);
+        void persistAgentSession(sessionId, workingMessages).catch(()=>undefined);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
         let stopRetryProgress = ()=>{};
         try {
@@ -7110,7 +7281,6 @@ export default function Page() {
                 }));
             let streamedText = '';
             /* 重新生成也可能是长任务：阶段文案挂在被重试的那条消息上（消息操作栏里显示）。 */
-            const retryRunId = uid('run');
             const updateRetryActivity = (activity)=>{
                 if (!isCurrentRequest()) return;
                 if (agentRequest.partialText) return;
@@ -7164,9 +7334,11 @@ export default function Page() {
                     webSearch: agentWebMode !== 'off',
                     deliverable: message.deliverable,
                     intentReason: '按原问题和原交付形式重新生成完整答复',
-                    runId: retryRunId
+                    runId: retryRunId,
+                    managedRun: true
                 }, {
                 signal: requestController.signal,
+                onRunStatus: (status) => updateAssistantRunStatus(sessionId, agentRequest, status),
                 onEvent: (event)=>{
                     if (event.type === 'status') updateRetryActivity({
                         stage: event.stage || 'answering',
@@ -7267,6 +7439,7 @@ export default function Page() {
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
+                if (activeChatIdRef.current === sessionId) setActiveAssistantRunStatus(null);
             }
         }
     }
@@ -7345,17 +7518,20 @@ export default function Page() {
             followUp: followUp || undefined
         };
         const pendingId = uid('msg');
+        const progressRunId = uid('run');
+        const pendingSince = Date.now();
         const pending = {
             id: pendingId,
             role: 'assistant',
             content: likelyImageRequest ? '正在构思画面…' : '正在准备回答…',
             pending: true,
-            pendingSince: Date.now(),
+            assistantRun: { runId: progressRunId, pendingSince, task, durationSeconds: oneTakeDuration, deliverable: selectedDeliverable, model: activeAgentModelId, imageModelId: activeAgentImageModelId },
+            pendingSince,
             activity: likelyImageRequest ? { stage: 'image_planning', message: '正在构思画面…', imageFlow: true } : { stage: 'answering', message: '正在准备回答…' }
         };
         const requestId = uid('agent-request');
         const requestController = new AbortController();
-        const agentRequest = { requestId, controller: requestController, pendingId, partialText: '', stopped: false };
+        const agentRequest = { requestId, runId: progressRunId, controller: requestController, pendingId, partialText: '', stopped: false, managed: true };
         agentRequestsRef.current.set(sessionId, agentRequest);
         primeTaskSound();
         const nextMessages = [
@@ -7372,6 +7548,7 @@ export default function Page() {
             ...nextMessages,
             pending
         ]);
+        setActiveAssistantRunStatus(null);
         requestChatScrollAfterCommit();
         setAgentInput('');
         setAgentSkillId('');
@@ -7381,7 +7558,7 @@ export default function Page() {
         setAgentFollowUp(null);
         setChatBusy(sessionId, true);
         const isCurrentRequest = ()=>isCurrentAgentRequest(sessionId, requestId);
-        void persistAgentSession(sessionId, nextMessages).catch(()=>undefined);
+        void persistAgentSession(sessionId, [...nextMessages, pending]).catch(()=>undefined);
         if (requestController.signal.aborted || !isCurrentRequest()) return;
         let stopAgentProgress = ()=>{};
         try {
@@ -7408,7 +7585,7 @@ export default function Page() {
                 streamUpdateScheduler.schedule(nextContent);
             };
             const updatePendingActivity = (activity)=>{
-                if (agentRequest.partialText) return;
+                if (agentRequest.partialText || ['paused', 'pausing', 'cancelling'].includes(agentRequest.runStatus?.state)) return;
                 streamUpdateScheduler.flush();
                 updatePendingMessage({
                     content: activity?.message,
@@ -7464,7 +7641,6 @@ export default function Page() {
              * 正文与阶段提示并行显示，进度轮询会持续到本轮结算。
              * 单次模型调用可能很久，所以同一步骤超过 3 秒会带上秒表（见 lib/agent-client）。
              */
-            const progressRunId = uid('run');
             stopAgentProgress = pollAgentProgress(progressRunId, {
                 signal: requestController.signal,
                 onProgress: (progress)=>updatePendingActivity({
@@ -7488,9 +7664,11 @@ export default function Page() {
                     intentReason: requestIntent.reason,
                     ...(explicitSkillId ? { skillId: explicitSkillId } : {}),
                     creativeRoute,
-                    runId: progressRunId
+                    runId: progressRunId,
+                    managedRun: true
                 }, {
                 signal: requestController.signal,
+                onRunStatus: (status) => updateAssistantRunStatus(sessionId, agentRequest, status),
                 onEvent: (event)=>{
                     if (event.type === 'status') updatePendingActivity({
                         stage: event.stage || 'answering',
@@ -7606,6 +7784,7 @@ export default function Page() {
             if (isCurrentRequest()) {
                 agentRequestsRef.current.delete(sessionId);
                 setChatBusy(sessionId, false);
+                if (activeChatIdRef.current === sessionId) setActiveAssistantRunStatus(null);
             }
         }
     }
@@ -9531,6 +9710,10 @@ export default function Page() {
                                                             phase: agentOrbStatus.phase,
                                                             title: agentOrbStatus.title,
                                                             detail: agentOrbStatus.detail
+                                                        }),
+                                                        activeAssistantRunStatus && /*#__PURE__*/ _jsx(AgentRunPauseButton, {
+                                                                    status: activeAssistantRunStatus,
+                                                                    onAction: (action) => void controlActiveAssistantRun(action)
                                                         }),
                                                         /*#__PURE__*/ _jsx(AgentSendButton, {
                                                                     busy: activeAgentBusy,

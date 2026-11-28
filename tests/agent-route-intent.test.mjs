@@ -330,7 +330,13 @@ function harness(options = {}) {
           : options.emptyImages;
         return emptyOutput ? [] : [{ url: options.generatedImageRef || '/test.png' }];
       },
-      editImage: async (_provider, _model, args) => { images.push({ mode: 'edit', ...args }); return [{ url: '/test.png' }]; },
+      editImage: async (_provider, _model, args) => {
+        images.push({ mode: 'edit', ...args });
+        imageModelCalls.push(_model);
+        const imageFailure = options.editImageError?.(_model);
+        if (imageFailure) throw imageFailure;
+        return [{ url: '/test.png' }];
+      },
       imageDownloadAuth: () => undefined,
     },
     '@/lib/store': {
@@ -2089,6 +2095,40 @@ test('canvas image edit target overrides vague wording and reaches the edit capa
   assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
   assert.equal(data.images.length, 1);
   assert.equal(agent.calls.length, 0, 'Canvas edit should execute the image capability without a preliminary chat completion');
+});
+
+test('Canvas quantity edits use the selected image model first, then fail over only after a definitive rejection', async () => {
+  const backupProvider = { id: 'backup', name: 'Backup', platform: 'openai', enabled: true };
+  const backupModel = {
+    id: 'backup-image', rawId: 'backup-image', displayName: 'Backup image', kind: 'image',
+    enabled: true, published: true, capabilities: ['generate', 'edit'], providerId: 'backup',
+  };
+  const agent = harness({
+    imageCapabilities: ['generate', 'edit'],
+    imageModelCandidates: [{ provider: backupProvider, model: backupModel }],
+    editImageError: (model) => model === 'test-image'
+      ? Object.assign(new Error('rate limit exceeded'), { providerFailureKind: 'http', providerStatus: 429 })
+      : undefined,
+  });
+  const text = '画面上多几只骆驼。';
+  const data = await agent.post([{
+    role: 'user',
+    content: text,
+    references: [{ id: 'image-1', nodeId: 'image-1', kind: 'image', name: '当前选中图片', url: 'data:image/png;base64,dGVzdA==' }],
+  }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'none' },
+  });
+
+  assert.equal(data.images.length, 1);
+  assert.equal(agent.images[0].mode, 'edit');
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.deepEqual(agent.imageRuntimeRequests, [{ capability: 'edit', id: 'test-image' }]);
+  assert.deepEqual(agent.imageModelCalls, ['test-image', 'backup-image']);
+  assert.equal(agent.calls.length, 0, 'a recognized Canvas image edit should dispatch without asking chat to decide whether to call a tool');
 });
 
 test('canvas text target stays a text-only optimization conversation', async () => {

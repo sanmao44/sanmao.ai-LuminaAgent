@@ -84,6 +84,8 @@ test('portable project packages embed each current and historical image once and
   assert.equal(portable.assets[0].url, 'sanmao-project-image:image-1');
   assert.equal(portable.assets[0].storageKey, undefined);
   assert.equal(portable.assets[0].sourceAssetId, undefined);
+  assert.equal(portable.document.nodes[0].data.name, '主视觉');
+  assert.equal(portable.document.nodes[0].data.generation.prompt, '雨后的街道');
   assert.equal(portable.project.versions[0].snapshot.nodes[0].data.url, 'sanmao-project-image:image-1');
 
   const parsed = packageApi.parseCanvasProjectPackage(JSON.parse(JSON.stringify(portable)));
@@ -121,6 +123,26 @@ test('project package captures nested SVG data URLs and rejects broken embedded 
     ...portable,
     embeddedImages: [portable.embeddedImages[0]],
   }), null, 'an image reference without embedded bytes invalidates the package');
+});
+
+test('portable project packages do not overflow on circular runtime metadata', () => {
+  const document = documentFixture();
+  const runtimeMetadata = { label: 'runtime-only' };
+  runtimeMetadata.self = runtimeMetadata;
+  document.nodes[0].data.runtimeMetadata = runtimeMetadata;
+  const base = packageApi.canvasProjectPackageFromDocument({ name: '循环引用项目', document });
+
+  const portable = packageApi.embedCanvasProjectPackageImages(base, [{
+    id: 'image-1',
+    name: '主视觉',
+    sourceUrl: '/api/storage/images?id=image-1',
+    dataUrl: 'data:image/png;base64,UE5H',
+  }]);
+
+  assert.equal(portable.document.nodes[0].data.runtimeMetadata.label, 'runtime-only');
+  assert.equal(portable.document.nodes[0].data.runtimeMetadata.self, undefined);
+  assert.doesNotThrow(() => JSON.stringify(portable));
+  assert.equal(document.nodes[0].data.runtimeMetadata.self, runtimeMetadata, 'export does not mutate the source document');
 });
 
 test('project package preserves bounded version snapshots for portable rollback', () => {

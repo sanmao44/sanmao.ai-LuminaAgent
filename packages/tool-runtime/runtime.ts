@@ -18,6 +18,7 @@ export type ToolRuntimeDependencies = {
   authorize?: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown> }) => Promise<ToolRuntimeAuthorization> | ToolRuntimeAuthorization;
   onPolicyDenied?: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision }) => void | Promise<void>;
   execute: (input: { call: ToolRuntimeCall; policy: ToolPolicyDecision; args: Record<string, unknown>; executionContext?: unknown }) => Promise<ToolRuntimeExecution>;
+  beforeCall?: () => void | Promise<void>;
   onExecuted?: (input: { call: ToolRuntimeCall; result: ToolRuntimeExecution; executionContext: { stepCalls: readonly ToolRuntimeCall[]; callIndex: number } }) => void | Promise<void>;
   observer?: RuntimeObserver;
 };
@@ -62,6 +63,7 @@ export class ToolRuntime {
     for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
       const call = calls[callIndex];
       const executionContext = { stepCalls: calls, callIndex };
+      await this.dependencies.beforeCall?.();
       const result = await this.execute(call, executionContext);
       await this.dependencies.onExecuted?.({ call, result, executionContext });
       results.push(...result.results);
