@@ -3344,6 +3344,7 @@ const auditMcpCall = (
           return `${browserContinuationPrompt(recovery)} 若只是等待或元素暂时不可见，请换用合适的快照、滚动或等待方式重试；只有全部动作都已验证成功，或确认遇到登录、验证码等无法由助手解决的外部阻塞时，才能停止。`;
         },
         setDeferredCalls: (calls) => { deferredCalls = calls; },
+        onExecutedResults: (results) => { stepResults.push(...results as ChatMessage[]); },
       });
       const { stepMessages, stepReply } = mcpLoop;
       mcpFollowupText = mcpLoop.text;

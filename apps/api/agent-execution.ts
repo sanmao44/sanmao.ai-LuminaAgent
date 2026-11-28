@@ -72,6 +72,7 @@ export type McpCapabilityFollowupOptions = {
   continueOnEmpty?: () => string | false;
   continueOnText?: (input: { text: string }) => string | false;
   setDeferredCalls?: (calls: ToolRuntimeCall[]) => void;
+  onExecutedResults?: (results: ToolLoopMessage[]) => void;
 };
 
 export type McpCapabilityFollowupResult = {
@@ -235,6 +236,7 @@ export async function runMcpCapabilityFollowup(options: McpCapabilityFollowupOpt
         deferredCalls = execution.deferredCalls;
         options.setDeferredCalls?.(deferredCalls);
       }
+      if (execution.results.length) options.onExecutedResults?.(execution.results as ToolLoopMessage[]);
       return execution.results as ToolLoopMessage[];
     },
     shouldContinue: () => options.shouldContinue(),
