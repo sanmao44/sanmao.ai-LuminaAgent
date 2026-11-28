@@ -150,6 +150,7 @@ export function planAgentRequest(input: AgentRequestPlanningInput) {
   // an explicit page action attached to a recent, successful browser task.
   // This is request-scoped and does not promote browser verbs globally.
   if (requestRoute.browserAutomation) requestModeAllowsExecution = true;
+  if (requestRoute.filesystem) requestModeAllowsExecution = true;
   if (requestRoute.tools.useSkills && requestRoute.skillRoute.matched) requestModeAllowsExecution = true;
   // Read-only GitHub repository queries are intentionally classified from a
   // question-shaped sentence, but they still need the normal MCP discovery

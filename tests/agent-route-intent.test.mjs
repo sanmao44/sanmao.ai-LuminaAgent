@@ -752,6 +752,25 @@ test('Filesystem requests with an authorized folder but no callable Filesystem t
   }
 });
 
+test('a directory clarification continues the prior Filesystem task instead of becoming chat', async () => {
+  const agent = harness({
+    mcpServers: [filesystemReadTestServer],
+    mcpTools: filesystemReadTestTools,
+    callMcpTool: async () => ({ isError: false, text: 'export const sha256 = manifest.sha256;' }),
+    reply: (_payload, count) => count === 1
+      ? filesystemReadTestReply('resumed-read', 'read_text_file', 'update.ts')
+      : { content: '已从草稿目录继续读取 update.ts，并确认 SHA-256 来源。' },
+  });
+  const result = await agent.post([
+    { role: 'user', content: '请检查项目代码并追踪 update.json 的调用链。' },
+    { role: 'assistant', content: '请提供项目目录或授权文件夹，我才能继续读取文件。' },
+    { role: 'user', content: '从草稿目录继续' },
+  ]);
+  assert.equal(result.intentPreview.route, 'filesystem');
+  assert.deepEqual(agent.mcpCalls.map((call) => call.args.path), ['C:\\Temp\\repo\\update.ts']);
+  assert.match(result.message, /从草稿目录继续读取/);
+  assert.equal(agent.generationLogFinishes.at(-1).status, 'success');
+});
 test('read-only Filesystem lookup errors stay in the trace but do not block a later completed answer', async () => {
   const agent = harness({
     mcpServers: [filesystemReadTestServer],

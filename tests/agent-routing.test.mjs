@@ -375,6 +375,21 @@ test('limits context and separates web intent from local execution', () => {
   assert.equal(routing.classifyAgentRequest('在浏览器里搜索商品并点击第一个结果', {}, { webMode: 'auto' }).route, 'browser');
 });
 
+test('a directory supplied after a filesystem clarification resumes the same file route', () => {
+  const messages = [
+    { role: 'user', content: '请检查项目代码并追踪 update.json 的调用链' },
+    { role: 'assistant', content: '请提供项目目录或授权文件夹，我才能继续读取文件。' },
+  ];
+  const resumed = routing.classifyAgentRequest('从草稿目录继续', { messages }, { webMode: 'off' });
+  assert.equal(resumed.route, 'filesystem');
+  assert.equal(resumed.filesystem, true);
+  assert.equal(resumed.tools.useFilesystemMcp, true);
+  assert.equal(resumed.contextNeed, 'required');
+
+  const ordinary = routing.classifyAgentRequest('继续', { messages }, { webMode: 'off' });
+  assert.notEqual(ordinary.route, 'filesystem');
+  assert.equal(ordinary.filesystem, false);
+});
 test('reuses a supplied intent and keeps the newest prior turn for web follow-ups', () => {
   const supplied = routing.classifyAgentRequest('写一段产品文案', {}, { webMode: 'off' }).intent;
   const history = [{ role: 'user', content: 'OpenAI 最新 API 变更' }];

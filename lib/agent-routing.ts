@@ -147,6 +147,19 @@ export function isCommandExecutionToolName(value: unknown) {
  * It does not require a local model; ambiguous requests can still use the
  * already configured cloud model as a semantic tie-breaker.
  */
+function isFilesystemLocationContinuation(input: string, messages: AgentIntentMessage[]) {
+  const text = String(input || '').replace(/\s+/g, ' ').trim();
+  if (!text || /[?？]\s*$/.test(text)) return false;
+  const history = Array.isArray(messages) ? messages : [];
+  const last = history.at(-1);
+  if (last?.role !== 'assistant') return false;
+  const assistantText = String(last.content || '');
+  const askedForLocation = /(?:请|麻烦|需要|请你|能否)?[^。！？?!]{0,24}(?:提供|告诉|发(?:给)?我|给(?:我)?|选择|指定|补充)[^。！？?!]{0,24}(?:本地)?(?:项目)?(?:文件夹|目录|路径|工作区|位置)|(?:文件夹|目录|路径|工作区).{0,20}(?:在哪|是什么|请提供|请告诉|发给我)/i.test(assistantText);
+  if (!askedForLocation) return false;
+  const priorUser = [...history].reverse().find((message) => message.role === 'user');
+  if (!priorUser || !likelyFilesystemRequest(String(priorUser.content || ''), assistantText)) return false;
+  return /(?:[a-z]:[\\/]|\\\\[^\\]+\\[^\\]+|(?:^|\s)(?:\.{1,2}[\\/]|~[\\/])|(?:目录|文件夹|路径|工作区|草稿|项目根|桌面|下载|documents|workspace))/i.test(text);
+}
 export function classifyAgentRequest(input: string, context: AgentIntentContext = {}, options: { webMode?: AgentWebMode; previousAssistant?: string; intent?: AgentIntentDecision; skillRoute?: SkillRouteDecision } = {}): AgentRequestDecision {
   const text = String(input || '').replace(/\s+/g, ' ').trim();
   const messages = Array.isArray(context.messages) ? context.messages : [];
@@ -156,7 +169,8 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const intent = options.intent || classifyAgentDeliverable(text, context);
   const requestMode = intent.mode || inferAgentRequestMode(text);
   const browserContinuation = recentBrowserContinuation(text, messages);
-  const executable = requestMode === 'execute' || requestMode === 'follow_up' || Boolean(browserContinuation);
+  const filesystemContinuation = isFilesystemLocationContinuation(text, messages);
+  const executable = requestMode === 'execute' || requestMode === 'follow_up' || Boolean(browserContinuation) || filesystemContinuation;
   const fileDeliveryRequested = likelyFileGenerationRequest(text);
   const artifactKindCandidate = artifactKindFor(text, fileDeliveryRequested);
   const desktopIntent = classifyDesktopAutomation(text);
@@ -175,10 +189,12 @@ export function classifyAgentRequest(input: string, context: AgentIntentContext 
   const artifactKind = skillInstallation ? 'none' as const : artifactKindCandidate;
   const desktopAutomation = executable && !skillInstallation && desktopIntent.shouldAutomate;
   const browserAutomation = executable && !skillInstallation && !desktopAutomation && browserIntent.shouldAutomate;
-  const filesystem = executable && !skillInstallation && likelyFilesystemRequest(text, options.previousAssistant || '');
+  const filesystem = executable && !skillInstallation && (filesystemContinuation || likelyFilesystemRequest(text, options.previousAssistant || ''));
   const contextInfo = browserContinuation
     ? { need: 'required' as const, reason: '本轮是最近已成功浏览器任务的明确页面操作，需承接站点和页面上下文。' }
-    : contextDecision(text, messages);
+    : filesystemContinuation
+      ? { need: 'required' as const, reason: '本轮是上一项本地文件任务的目录补充，需承接原任务并重新应用文件授权策略。' }
+      : contextDecision(text, messages);
   // `context.messages` is the prior conversation for callers from the Agent
   // route, so do not drop its newest item a second time. That item is often
   // exactly the topic needed to resolve a short web follow-up.
