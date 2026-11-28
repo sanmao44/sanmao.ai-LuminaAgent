@@ -16,7 +16,8 @@ import type { ReferenceMentionOption } from "@/components/ReferenceMentionMenu";
 import { invalidReferenceMentionNumbers, replaceNaturalReferenceLabels } from "@/lib/creative-references";
 import { filterSkills, skillMessageValue, skillSlashQuery, type SkillPickerEntry } from "@/lib/skill-picker";
 import type { AgentWebMode } from "@/lib/creation/settings";
-import type { AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse } from "@/lib/agent-client";
+import type { AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse, AgentResponse } from "@/lib/agent-client";
+import type { AgentAssistantRunAction, AgentAssistantRunStatus } from "@/packages/contracts/agent";
 import { controlAssistantRun, pollAgentProgress, shouldAcceptAssistantRunStatus, waitForAssistantRun } from "@/lib/agent-client";
 import AgentRunPauseButton from "@/components/AgentRunPauseButton";
 import { classifyAgentDeliverable, resolveCreativeRoute } from "@/lib/agent-intent";
@@ -119,6 +120,8 @@ export type CanvasAgentDockMessage = {
   canvasPatch?: CanvasPatch;
   canvasPatchApplied?: boolean;
   canvasPatchError?: string;
+  pending?: boolean;
+  activity?: { stage: string; message: string };
   assistantRun?: { runId: string; pendingSince: number; prompt: string; autoApply: boolean; scopeKey: string };
 };
 
@@ -570,6 +573,11 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
             ...(Array.isArray(message.retryCanvasNodeIds) && message.retryCanvasNodeIds.length
               ? { retryCanvasNodeIds: message.retryCanvasNodeIds.filter((id): id is string => typeof id === "string" && Boolean(id)) }
               : {}),
+            ...(message.pending === true ? { pending: true } : {}),
+            ...(message.activity && typeof message.activity === "object" ? { activity: { stage: String(message.activity.stage || "answering"), message: String(message.activity.message || "正在执行…") } } : {}),
+            ...(message.assistantRun && typeof message.assistantRun === "object" && typeof message.assistantRun.runId === "string" && typeof message.assistantRun.scopeKey === "string"
+              ? { assistantRun: { runId: String(message.assistantRun.runId), pendingSince: Number(message.assistantRun.pendingSince) || Date.now(), prompt: String(message.assistantRun.prompt || ""), autoApply: message.assistantRun.autoApply !== false, scopeKey: String(message.assistantRun.scopeKey) } }
+              : {}),
             ...(message.interrupted ? { interrupted: true } : {}),
             ...(Array.isArray(message.imageNodeIds) && message.imageNodeIds.length
               ? { imageNodeIds: message.imageNodeIds.map((id) => String(id || "")).filter(Boolean) }
@@ -579,7 +587,7 @@ function readSession(context: WorkspaceContext): CanvasAgentDockSession | null {
             ...(normalizeCanvasAgentRunContext(message.runContext) ? { runContext: normalizeCanvasAgentRunContext(message.runContext)! } : {}),
             ...readStoredMessageExtras(message),
           }))
-          .filter((message) => message.content || message.images?.length)
+          .filter((message) => message.content || message.images?.length || message.assistantRun?.runId)
       : [];
     return {
       model: typeof parsed.model === "string" && parsed.model ? parsed.model : "auto",
@@ -630,6 +638,7 @@ export default function CanvasAgentDock({
   const [uploadingPastedImages, setUploadingPastedImages] = useState(false);
   const uploadingPastedImagesRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  const [assistantRunStatus, setAssistantRunStatus] = useState<AgentAssistantRunStatus | null>(null);
   const [streamText, setStreamText] = useState("");
   /* 长任务阶段文案：主管线写快照，面板按 runId 轮询到流式响应结算。 */
   const [progressDetail, setProgressDetail] = useState("");
@@ -639,6 +648,8 @@ export default function CanvasAgentDock({
   const [autoApply, setAutoApply] = useState(true);
   const [memory, setMemory] = useState<CanvasAgentDockMemory | undefined>();
   const sessionScopeKey = `${context.creativeProjectId || "default"}:${context.canvasId || "default"}`;
+  const sessionScopeKeyRef = useRef(sessionScopeKey);
+  sessionScopeKeyRef.current = sessionScopeKey;
   const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -661,6 +672,7 @@ export default function CanvasAgentDock({
   const chipDragMovedRef = useRef(false);
   const chipClickBlockedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const activeRunRef = useRef<{ runId: string; scopeKey: string; pendingId: string; controller: AbortController } | null>(null);
   /* 失败后要能重试，所以留一份最近一次发送的原话。 */
   const lastUserTextRef = useRef("");
   const inputRef = useRef("");
@@ -679,6 +691,14 @@ export default function CanvasAgentDock({
   const openRef = useRef(open);
 
   useEffect(() => {
+    const active = activeRunRef.current;
+    if (active && active.scopeKey !== sessionScopeKey) {
+      active.controller.abort(new DOMException("切换画布", "AbortError"));
+      activeRunRef.current = null;
+      if (abortRef.current === active.controller) abortRef.current = null;
+      setAssistantRunStatus(null);
+      setBusy(false);
+    }
     setLoadedScopeKey(null);
     const stored = readSession(context);
     setMessages(stored?.messages || []);
@@ -1067,9 +1087,87 @@ export default function CanvasAgentDock({
     attachmentObjectUrlsRef.current.clear();
   }, []);
 
+  const updateManagedRunStatus = useCallback((status: AgentAssistantRunStatus, run?: { runId: string; scopeKey: string; pendingId: string }) => {
+    const active = activeRunRef.current;
+    if (!active || (run && (active.runId !== run.runId || active.scopeKey !== run.scopeKey))) return;
+    if (assistantRunStatus && assistantRunStatus.runId === status.runId && status.updatedAt < assistantRunStatus.updatedAt) return;
+    setAssistantRunStatus(status);
+    setMessages((current) => current.map((message) => message.id === active.pendingId
+      ? {
+          ...message,
+          pending: !["succeeded", "failed", "cancelled", "interrupted"].includes(status.state),
+          activity: { stage: status.state, message: status.state === "paused" ? "任务已暂停" : status.state === "pausing" ? "正在安全暂停…" : status.state === "cancelling" ? "正在停止当前任务…" : status.state === "running" ? "任务已继续" : message.activity?.message || "正在处理…" },
+        }
+      : message));
+  }, [assistantRunStatus]);
+
+  const reconcileManagedRunResult = useCallback(async (response: AgentResponse, run: { runId: string; scopeKey: string; pendingId: string; runContext: CanvasAgentRunContext; prompt: string; mentionText: string; autoApply: boolean }) => {
+    if (run.scopeKey !== sessionScopeKey) return false;
+    const current = messages;
+    const target = current.find((message) => message.id === run.pendingId);
+    if (!target || target.assistantRun?.runId !== run.runId) return false;
+    const images = (response.images || []).map((image) => ({
+      url: String(image.url || ""),
+      ...(image.revisedPrompt ? { revisedPrompt: String(image.revisedPrompt) } : {}),
+      ...(image.modelId ? { modelId: String(image.modelId) } : {}),
+      ...(image.modelName ? { modelName: String(image.modelName) } : {}),
+      ...(image.providerName ? { providerName: String(image.providerName) } : {}),
+      ...(image.batchId ? { batchId: String(image.batchId) } : {}),
+      ...(Number.isFinite(Number(image.batchIndex)) ? { batchIndex: Number(image.batchIndex) } : {}),
+      ...(Number.isFinite(Number(image.batchTotal)) ? { batchTotal: Number(image.batchTotal) } : {}),
+      ...(image.batchPrompt ? { batchPrompt: String(image.batchPrompt) } : {}),
+      ...(isCreativeReviewReport(image.creativeReview) ? { creativeReview: image.creativeReview } : {}),
+    })).filter((image) => Boolean(image.url));
+    const targetMatchesCurrentCanvas = run.runContext.creativeProjectId === context.creativeProjectId
+      && (!run.runContext.canvasId || run.runContext.canvasId === context.canvasId);
+    let imageNodeIds: string[] = [];
+    if (targetMatchesCurrentCanvas && run.autoApply && images.length) {
+      imageNodeIds = onApplyImages(images, { prompt: run.mentionText || run.prompt, model: response.model, runContext: run.runContext });
+    }
+    const canvasPatch = readStoredCanvasPatch(response.canvasPatch);
+    let canvasPatchApplied = false;
+    let canvasPatchError: string | undefined;
+    if (targetMatchesCurrentCanvas && run.autoApply && canvasPatch && canvasAgentDockShouldAutoApplyPatch(run.autoApply, canvasPatch)) {
+      const applied = onApplyCanvasPatch(canvasPatch, run.runContext);
+      canvasPatchApplied = !applied.error;
+      canvasPatchError = applied.error;
+    }
+    let textNodeId: string | undefined;
+    if (targetMatchesCurrentCanvas && run.autoApply) {
+      const textWriteback = canvasAgentDockTextWritebackRequest({ enabled: true, sourceText: run.prompt, responseText: String(response.message || ""), prompt: run.mentionText || run.prompt, runContext: run.runContext });
+      if (textWriteback) textNodeId = onApplyText(textWriteback.text, textWriteback.meta)[0];
+    }
+    const stored = {
+      ...target,
+      content: String(response.message || "已完成。").trim() || "已完成。",
+      pending: undefined,
+      activity: undefined,
+      assistantRun: undefined,
+      ...(response.model ? { model: response.model } : {}),
+      ...(images.length ? { images } : {}),
+      ...(imageNodeIds.length ? { imageNodeIds } : {}),
+      ...(textNodeId ? { textNodeId } : {}),
+      ...(Array.isArray(response.batchItems) && response.batchItems.length ? { batchItems: response.batchItems } : {}),
+      ...(response.skills?.length ? { skills: response.skills.map((skill) => ({ id: String(skill.id || ""), name: String(skill.name || "") })) } : {}),
+      ...(response.approval ? { approval: readStoredApproval(response.approval) || undefined } : {}),
+      ...(response.mcpTools?.length ? { mcpTools: readStoredMcpTools(response.mcpTools) } : {}),
+      ...(response.files?.length ? { files: readStoredFiles(response.files) } : {}),
+      ...(canvasPatch ? { canvasPatch, ...(canvasPatchApplied ? { canvasPatchApplied: true } : {}), ...(canvasPatchError ? { canvasPatchError } : {}) } : {}),
+    };
+    setMessages((value) => value.map((message) => message.id === run.pendingId ? stored : message));
+    setAssistantRunStatus(null);
+    setBusy(false);
+    activeRunRef.current = null;
+    return true;
+  }, [context.canvasId, context.creativeProjectId, messages, onApplyCanvasPatch, onApplyImages, onApplyText, sessionScopeKey]);
+
   const stop = useCallback(() => {
-    abortRef.current?.abort(new DOMException("已停止", "AbortError"));
+    const active = activeRunRef.current;
+    if (active) void controlAssistantRun(active.runId, "cancel").catch(() => undefined);
+    active?.controller.abort(new DOMException("已停止", "AbortError"));
     abortRef.current = null;
+    activeRunRef.current = null;
+    setAssistantRunStatus(null);
     setBusy(false);
   }, []);
 
@@ -1279,6 +1377,20 @@ export default function CanvasAgentDock({
           operation: canvasAgentTargetOperation(promptText, targetKind),
         },
       });
+      const assistantMessageId = createId();
+      const runScopeKey = sessionScopeKey;
+      const pendingSince = Date.now();
+      const pendingAssistant: CanvasAgentDockMessage = {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        pending: true,
+        activity: { stage: "running", message: "正在执行…" },
+        runContext,
+        assistantRun: { runId: progressRunId, pendingSince, prompt: promptText, autoApply, scopeKey: runScopeKey },
+      };
+      setMessages([...history, pendingAssistant]);
+      activeRunRef.current = { runId: progressRunId, scopeKey: runScopeKey, pendingId: assistantMessageId, controller };
       const memoryMessages = history.map((message) => ({ id: message.id, role: message.role, content: message.content }));
       let requestMemory = memory;
       try {
@@ -1337,6 +1449,11 @@ export default function CanvasAgentDock({
             intentText: promptText,
             creativeRoute,
             runId: progressRunId,
+            managedRun: true,
+            onRunStatus: (next) => updateManagedRunStatus(next, { runId: progressRunId, scopeKey: runScopeKey, pendingId: assistantMessageId }),
+            onRunConnectionIssue: (message) => {
+              if (message) setProgressDetail(message);
+            },
             context,
             ...(projectBrief ? { projectBrief } : {}),
             canvasDocument,
@@ -1360,6 +1477,7 @@ export default function CanvasAgentDock({
             }
           },
         );
+        if (sessionScopeKeyRef.current !== runScopeKey) return;
         const content = String(response.message || "").trim() || "（Agent 没有返回文本内容）";
         // 图片是服务端工具执行后的事实结果，不能再被对话模型返回的
         // deliverable 文案覆盖；部分模型会在工具成功后仍把交付物标成 TEXT。
@@ -1382,7 +1500,6 @@ export default function CanvasAgentDock({
           mentionedNodeIds,
           selectedTotal,
         });
-        const assistantMessageId = createId();
         /* 需要确认的外部操作：确认卡挂在这条回答上；面板收起时说一声，别让这次确认悄悄过期。 */
         const approval = readStoredApproval(response.approval);
         const mcpTools = readStoredMcpTools(response.mcpTools);
@@ -1395,7 +1512,7 @@ export default function CanvasAgentDock({
             ? "画布操作包含删除，已暂停自动写回；展开面板核对后确认。"
             : "Agent 提出了一项画布操作，展开面板检查后应用。");
         }
-        const shouldAutoApply = images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
+        const shouldAutoApply = sessionScopeKeyRef.current === runScopeKey && images.length > 0 && autoApply && (!plan || !plan.requiresConfirmation);
         let appliedImageIds: string[] = [];
         if (shouldAutoApply) {
           if (plan) {
@@ -1405,11 +1522,11 @@ export default function CanvasAgentDock({
             appliedImageIds = appliedIds;
           }
         }
-        setMessages((value) => [
-          ...value,
-          {
-            id: assistantMessageId,
-            role: "assistant",
+        setMessages((value) => value.map((message) => message.id === assistantMessageId ? {
+            ...message,
+            pending: undefined,
+            activity: undefined,
+            assistantRun: undefined,
             content,
             model: response.model,
             ...(images.length ? { images } : {}),
@@ -1424,9 +1541,10 @@ export default function CanvasAgentDock({
             ...(mcpTools.length ? { mcpTools } : {}),
             ...(files.length ? { files } : {}),
             ...(canvasPatch ? { canvasPatch } : {}),
-          },
-        ]);
-        if (canvasPatch && shouldAutoApplyPatch) {
+          } : message));
+        activeRunRef.current = null;
+        setAssistantRunStatus(null);
+        if (canvasPatch && shouldAutoApplyPatch && sessionScopeKeyRef.current === runScopeKey) {
           const applied = onApplyCanvasPatch(canvasPatch, runContext);
           if (applied.error) {
             notify(`画布 Patch 未应用：${applied.error}`, "error");
@@ -1443,7 +1561,7 @@ export default function CanvasAgentDock({
           prompt: mentionText,
           runContext,
         });
-        if (textWriteback) {
+        if (textWriteback && sessionScopeKeyRef.current === runScopeKey) {
           // 文案优化只留在面板；明确要求保存时也创建新节点，绝不覆盖引用的原节点。
           const appliedIds = onApplyText(textWriteback.text, textWriteback.meta);
           if (appliedIds.length) {
@@ -1457,32 +1575,35 @@ export default function CanvasAgentDock({
         if (message.includes("已停止") || (error instanceof DOMException && error.name === "AbortError")) {
           /* 已经流回来的那半截是继续写的上下文，不能丢。 */
           const partial = streamTextRef.current.trim();
-          setMessages((value) => [
-            ...value,
-            partial
-              ? { id: createId(), role: "assistant", content: partial, interrupted: true }
-              : { id: createId(), role: "assistant", content: "已停止这一轮回答。" },
-          ]);
+          setMessages((value) => value.map((message) => message.id === assistantMessageId ? {
+            ...message,
+            pending: undefined,
+            activity: undefined,
+            assistantRun: undefined,
+            content: partial || "已停止这一轮回答。",
+            interrupted: true,
+          } : message));
         } else {
           const friendly = describeAgentError(message, typeof navigator === "undefined" ? true : navigator.onLine);
-          setMessages((value) => [
-            ...value,
-            {
-              id: createId(),
-              role: "assistant",
-              content: `请求失败：${friendly}`,
-              error: message,
-              retryText: lastUserTextRef.current,
-              ...(turnNodeReferences.length ? { retryReferences: turnNodeReferences } : {}),
-              ...(pastedReferences.length ? { retryPastedReferences: pastedReferences } : {}),
-              ...(turnNodeIds.length ? { retryCanvasNodeIds: turnNodeIds } : {}),
-            },
-          ]);
+          setMessages((value) => value.map((messageItem) => messageItem.id === assistantMessageId ? {
+            ...messageItem,
+            pending: undefined,
+            activity: undefined,
+            assistantRun: undefined,
+            content: `请求失败：${friendly}`,
+            error: message,
+            retryText: lastUserTextRef.current,
+            ...(turnNodeReferences.length ? { retryReferences: turnNodeReferences } : {}),
+            ...(pastedReferences.length ? { retryPastedReferences: pastedReferences } : {}),
+            ...(turnNodeIds.length ? { retryCanvasNodeIds: turnNodeIds } : {}),
+          } : messageItem));
           notify(friendly, "error");
         }
       } finally {
         abortRef.current = null;
-        setBusy(false);
+        if (activeRunRef.current?.runId === progressRunId) activeRunRef.current = null;
+        if (activeRunRef.current === null) setAssistantRunStatus(null);
+        if (activeRunRef.current === null || activeRunRef.current?.runId === progressRunId) setBusy(false);
         /* 收起面板时跑完的这一轮：rail 上要能看出来，点开就能看到结果。 */
         if (!openRef.current) setUnreadReply(true);
         if (streamFrameRef.current !== null) window.cancelAnimationFrame(streamFrameRef.current);
@@ -1494,6 +1615,67 @@ export default function CanvasAgentDock({
     },
     [autoApply, busy, canvasDocument, closeSkillMenu, context, contextBlock, draftImages, editingMessageId, imageModelId, input, messages, model, notify, onApplyCanvasPatch, onApplyImages, onApplyPlan, onApplyText, onFocusNodes, orderedReferences, orderedSelectedNodeIds, runtime?.models, runtime?.providers, selectedTotal, uploadingPastedImages, webMode],
   );
+
+  const attachManagedRun = useCallback(() => {
+    if (!hydrated || loadedScopeKey !== sessionScopeKey || activeRunRef.current) return;
+    const pending = messages.find((message) => message.role === "assistant" && message.pending && message.assistantRun?.runId && message.assistantRun.scopeKey === sessionScopeKey && message.runContext);
+    if (!pending?.assistantRun || !pending.runContext) return;
+    const marker = pending.assistantRun;
+    const controller = new AbortController();
+    activeRunRef.current = { runId: marker.runId, scopeKey: marker.scopeKey, pendingId: pending.id, controller };
+    abortRef.current = controller;
+    setBusy(true);
+    void waitForAssistantRun(marker.runId, {
+      signal: controller.signal,
+      onRunStatus: (next) => updateManagedRunStatus(next, { runId: marker.runId, scopeKey: marker.scopeKey, pendingId: pending.id }),
+      onRunConnectionIssue: (message) => { if (message) setProgressDetail(message); },
+    }).then((response) => reconcileManagedRunResult(response, {
+      runId: marker.runId,
+      scopeKey: marker.scopeKey,
+      pendingId: pending.id,
+      runContext: pending.runContext!,
+      prompt: marker.prompt,
+      mentionText: marker.prompt,
+      autoApply: marker.autoApply,
+    })).catch((error) => {
+      if (controller.signal.aborted) return;
+      const reason = error instanceof Error ? error.message : "刷新后未能恢复原助手任务。";
+      setMessages((current) => current.map((message) => message.id === pending.id ? {
+        ...message,
+        pending: undefined,
+        activity: undefined,
+        assistantRun: undefined,
+        content: `原助手任务未能恢复：${reason}`,
+        error: reason,
+        interrupted: true,
+      } : message));
+    }).finally(() => {
+      if (activeRunRef.current?.runId === marker.runId) activeRunRef.current = null;
+      if (abortRef.current === controller) abortRef.current = null;
+      setAssistantRunStatus(null);
+      setBusy(false);
+      setProgressDetail("");
+    });
+  }, [hydrated, loadedScopeKey, messages, reconcileManagedRunResult, sessionScopeKey, updateManagedRunStatus]);
+
+  useEffect(() => {
+    attachManagedRun();
+  }, [attachManagedRun]);
+
+  const controlManagedRun = useCallback(async (action: AgentAssistantRunAction) => {
+    const active = activeRunRef.current;
+    if (!active || active.scopeKey !== sessionScopeKey) return;
+    try {
+      const next = await controlAssistantRun(active.runId, action, active.controller.signal);
+      updateManagedRunStatus(next, active);
+      if (action === "cancel") {
+        active.controller.abort(new DOMException("已停止", "AbortError"));
+        setBusy(false);
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "任务操作失败，请稍后重试。", "error");
+    }
+  }, [notify, sessionScopeKey, updateManagedRunStatus]);
 
   const retryFailedBatchItems = useCallback((message: CanvasAgentDockMessage) => {
     const failed = (message.batchItems || []).filter((item) => item.status === "failed" && item.prompt.trim());
@@ -2242,6 +2424,7 @@ export default function CanvasAgentDock({
         ))}
         {busy ? (
           <div className="canvas-agent-dock-message assistant is-streaming">
+            {assistantRunStatus ? <AgentRunPauseButton status={assistantRunStatus} busy={assistantRunStatus.state === "pausing" || assistantRunStatus.state === "cancelling"} onAction={(action) => void controlManagedRun(action)} /> : null}
             {progressDetail ? <small className="canvas-agent-dock-progress" role="status" aria-live="off">{progressDetail}</small> : null}
             {streamText ? <p>{streamText}</p> : !progressDetail ? <p>正在思考…</p> : null}
           </div>

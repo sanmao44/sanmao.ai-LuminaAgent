@@ -85,10 +85,48 @@ test('managed assistant run pauses at the next tool boundary and resumes its exi
   assert.equal(secondCalls, 1);
 });
 
+test('resume during the pausing window restores the running state before the next checkpoint', async () => {
+  const invocationStarted = deferred();
+  const allowCheckpoint = deferred();
+  const runId = 'assistant-pause-fast-resume-06';
+
+  await startAgentAssistantRun(
+    { body: { messages: [{ role: 'user', content: 'Check a read-only detail.' }] }, signal: new AbortController().signal },
+    runId,
+    owner,
+    async (_input, execution) => {
+      invocationStarted.resolve();
+      await allowCheckpoint.promise;
+      await execution.checkpoint();
+      return { kind: 'json', body: { ok: true } };
+    },
+  );
+
+  await invocationStarted.promise;
+  assert.equal((await controlAgentAssistantRun(owner, runId, 'pause'))?.run?.state, 'pausing');
+  assert.equal((await controlAgentAssistantRun(owner, runId, 'resume'))?.run?.state, 'running');
+  allowCheckpoint.resolve();
+  await waitForRun(runId, 'succeeded');
+});
+
+test('non-success HTTP application outputs settle as failed assistant runs', async () => {
+  const runId = 'assistant-http-failure-07';
+  await startAgentAssistantRun(
+    { body: { messages: [{ role: 'user', content: 'Run a request that fails.' }] }, signal: new AbortController().signal },
+    runId,
+    owner,
+    async () => ({ kind: 'json', status: 502, body: { error: 'provider unavailable' } }),
+  );
+  const failed = await waitForRun(runId, 'failed');
+  assert.equal(failed.run.error, '助手执行失败，请检查模型或工具连接后重试。');
+  assert.deepEqual(failed.result, { error: 'provider unavailable' });
+});
+
 test('cancelling a paused assistant task prevents the next tool call', async () => {
   const firstCallStarted = deferred();
   const allowFirstCallToFinish = deferred();
   let secondCalls = 0;
+  let executionSignal;
   const runId = 'assistant-pause-cancel-02';
 
   await startAgentAssistantRun(
@@ -96,6 +134,8 @@ test('cancelling a paused assistant task prevents the next tool call', async () 
     runId,
     owner,
     async (_input, execution) => {
+      executionSignal = execution.signal;
+      assert.ok(executionSignal instanceof AbortSignal, 'managed execution provides the owned abort signal');
       await execution.checkpoint();
       firstCallStarted.resolve();
       await allowFirstCallToFinish.promise;
@@ -112,6 +152,7 @@ test('cancelling a paused assistant task prevents the next tool call', async () 
   await waitForRun(runId, 'paused');
   assert.equal((await controlAgentAssistantRun(owner, runId, 'cancel'))?.run?.state, 'cancelling');
   await waitForRun(runId, 'cancelled');
+  assert.equal(executionSignal.aborted, true, 'cancel reaches the active application signal');
   assert.equal(secondCalls, 0);
 });
 

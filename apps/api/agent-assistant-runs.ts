@@ -32,6 +32,7 @@ type LiveRun = {
   record: AgentAssistantRunExecutionRecord;
   pauseRequested: boolean;
   pauseWaiter: Deferred | null;
+  settling: boolean;
   writeChain: Promise<unknown>;
 };
 
@@ -100,8 +101,8 @@ function safeFailureMessage(error: unknown) {
   return '助手执行失败，请检查模型或工具连接后重试。';
 }
 
-async function collectOutput(output: AgentApplicationOutput): Promise<Record<string, unknown>> {
-  if (output.kind === 'json') return output.body;
+async function collectOutput(output: AgentApplicationOutput): Promise<{ result: Record<string, unknown>; status: number }> {
+  if (output.kind === 'json') return { result: output.body, status: output.status ?? 200 };
   const reader = output.body.getReader();
   const decoder = new TextDecoder();
   let text = '';
@@ -142,7 +143,7 @@ async function collectOutput(output: AgentApplicationOutput): Promise<Record<str
   if (streamError) throw new Error('Agent stream failed');
   const final = finalEvent.value;
   if (!final) throw new Error('Agent stream did not contain a final event');
-  return { ...final, message: String(final.message || streamedText || '') };
+  return { result: { ...final, message: String(final.message || streamedText || '') }, status: output.status ?? 200 };
 }
 
 async function markInterrupted(record: AgentAssistantRunExecutionRecord) {
@@ -221,11 +222,13 @@ export async function startAgentAssistantRun(
     record: inserted.task,
     pauseRequested: false,
     pauseWaiter: null,
+    settling: false,
     writeChain: Promise.resolve(),
   };
   liveRuns.set(id, live);
 
   const execution: AgentAssistantExecutionControl = {
+    signal: controller.signal,
     now: Date.now,
     async checkpoint(options = {}) {
       if (controller.signal.aborted) throw controller.signal.reason || new Error('AGENT_CANCELLED');
@@ -242,6 +245,7 @@ export async function startAgentAssistantRun(
         live.pauseWaiter = null;
         await options.afterResume?.();
         if (controller.signal.aborted) throw controller.signal.reason || new Error('AGENT_CANCELLED');
+        await writeRun(live, { state: 'running', error: undefined });
         return;
       }
 
@@ -258,10 +262,16 @@ export async function startAgentAssistantRun(
   // A managed execution owns an independent signal so closing the initiating
   // HTTP connection only detaches the caller; it does not cancel the task.
   const managedInput: AgentHttpInput = { body: input.body, signal: controller.signal };
-  void Promise.resolve().then(() => invoke(managedInput, execution)).then(collectOutput).then(async (result) => {
-    const terminal = controller.signal.aborted ? 'cancelled' : 'succeeded';
-    await writeRun(live, { state: terminal, result, error: undefined });
+  void Promise.resolve().then(() => invoke(managedInput, execution)).then(collectOutput).then(async ({ result, status }) => {
+    live.settling = true;
+    const terminal = controller.signal.aborted ? 'cancelled' : status >= 400 ? 'failed' : 'succeeded';
+    await writeRun(live, {
+      state: terminal,
+      ...(terminal === 'failed' ? { error: '助手执行失败，请检查模型或工具连接后重试。' } : { error: undefined }),
+      result,
+    });
   }).catch(async (error: unknown) => {
+    live.settling = true;
     const cancelled = controller.signal.aborted || (error instanceof Error && error.name === 'AbortError');
     const failureMessage = safeFailureMessage(error);
     await writeRun(live, {
@@ -302,6 +312,10 @@ export async function controlAgentAssistantRun(
     return replyOf(await markInterrupted(record));
   }
   if (!live || !isActive(record.state)) return replyOf(record);
+  if (live.settling) {
+    await live.writeChain;
+    return replyOf(live.record);
+  }
 
   if (action === 'pause') {
     if (record.state === 'running') {
@@ -311,15 +325,17 @@ export async function controlAgentAssistantRun(
   } else if (action === 'resume') {
     if (record.state === 'paused' || record.state === 'pausing') {
       live.pauseRequested = false;
-      if (record.state === 'paused') record = await writeRun(live, { state: 'running' }) || live.record;
+      record = await writeRun(live, { state: 'running', error: undefined }) || live.record;
       live.pauseWaiter?.resolve();
     }
   } else if (action === 'cancel') {
     if (record.state !== 'cancelling') {
-      record = await writeRun(live, { state: 'cancelling' }) || live.record;
+      // Abort synchronously before awaiting persistence so completion cannot
+      // race ahead and leave a late cancelling state over a finished run.
       live.pauseRequested = false;
       live.controller.abort(new Error('AGENT_CANCELLED'));
       live.pauseWaiter?.resolve();
+      record = await writeRun(live, { state: 'cancelling' }) || live.record;
     }
   }
   return replyOf(live.record || record);
