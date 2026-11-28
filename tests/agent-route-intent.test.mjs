@@ -3867,3 +3867,37 @@ for (const [contextWindow, bodyLength] of [[undefined, 100000], [262144, 300000]
     }
   });
 }
+
+
+test('Canvas streamed image delivery reports delivery instead of creative suggestions', async () => {
+  const agent = harness({
+    imageCapabilities: ['generate'],
+    reply: () => ({ content: '已按要求生成。' }),
+  });
+  const text = '图片不对，我要的是写实风格，真实摄影，超写实场景。';
+  const request = new Request('http://localhost/api/agent', {
+    method: 'POST',
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: text }],
+      webMode: 'off',
+      stream: true,
+      source: 'canvas',
+      executionMode: 'agent-dock',
+      intentText: text,
+      imageModelId: 'test-image',
+      canvasTarget: { nodeIds: [], kind: 'none', operation: 'none' },
+    }),
+  });
+  const output = await agent.postRaw(request);
+  assert.equal(output.kind, 'stream');
+  const events = (await new Response(output.body).text()).trim().split(/\r?\n\r?\n/)
+    .map((frame) => JSON.parse(frame.replace(/^data:\s*/, '')));
+  const status = events.find((event) => event.type === 'status');
+  const final = events.find((event) => event.type === 'final');
+
+  assert.equal(agent.images.length, 1);
+  assert.equal(status.stage, 'delivery');
+  assert.equal(status.message, '图片已生成，正在返回结果…');
+  assert.equal(final.message, '图片已生成。');
+  assert.doesNotMatch(JSON.stringify(events), /创作建议|产物评审|未评估/);
+});
