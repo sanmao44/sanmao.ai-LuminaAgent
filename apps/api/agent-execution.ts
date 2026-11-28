@@ -73,6 +73,7 @@ export type McpCapabilityFollowupOptions = {
   continueOnText?: (input: { text: string }) => string | false;
   setDeferredCalls?: (calls: ToolRuntimeCall[]) => void;
   onExecutedResults?: (results: ToolLoopMessage[]) => void;
+  allowedToolNames?: readonly string[];
 };
 
 export type McpCapabilityFollowupResult = {
@@ -230,14 +231,17 @@ export async function runMcpCapabilityFollowup(options: McpCapabilityFollowupOpt
       return stepReply;
     },
     runCalls: async (calls) => {
-      const runtimeCalls = calls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
+      const allowedNames = options.allowedToolNames ? new Set(options.allowedToolNames) : null;
+      const acceptedCalls = calls.filter((call) => !allowedNames || allowedNames.has(String(call?.function?.name || '')));
+      const rejectedCalls = calls.filter((call) => allowedNames !== null && !allowedNames.has(String(call?.function?.name || '')));
+      const runtimeCalls = acceptedCalls.filter((call): call is ToolRuntimeCall => Boolean(call?.function?.name));
       const execution = await options.toolRuntime.executeCalls(runtimeCalls);
       if (execution.deferredCalls.length) {
         deferredCalls = execution.deferredCalls;
         options.setDeferredCalls?.(deferredCalls);
       }
       if (execution.results.length) options.onExecutedResults?.(execution.results as ToolLoopMessage[]);
-      return execution.results as ToolLoopMessage[];
+      return [...rejectedCalls.map(rejectedToolResult), ...execution.results] as ToolLoopMessage[];
     },
     shouldContinue: () => options.shouldContinue(),
     continueOnEmpty: () => options.continueOnEmpty?.() || false,

@@ -3282,7 +3282,25 @@ const auditMcpCall = (
     let mcpFollowupText = '';
     let filesystemReadSettlement: 'answer' | 'stopped' | undefined;
     let mcpFollowupFailure = '';
-    const mcpFollowupTools = callableTools.filter((tool: any) => ['mcp', 'tabbit'].includes(toolExecutionKind(tool?.function?.name, mcpTools) || ''));
+    const allMcpFollowupTools = callableTools.filter((tool: any) => ['mcp', 'tabbit'].includes(toolExecutionKind(tool?.function?.name, mcpTools) || ''));
+    const filesystemRecoveryRequested = toolOutcomes.some((outcome) => outcome.ok === false
+      && (outcome.filesystemTextRead?.kind === 'missing' || outcome.filesystemTextRead?.kind === 'invalid-range'))
+      && !toolOutcomes.some((outcome) => outcome.filesystemTextRead?.kind === 'content');
+    const filesystemRecoveryTools = filesystemRecoveryRequested
+      ? allMcpFollowupTools.filter((tool: any) => {
+        const definition = mcpTools.find((candidate: any) => candidate.name === tool?.function?.name);
+        const meta = definition?.mcp;
+        const server = meta ? mcpServerById.get(meta.serverId) : undefined;
+        return server?.catalogId === 'filesystem'
+          && server.transport === 'stdio'
+          && meta?.readOnly === true
+          && ['read_text_file', 'list_directory', 'search_files', 'search_text'].includes(meta.toolName);
+      })
+      : [];
+    const mcpFollowupTools = filesystemRecoveryTools.length ? filesystemRecoveryTools : allMcpFollowupTools;
+    const mcpFollowupAllowedToolNames = filesystemRecoveryTools.length
+      ? filesystemRecoveryTools.map((tool: any) => String(tool?.function?.name || '')).filter(Boolean)
+      : undefined;
     /** 只有生成工具产出的文件才算这一轮已经收尾；浏览器下载出来的文件不该挡住后面的操作。 */
     const generatedDeliveryCount = generatedFiles.length - browserDownloadCount;
     if (!followupText && !artifactFollowupText && !generated.length && !generatedDeliveryCount && !webSearchData && mcpToolCallCount > 0 && mcpFollowupTools.length) {
@@ -3350,6 +3368,7 @@ const auditMcpCall = (
         },
         setDeferredCalls: (calls) => { deferredCalls = calls; },
         onExecutedResults: (results) => { stepResults.push(...results as ChatMessage[]); },
+        allowedToolNames: mcpFollowupAllowedToolNames,
       });
       const { stepMessages, stepReply } = mcpLoop;
       mcpFollowupText = mcpLoop.text;
