@@ -420,6 +420,42 @@ test('Agent execution boundary owns MCP continuation lifecycle', async () => {
   assert.equal(result.stopReason, 'no_tool_calls');
 });
 
+test('MCP follow-up preserves completed tool receipts before a later call is deferred', async () => {
+  const { runMcpCapabilityFollowup } = load('./apps/api/agent-execution');
+  const completed = { role: 'tool', tool_call_id: 'read-1', content: JSON.stringify({ ok: true, path: 'C:\\work\\brief.md' }) };
+  const pending = { id: 'write-1', function: { name: 'filesystem__edit_file', arguments: '{}' } };
+  const persisted = [];
+  let deferred = [];
+  const toolRuntime = {
+    async runLoop(options) {
+      const reply = await options.callModel({ step: 0, messages: options.messages });
+      const results = await options.runCalls(reply.tool_calls, { step: 0 });
+      assert.deepEqual(results, [completed]);
+      return { text: '', trace: [{ step: 0, calls: ['filesystem__read_text_file', 'filesystem__edit_file'], durationMs: 1, continued: false }], stopReason: 'stopped' };
+    },
+    async executeCalls() { return { results: [completed], deferredCalls: [pending], stalled: false }; },
+  };
+
+  const result = await runMcpCapabilityFollowup({
+    messages: [{ role: 'user', content: 'read and update the brief' }],
+    signal: new AbortController().signal,
+    toolRuntime,
+    mcpTools: [{ function: { name: 'filesystem__read_text_file' } }, { function: { name: 'filesystem__edit_file' } }],
+    maxSteps: 2,
+    maxCalls: 2,
+    callModel: async () => ({ tool_calls: [
+      { id: 'read-1', function: { name: 'filesystem__read_text_file', arguments: '{}' } },
+      pending,
+    ] }),
+    shouldContinue: () => false,
+    setDeferredCalls: (calls) => { deferred = calls; },
+    onExecutedResults: (results) => { persisted.push(...results); },
+  });
+
+  assert.deepEqual(persisted, [completed]);
+  assert.deepEqual(deferred, [pending]);
+  assert.deepEqual(result.deferredCalls, [pending]);
+});
 test('bounded MCP continuation reports an incomplete task instead of a neutral success placeholder', () => {
   const { mcpFollowupIncompleteMessage } = load('./apps/api/agent-execution');
   assert.equal(
