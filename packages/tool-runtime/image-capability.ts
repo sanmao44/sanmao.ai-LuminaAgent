@@ -1,7 +1,7 @@
 import type { ChatMessage } from '../contracts/chat';
 import type { ToolCall, RuntimeImage, ToolRuntimeState } from './capability-state';
 import type { RuntimeObserver } from '../contracts/observability';
-import type { CreativeReviewReport } from '../contracts/creative-review';
+import type { CreativeReviewEvidence, CreativeReviewReport } from '../contracts/creative-review';
 import { invokeMediaModelCandidates } from '../model-runtime/media';
 
 export type ImageCapabilityPorts = {
@@ -55,6 +55,21 @@ function creativeReviewEvidence(report: CreativeReviewReport) {
 
 function hasCreativeReviewFailure(report: CreativeReviewReport) {
   return creativeReviewEvidence(report).some((item) => item.status === 'fail');
+}
+
+type ConfirmedCreativeReviewFindings = {
+  artifactRef: string;
+  mediaKind: CreativeReviewReport['mediaKind'];
+  findings: CreativeReviewEvidence[];
+};
+
+/** Give the model only actionable evidence while retaining the full report for the UI and internal log. */
+function projectConfirmedCreativeReview(report: CreativeReviewReport): ConfirmedCreativeReviewFindings {
+  return {
+    artifactRef: report.artifactRef,
+    mediaKind: report.mediaKind,
+    findings: creativeReviewEvidence(report).filter((item) => item.status === 'fail'),
+  };
 }
 
 export function normalizeImagePromptBatch(input: { args: Record<string, unknown>; latestInstruction: string; batchPlanContent?: string; fallbackImagePrompt: string; isBareImageExecution: (value: string) => boolean; extractBatchPrompts: (value: string) => string[] }) {
@@ -296,9 +311,11 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
         creativeReviews.forEach((report, index) => {
           if (generatedImageOutputs[index] && hasCreativeReviewFailure(report)) generatedImageOutputs[index].creativeReview = report;
         });
-        // Keep the complete report in the internal generation log. Only a confirmed
-        // failure is returned to the caller so unknown checks cannot become chat/UI noise.
-        const failedCreativeReviews = creativeReviews.filter(hasCreativeReviewFailure);
+        // The full report remains available to the validator-backed UI and internal log.
+        // Only the model-facing tool result gets a failure-only projection.
+        const confirmedCreativeReviewFindings = creativeReviews
+          .filter(hasCreativeReviewFailure)
+          .map(projectConfirmedCreativeReview);
         results.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -311,7 +328,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
             ...(storedRefs.length
               ? {
                 images: storedRefs.map((ref: string) => ({ ref })),
-                ...(failedCreativeReviews.length ? { creativeReview: failedCreativeReviews } : {}),
+                ...(confirmedCreativeReviewFindings.length ? { creativeReviewFindings: confirmedCreativeReviewFindings } : {}),
                 instruction: '要把这些图放进 Word/PPT 时，把 ref 原样传给 document_generate 或 presentation_generate，不要自己编 ref。',
               }
               : {}),

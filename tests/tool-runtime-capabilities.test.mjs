@@ -8,6 +8,8 @@ const load = createTsRequire(process.cwd());
 const capabilities = load('./packages/tool-runtime/native-capabilities');
 const mcpCapabilities = load('./packages/tool-runtime/mcp-capability');
 const AgentMcpDetailDock = load('./components/AgentMcpDetailDock').default;
+const CreativeReviewPanel = load('./components/CreativeReviewPanel').default;
+const { isCreativeReviewReport } = load('./packages/contracts/creative-review');
 const artifacts = load('./lib/artifacts/index');
 const artifactLimits = load('./lib/artifacts/limits');
 const imageStorage = load('./lib/image-storage');
@@ -294,9 +296,13 @@ test('image generation returns its structured creative review to the Agent', asy
   const image = load('./packages/tool-runtime/image-capability');
   const artifactRefs = ['/api/storage/file?name=generated-1.png', '/api/storage/file?name=generated-2.png'];
   const generated = [];
+  let persistedReview;
   const review = {
     version: 'p1', mediaKind: 'image', artifactRef: artifactRefs[0], checkedAt: '2026-11-26T00:00:00.000Z',
-    capability: { status: 'fail', evidence: [{ dimension: 'requested_aspect_ratio', status: 'fail', criterion: '2% tolerance', observed: '1:1', expected: '16:9', reason: 'ratio mismatch', source: 'rule' }] },
+    capability: { status: 'fail', evidence: [
+      { dimension: 'requested_aspect_ratio', status: 'fail', criterion: '2% tolerance', observed: '1:1', expected: '16:9', reason: 'ratio mismatch', source: 'rule' },
+      { dimension: 'image_decode', status: 'pass', criterion: 'image decodes', observed: true, reason: 'decoded', source: 'rule' },
+    ] },
     safety: { status: 'unknown', evidence: [{ dimension: 'content_safety', status: 'unknown', criterion: 'calibrated review required', reason: 'not calibrated', source: 'vision' }] },
   };
   const result = await image.executeImageCapability({
@@ -318,7 +324,7 @@ test('image generation returns its structured creative review to the Agent', asy
       generateImage: async () => [{ url: 'data:image/png;base64,ZmFrZTE=' }, { url: 'data:image/png;base64,ZmFrZTI=' }],
       persistGenerationResult: async () => ({ images: artifactRefs.map((url) => ({ url })) }),
       reviewImageArtifact: async (input) => { assert.ok(artifactRefs.includes(input.artifactRef)); assert.equal(input.brief, '请生成 16:9 咖啡广告图'); assert.equal(input.generationPrompt, 'coffee product photo'); return { ...review, artifactRef: input.artifactRef }; },
-      imageDownloadAuth: () => undefined, finishGenerationLog: async () => {}, skipCaption: true,
+      imageDownloadAuth: () => undefined, finishGenerationLog: async (_id, patch) => { persistedReview = patch.creativeReview; }, skipCaption: true,
       latestInstruction: '请生成 16:9 咖啡广告图',
       executionPublicState: { settings: { imageStoragePath: 'C:\authorized-images' } },
     },
@@ -326,9 +332,20 @@ test('image generation returns its structured creative review to the Agent', asy
   const payload = JSON.parse(String(result.results[0].content));
   assert.equal(payload.ok, true);
   assert.deepEqual(payload.images.map((image) => image.ref), artifactRefs);
-  assert.deepEqual(payload.creativeReview.map((report) => report.artifactRef), artifactRefs);
-  assert.equal(payload.creativeReview[0].capability.evidence[0].observed, '1:1');
-  assert.deepEqual(generated.map((image) => image.creativeReview.artifactRef), artifactRefs, 'the Agent response images keep each matching review');
+  assert.deepEqual(payload.creativeReviewFindings.map((entry) => entry.artifactRef), artifactRefs);
+  assert.deepEqual(payload.creativeReviewFindings[0].findings.map((item) => item.dimension), ['requested_aspect_ratio']);
+  assert.ok(payload.creativeReviewFindings.every((entry) => entry.findings.every((item) => item.status === 'fail')), 'pass evidence is also omitted from the model-facing tool result');
+  assert.equal(JSON.stringify(payload.creativeReviewFindings).includes('unknown'), false, 'unknown evidence stays out of the model-facing tool result');
+  assert.deepEqual(generated.map((image) => image.creativeReview.artifactRef), artifactRefs, 'the Agent response images keep each matching full review');
+  assert.equal(generated.every((image) => isCreativeReviewReport(image.creativeReview)), true, 'image metadata remains valid under the existing report contract');
+  assert.equal(generated[0].creativeReview.safety.evidence[0].status, 'unknown', 'the full image report retains inconclusive evidence for the UI filter');
+  const unknownOnlyPanel = renderToStaticMarkup(createElement(CreativeReviewPanel, { reports: [{
+    ...review,
+    capability: { status: 'unknown', evidence: [{ dimension: 'brief_visual_compliance', status: 'unknown', criterion: 'visual review required', reason: 'not assessed', source: 'vision' }] },
+  }] }));
+  assert.equal(unknownOnlyPanel, '', 'unknown-only reports render no issue panel');
+  assert.deepEqual(persistedReview.map((report) => report.artifactRef), artifactRefs);
+  assert.equal(persistedReview[0].safety.evidence[0].status, 'unknown', 'the internal generation log keeps the complete report');
 });
 
 test('image generation keeps non-failing creative reviews internal', async () => {
