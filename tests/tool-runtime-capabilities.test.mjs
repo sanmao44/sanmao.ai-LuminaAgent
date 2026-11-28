@@ -429,6 +429,51 @@ test('MCP call summary distinguishes previews from writes', () => {
   assert.match(markup, /预览调用只返回差异，不会落盘/);
 });
 
+test('MCP stops after the same tool returns the same error twice', async () => {
+  const calls = [];
+  const { state, input } = createWindowsMcpTestContext({
+    mcpCall: async (_server, toolName, args) => {
+      calls.push({ toolName, args });
+      return { isError: true, text: 'ENOENT: requested file does not exist' };
+    },
+  });
+
+  const first = await mcpCapabilities.executeMcpCapability(input);
+  assert.equal(first.stalled, undefined, 'one failure still allows a safe recovery attempt');
+  input.call = { id: 'desktop-current-retry' };
+  input.stepCalls = [input.call, { id: 'desktop-following-retry' }];
+  const second = await mcpCapabilities.executeMcpCapability(input);
+
+  assert.equal(calls.length, 2);
+  assert.equal(second.stalled, true);
+  assert.match(state.stalledMcpReason, /连续 2 次返回相同的错误/);
+  assert.match(JSON.parse(second.results[0].content).error, /提供新线索或指定替代路径/);
+  assert.equal(second.results[1].tool_call_id, 'desktop-following-retry');
+});
+
+test('a successful MCP call resets the repeated-error streak', async () => {
+  const replies = [
+    { isError: true, text: 'ENOENT: requested file does not exist' },
+    { isError: false, text: 'alternate path found' },
+    { isError: true, text: 'ENOENT: requested file does not exist' },
+  ];
+  let calls = 0;
+  const { state, input } = createWindowsMcpTestContext({ mcpCall: async () => replies[calls++] });
+
+  const outcomes = [];
+  for (let index = 0; index < replies.length; index += 1) {
+    input.call = { id: 'desktop-streak-' + index };
+    input.stepCalls = [input.call];
+    outcomes.push(await mcpCapabilities.executeMcpCapability(input));
+  }
+
+  assert.equal(calls, 3);
+  assert.equal(outcomes[0].stalled, undefined);
+  assert.equal(outcomes[1].stalled, undefined);
+  assert.equal(outcomes[2].stalled, undefined);
+  assert.equal(state.stalledMcpReason, '');
+});
+
 test('Windows-MCP stops immediately after user input takes control instead of polling for 30 seconds', async () => {
   const state = {
     generatedFiles: [], mcpToolCallCount: 0, mcpTurnBudget: 60_000, usedMcpTools: [], browserUses: [],

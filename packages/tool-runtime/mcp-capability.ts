@@ -246,10 +246,20 @@ export async function executeMcpCapability(input: McpCapabilityDependencies): Pr
       return { results, stalled: true };
     }
     if (server.catalogId === 'playwright' && !meta.readOnly && !result.isError) input.mcpRepeatTracker.clear();
-    const repeats = trackMcpRepeat(input.mcpRepeatTracker, mcpCallSignature(meta.serverId, meta.toolName, args), result.text);
-    if (repeats >= TOOL_LOOP_MCP_REPEAT_LIMIT) {
-      state.stalledMcpReason = `「${meta.serverName} / ${meta.toolName}」连续 ${repeats} 次返回相同的结果`;
-      const results: ChatMessage[] = [toolMessage(call.id, { ok: false, error: `同一个调用已经连续 ${repeats} 次拿到完全一样的结果，本轮提前停止。` })];
+    const failureKey = `mcp-failure:${meta.serverId}\u0000${meta.toolName}`;
+    if (!result.isError) {
+      for (const key of input.mcpRepeatTracker.keys()) if (key.startsWith('mcp-failure:')) input.mcpRepeatTracker.delete(key);
+    }
+    const repeatKey = result.isError ? failureKey : `mcp-success:${mcpCallSignature(meta.serverId, meta.toolName, args)}`;
+    const repeats = trackMcpRepeat(input.mcpRepeatTracker, repeatKey, result.text);
+    const repeatLimit = result.isError ? 2 : TOOL_LOOP_MCP_REPEAT_LIMIT;
+    if (repeats >= repeatLimit) {
+      const repeatedKind = result.isError ? '错误' : '结果';
+      state.stalledMcpReason = `「${meta.serverName} / ${meta.toolName}」连续 ${repeats} 次返回相同的${repeatedKind}`;
+      const stopText = result.isError
+        ? `同一工具连续 ${repeats} 次返回相同错误，本轮已停止。请核对错误原因，提供新线索或指定替代路径后再继续。`
+        : `同一个调用已经连续 ${repeats} 次拿到完全一样的结果，本轮提前停止。`;
+      const results: ChatMessage[] = [toolMessage(call.id, { ok: false, error: stopText })];
       for (const rest of input.stepCalls.slice(input.callIndex + 1)) results.push(toolMessage(rest.id, { ok: false, error: '上一步陷入重复，本轮调用没有执行。' }));
       return { results, stalled: true };
     }
