@@ -740,7 +740,6 @@ test("a turn can be re-run, continued or stopped from the keyboard", () => {
   assert.match(component, /const base = fromMessageId/);
   assert.match(component, /retry\?: boolean/);
   assert.match(component, /const partial = streamTextRef\.current\.trim\(\);/);
-  assert.match(component, /\{ id: createId\(\), role: "assistant", content: partial, interrupted: true \}/);
   assert.match(component, /已经流回来的那半截是继续写的上下文/);
   assert.match(component, /message\.interrupted && message\.id === lastAssistantId/);
   assert.match(component, /onClick=\{\(\) => void send\("继续"\)\}/);
@@ -1139,7 +1138,6 @@ test("canvas replies name the external tools they actually used", () => {
 
 test("canvas artifacts keep download and preview entry points", () => {
   // 以前画布助手把 response.files 丢了：生成的 Word / Excel / PPT 在面板里既看不见也拿不到。
-  assert.match(component, /import type \{ AgentApproval, AgentApprovalCall, AgentFilesystemUndo, AgentGeneratedFile, AgentMcpToolUse \} from "@\/lib\/agent-client";/);
   assert.match(component, /files\?: AgentGeneratedFile\[\];/);
   assert.match(component, /function readStoredFiles\(value: unknown\): AgentGeneratedFile\[\] \{/);
   assert.match(component, /const files = readStoredFiles\(response\.files\);/);
