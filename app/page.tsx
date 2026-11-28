@@ -6868,7 +6868,7 @@ export default function Page() {
                 const versions = messageVersionsFor(message).map((version)=>version.id === request.retryVersionId ? {
                         ...version,
                         content: request.partialText?.trim() || request.interruptionMessage || '本轮回答已停止。',
-                        interrupted: true
+                        interrupted: true,
                     } : version);
                 const { assistantRun: _assistantRun, pendingSince: _pendingSince, ...rest } = message;
                 return applyMessageVersion({

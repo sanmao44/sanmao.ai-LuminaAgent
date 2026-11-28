@@ -30,6 +30,7 @@ export function CanvasLayoutIcon({ kind }: { kind: CanvasLayoutIconKind }) {
 export default function CanvasSelectionToolbar({
   selectedCount,
   selectedImageCount,
+  selectedVideoCount,
   batchDownloading,
   agentBusy,
   alignmentOptions,
@@ -37,6 +38,7 @@ export default function CanvasSelectionToolbar({
   onAskAgent,
   onMakeGroup,
   onDownloadSelectedImages,
+  onDownloadSelectedVideos,
   onArrange,
   onDuplicate,
   onFit,
@@ -46,6 +48,7 @@ export default function CanvasSelectionToolbar({
 }: {
   selectedCount: number;
   selectedImageCount: number;
+  selectedVideoCount: number;
   batchDownloading: boolean;
   agentBusy: boolean;
   alignmentOptions: readonly CanvasLayoutOption<CanvasAlignment>[];
@@ -53,6 +56,7 @@ export default function CanvasSelectionToolbar({
   onAskAgent: () => void;
   onMakeGroup: () => void;
   onDownloadSelectedImages: () => void;
+  onDownloadSelectedVideos: () => void;
   onArrange: () => void;
   onDuplicate: () => void;
   onFit: () => void;
@@ -74,6 +78,11 @@ export default function CanvasSelectionToolbar({
         {selectedImageCount >= 2 && (
           <button type="button" title="按选择顺序打包下载图片" aria-label={`批量下载 ${selectedImageCount} 张图片`} disabled={batchDownloading} onClick={onDownloadSelectedImages}>
             {batchDownloading ? "⌛ 打包中…" : `↓ 下载 ${selectedImageCount} 张`}
+          </button>
+        )}
+        {selectedVideoCount >= 2 && (
+          <button type="button" title="按选择顺序打包下载视频" aria-label={"批量下载 " + selectedVideoCount + " 个视频"} disabled={batchDownloading} onClick={onDownloadSelectedVideos}>
+            {batchDownloading ? "⌛ 打包中…" : "↓ 下载 " + selectedVideoCount + " 个视频"}
           </button>
         )}
         <button type="button" onClick={onArrange} title="按节点父子关系整理选中对象">⌗ 整理选中</button>

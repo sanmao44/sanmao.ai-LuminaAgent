@@ -23,6 +23,12 @@ import AgentRunPauseButton from "@/components/AgentRunPauseButton";
 import { classifyAgentDeliverable, resolveCreativeRoute } from "@/lib/agent-intent";
 import { generateCanvasAgent, uploadCanvasAsset } from "@/lib/canvas/api";
 import {
+  finalizeCanvasAssistantRunMessage,
+  isCurrentCanvasAssistantRun,
+  requestCanvasAssistantRunCancellation,
+  type CanvasAssistantRunIdentity,
+} from "@/lib/canvas/assistant-run-lifecycle";
+import {
   CANVAS_AGENT_DOCK_CONTEXT_MAX_NODES,
   CANVAS_AGENT_DOCK_IMAGE_DRAG_TYPE,
   CANVAS_AGENT_DOCK_MAX_REFERENCES,
@@ -672,7 +678,7 @@ export default function CanvasAgentDock({
   const chipDragMovedRef = useRef(false);
   const chipClickBlockedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const activeRunRef = useRef<{ runId: string; scopeKey: string; pendingId: string; controller: AbortController } | null>(null);
+  const activeRunRef = useRef<CanvasAssistantRunIdentity | null>(null);
   /* 失败后要能重试，所以留一份最近一次发送的原话。 */
   const lastUserTextRef = useRef("");
   const inputRef = useRef("");
@@ -1089,13 +1095,15 @@ export default function CanvasAgentDock({
 
   const updateManagedRunStatus = useCallback((status: AgentAssistantRunStatus, run?: { runId: string; scopeKey: string; pendingId: string }) => {
     const active = activeRunRef.current;
-    if (!active || (run && (active.runId !== run.runId || active.scopeKey !== run.scopeKey))) return;
-    if (assistantRunStatus && assistantRunStatus.runId === status.runId && status.updatedAt < assistantRunStatus.updatedAt) return;
+    if (!active || (run && !isCurrentCanvasAssistantRun(active, run))) return;
+    if (active.runId !== status.runId || !shouldAcceptAssistantRunStatus(assistantRunStatus || undefined, status)) return;
     setAssistantRunStatus(status);
     setMessages((current) => current.map((message) => message.id === active.pendingId
       ? {
           ...message,
-          pending: !["succeeded", "failed", "cancelled", "interrupted"].includes(status.state),
+          // Keep the persisted run marker attachable through terminal status
+          // until the corresponding result has been reconciled locally.
+          pending: true,
           activity: { stage: status.state, message: status.state === "paused" ? "任务已暂停" : status.state === "pausing" ? "正在安全暂停…" : status.state === "cancelling" ? "正在停止当前任务…" : status.state === "running" ? "任务已继续" : message.activity?.message || "正在处理…" },
         }
       : message));
@@ -1161,15 +1169,44 @@ export default function CanvasAgentDock({
     return true;
   }, [context.canvasId, context.creativeProjectId, messages, onApplyCanvasPatch, onApplyImages, onApplyText, sessionScopeKey]);
 
+  const cancelActiveRun = useCallback(async (active: CanvasAssistantRunIdentity) => {
+    if (!isCurrentCanvasAssistantRun(activeRunRef.current, active) || active.scopeKey !== sessionScopeKeyRef.current) return;
+    setMessages((current) => current.map((message) => message.id === active.pendingId
+      ? { ...message, activity: { stage: "cancelling", message: "正在停止当前任务…" } }
+      : message));
+    try {
+      const result = await requestCanvasAssistantRunCancellation(active, (runId) => controlAssistantRun(runId, "cancel"));
+      if (!isCurrentCanvasAssistantRun(activeRunRef.current, active)) return;
+      if (result.kind === "local") {
+        setMessages((current) => current.map((message) => message.id === active.pendingId
+          ? finalizeCanvasAssistantRunMessage(message, streamTextRef.current)
+          : message));
+        activeRunRef.current = null;
+        if (abortRef.current === active.controller) abortRef.current = null;
+        setAssistantRunStatus(null);
+        setBusy(false);
+        setProgressDetail("");
+        streamTextRef.current = "";
+        setStreamText("");
+        return;
+      }
+      if (result.kind === "requested") updateManagedRunStatus(result.status, active);
+    } catch (error) {
+      if (isCurrentCanvasAssistantRun(activeRunRef.current, active)) {
+        notify(error instanceof Error ? error.message : "停止任务失败，请稍后重试。", "error");
+      }
+    }
+  }, [notify, updateManagedRunStatus]);
+
   const stop = useCallback(() => {
     const active = activeRunRef.current;
-    if (active) void controlAssistantRun(active.runId, "cancel").catch(() => undefined);
-    active?.controller.abort(new DOMException("已停止", "AbortError"));
-    abortRef.current = null;
-    activeRunRef.current = null;
-    setAssistantRunStatus(null);
-    setBusy(false);
-  }, []);
+    if (active) void cancelActiveRun(active);
+    else {
+      abortRef.current?.abort(new DOMException("已停止", "AbortError"));
+      abortRef.current = null;
+      setBusy(false);
+    }
+  }, [cancelActiveRun]);
 
   const send = useCallback(
     async (raw?: string, options: {
@@ -1390,7 +1427,16 @@ export default function CanvasAgentDock({
         assistantRun: { runId: progressRunId, pendingSince, prompt: promptText, autoApply, scopeKey: runScopeKey },
       };
       setMessages([...history, pendingAssistant]);
-      activeRunRef.current = { runId: progressRunId, scopeKey: runScopeKey, pendingId: assistantMessageId, controller };
+      activeRunRef.current = {
+        runId: progressRunId,
+        scopeKey: runScopeKey,
+        pendingId: assistantMessageId,
+        controller,
+        remoteRequestStarted: false,
+        localExecutionSettled: false,
+        cancelRequested: false,
+        cancelRequestInFlight: false,
+      };
       const memoryMessages = history.map((message) => ({ id: message.id, role: message.role, content: message.content }));
       let requestMemory = memory;
       try {
@@ -1437,6 +1483,8 @@ export default function CanvasAgentDock({
           : {}),
       }));
       try {
+        const activeRun = activeRunRef.current;
+        if (activeRun?.runId === progressRunId) activeRun.remoteRequestStarted = true;
         const response = await generateCanvasAgent(
           {
             messages: outbound,
@@ -1600,8 +1648,12 @@ export default function CanvasAgentDock({
           notify(friendly, "error");
         }
       } finally {
-        abortRef.current = null;
-        if (activeRunRef.current?.runId === progressRunId) activeRunRef.current = null;
+        const activeRun = activeRunRef.current;
+        if (activeRun?.runId === progressRunId) {
+          activeRun.localExecutionSettled = true;
+          activeRunRef.current = null;
+        }
+        if (abortRef.current === controller) abortRef.current = null;
         if (activeRunRef.current === null) setAssistantRunStatus(null);
         if (activeRunRef.current === null || activeRunRef.current?.runId === progressRunId) setBusy(false);
         /* 收起面板时跑完的这一轮：rail 上要能看出来，点开就能看到结果。 */
@@ -1622,7 +1674,16 @@ export default function CanvasAgentDock({
     if (!pending?.assistantRun || !pending.runContext) return;
     const marker = pending.assistantRun;
     const controller = new AbortController();
-    activeRunRef.current = { runId: marker.runId, scopeKey: marker.scopeKey, pendingId: pending.id, controller };
+    activeRunRef.current = {
+      runId: marker.runId,
+      scopeKey: marker.scopeKey,
+      pendingId: pending.id,
+      controller,
+      remoteRequestStarted: true,
+      localExecutionSettled: false,
+      cancelRequested: false,
+      cancelRequestInFlight: false,
+    };
     abortRef.current = controller;
     setBusy(true);
     void waitForAssistantRun(marker.runId, {
@@ -1650,11 +1711,15 @@ export default function CanvasAgentDock({
         interrupted: true,
       } : message));
     }).finally(() => {
-      if (activeRunRef.current?.runId === marker.runId) activeRunRef.current = null;
+      const activeRun = activeRunRef.current;
+      if (activeRun?.runId === marker.runId) {
+        activeRun.localExecutionSettled = true;
+        activeRunRef.current = null;
+        setAssistantRunStatus(null);
+        setBusy(false);
+        setProgressDetail("");
+      }
       if (abortRef.current === controller) abortRef.current = null;
-      setAssistantRunStatus(null);
-      setBusy(false);
-      setProgressDetail("");
     });
   }, [hydrated, loadedScopeKey, messages, reconcileManagedRunResult, sessionScopeKey, updateManagedRunStatus]);
 

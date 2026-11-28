@@ -1030,7 +1030,7 @@ test("local edit summary only occupies editor space when a mask exists", () => {
   assert.match(component, /label: node\.data\.mask \? "查看局部编辑" : "局部编辑"/);
 });
 
-test("dock local edit control keeps editing and removal actions in a clear segmented chip", () => {
+test("dock local edit removal stays centered in a separate, accessible icon button", () => {
   assert.match(component, /className="canvas-node-editor-dock-local-edit"/);
   assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-edit"/);
   assert.match(component, /className="canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove"/);
@@ -1039,12 +1039,14 @@ test("dock local edit control keeps editing and removal actions in a clear segme
   const removeStart = component.indexOf("className=\"canvas-node-editor-dock-chip canvas-node-editor-dock-chip-remove\"");
   const removeEnd = component.indexOf("</button>", removeStart);
   assert.ok(removeStart >= 0 && removeEnd > removeStart, "local edit remove button should be present");
+  assert.ok(component.slice(removeStart, removeEnd).includes('<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="m4 4 8 8m0-8-8 8" /></svg>'));
   assert.doesNotMatch(component.slice(removeStart, removeEnd), /data-tooltip=/);
   assert.match(component, /event\.stopPropagation\(\);\s*onLocalEditRemove\(\)/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*display:inline-flex[^}]*align-items:stretch[^}]*overflow:hidden[^}]*border-radius:999px/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*padding:0 9px[^}]*border:0[^}]*border-radius:999px 0 0 999px/);
-  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*display:grid[^}]*place-items:center[^}]*border-left:1px[^}]*border-radius:0 999px 999px 0/);
-  assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*position:absolute/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*display:inline-flex[^}]*align-items:center[^}]*gap:6px[^}]*overflow:visible/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-edit\{[^}]*border-radius:999px/);
+  assert.match(styles, /\.canvas-node-editor-dock-local-edit \.canvas-node-editor-dock-chip-remove\{[^}]*display:grid[^}]*place-items:center[^}]*width:26px[^}]*height:26px[^}]*border-radius:50%/);
+  assert.match(styles, /\.canvas-node-editor-dock-chip-remove svg\{[^}]*width:12px[^}]*height:12px/);
+  assert.doesNotMatch(styles, /\.canvas-node-editor-dock-local-edit\{[^}]*align-items:stretch[^}]*overflow:hidden/);
 });
 
 test("regular editor stays below its node and can extend beyond the canvas stage", () => {

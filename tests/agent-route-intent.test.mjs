@@ -343,15 +343,17 @@ function harness(options = {}) {
       getRuntimeModel: async (id, kind) => kind === 'image' ? { provider, model: imageModel } : options.runtimeForModel?.(id) || runtime,
       getRuntimeImageGenerationModel: async (id) => {
         imageRuntimeRequests.push({ capability: 'generate', id });
+        if (typeof options.imageRuntimeForCapability === 'function') return options.imageRuntimeForCapability(id, 'generate');
         return imageModel.capabilities.includes('generate') ? { provider, model: imageModel } : null;
       },
       getRuntimeImageModelForCapability: async (id, capability) => {
         imageRuntimeRequests.push({ capability, id });
-        const supportsCapability = imageModel.capabilities.includes(capability)
-          || (capability === 'edit' && imageModel.capabilities.includes('generate'));
+        if (typeof options.imageRuntimeForCapability === 'function') return options.imageRuntimeForCapability(id, capability);
+        const supportsCapability = imageModel.capabilities.includes(capability);
         return supportsCapability ? { provider, model: { ...imageModel, capabilities: [capability] } } : null;
       },
-      getRuntimeImageModelCandidates: async () => imageModelCandidates,
+      getRuntimeImageModelCandidates: async (_id, capability) => imageModelCandidates.filter((candidate) =>
+        !candidate.model.capabilities || candidate.model.capabilities.includes(capability)),
       getPublicState: async () => ({ settings: options.publicSettings || {}, models: options.availableModels ?? options.availableImageModels ?? [imageModel], providers: [provider, ...(options.availableProviders || [])] }),
     },
     '@/lib/auth': { isTrustedAppRequest: () => true },
@@ -2183,7 +2185,7 @@ test('Canvas JEV review cannot turn an explicit image description into generatio
   });
   const classifierCalls = agent.modelCalls.filter((call) => call.model === 'jev-1.14');
   assert.equal(classifierCalls.length, 1);
-  assert.match(classifierCalls[0].payload.messages[0].content, /target\.operation is not the user request/);
+  assert.match(classifierCalls[0].payload.messages[0].content, /direct visual change to the selected image/);
   assert.equal(JSON.parse(classifierCalls[0].payload.messages[1].content).localIntent.deliverable, 'TEXT');
   assert.equal(agent.images.length, 0);
   assert.deepEqual(data.images, []);
@@ -2365,7 +2367,7 @@ test('JEV clarification cannot downgrade an explicit Canvas poster request', asy
   assert.equal(agent.images[0].references.length, 4);
   assert.match(agent.images[0].prompt, /16:9|海报/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
-  assert.equal(data.message, '图片已生成。');
+  assert.equal(data.message, '图片已按当前请求生成。');
   assert.doesNotMatch(data.message, /下一版可尝试方向/);
 });
 
@@ -2500,7 +2502,7 @@ test('Canvas without a selection does not turn greetings, identity questions, or
   assert.equal(agent.modelCalls.length, 3, 'all three turns are answered by their normal model paths');
 });
 
-test('Canvas semantic image intent reports actual missing image capability before chat can guess', async () => {
+test('an empty public image catalog does not block a runtime image model from executing', async () => {
   const classifierRuntime = {
     model: { id: 'jev-runtime', rawId: 'jev-1.14', displayName: 'JEV', capabilities: ['chat'], kind: 'chat' },
     provider: { id: 'jev-provider', name: 'JEV', platform: 'openai', enabled: true },
@@ -2517,11 +2519,85 @@ test('Canvas semantic image intent reports actual missing image capability befor
     intentText: text,
     deliverable: 'OTHER',
   });
-  assert.equal(data.ok, false);
-  assert.match(data.message, /当前没有可用生图模型/);
+  assert.equal(data.images.length, 1);
+  assert.doesNotMatch(data.message, /当前没有可用生图模型/);
   assert.equal(agent.modelCalls.filter((call) => call.model === 'jev-1.14').length, 1);
-  assert.equal(agent.modelCalls.filter((call) => call.model !== 'jev-1.14').length, 0);
-  assert.equal(agent.images.length, 0);
+  assert.equal(agent.images.length, 1);
+});
+
+test('Canvas selected-image appearance correction falls back to generation when edit capability is unavailable', async () => {
+  const reference = 'https://assets.test/source-character.png';
+  const agent = harness({
+    imageCapabilities: ['generate'],
+    reply: () => ({ content: '当前图片没有编辑接口。' }),
+  });
+  const text = '身材太瘦了，让身材高挑一点，大胆一点，高挑的身材';
+  const data = await agent.post([{ role: 'user', content: text }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    context: { schemaVersion: 1, creativeProjectId: 'creative-1', selectedNodeIds: ['image-1'], assetIds: [] },
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'edit' },
+    canvasDocument: {
+      version: 'test', edges: [], groups: [], camera: { x: 0, y: 0, zoom: 1 },
+      nodes: [{ id: 'image-1', type: 'media', x: 0, y: 0, data: { kind: 'image', name: '选中角色', url: reference } }],
+    },
+  });
+
+  assert.equal(agent.images.length, 1);
+  assert.equal(agent.images[0].mode, 'generate');
+  assert.deepEqual(agent.images[0].references, [], 'ordinary text-to-image fallback must not pretend it consumed the selected image');
+  assert.deepEqual(agent.imageRuntimeRequests, [
+    { capability: 'edit', id: 'auto' },
+    { capability: 'reference', id: 'auto' },
+    { capability: 'generate', id: 'auto' },
+  ]);
+  assert.equal(data.images.length, 1);
+  assert.match(data.message, /不是对原图的直接编辑/);
+  assert.doesNotMatch(data.message, /没有可用的改图模型|当前没有可用改图模型/);
+});
+
+test('a confirmed missing edit endpoint retries the same selected model through its generate capability', async () => {
+  const agent = harness({
+    imageCapabilities: ['generate', 'edit'],
+    editImageError: () => Object.assign(new Error('not found'), { providerFailureKind: 'http', providerStatus: 404 }),
+  });
+  const text = '把选中图片里的人物身材调整得更加高挑';
+  const data = await agent.post([{ role: 'user', content: text, references: [
+    { id: 'image-1', nodeId: 'image-1', kind: 'image', name: '选中人物', url: 'data:image/png;base64,dGVzdA==' },
+  ] }], {
+    source: 'canvas',
+    executionMode: 'agent-dock',
+    intentText: text,
+    imageModelId: 'test-image',
+    canvasTarget: { nodeIds: ['image-1'], kind: 'image', operation: 'edit' },
+  });
+
+  assert.deepEqual(agent.images.map((image) => image.mode), ['edit', 'generate']);
+  assert.deepEqual(agent.images[0].references, ['data:image/png;base64,dGVzdA==']);
+  assert.deepEqual(agent.images[1].references, [], 'the generate endpoint receives no unsupported reference fields');
+  assert.equal(data.images.length, 1);
+  assert.equal(data.generations[0].mode, 'generate');
+  assert.match(data.message, /不是对原图的直接编辑/);
+});
+
+test('an unavailable selected image model automatically uses an enabled library alternative', async () => {
+  const fallbackProvider = { id: 'fallback-provider', name: 'Fallback', platform: 'openai', enabled: true };
+  const fallbackModel = { id: 'fallback-image', rawId: 'fallback-raw', displayName: 'Fallback Image', kind: 'image', enabled: true, published: true, capabilities: ['generate'], providerId: fallbackProvider.id };
+  const fallbackRuntime = { provider: fallbackProvider, model: fallbackModel };
+  const agent = harness({
+    imageCapabilities: ['generate'],
+    imageRuntimeForCapability: (id, capability) => capability === 'generate' && id === 'auto' ? fallbackRuntime : null,
+    imageModelCandidates: [{ ...fallbackRuntime, model: fallbackModel }],
+  });
+  const data = await agent.post([{ role: 'user', content: '生成一张高挑人物的图片' }], { imageModelId: 'disabled-selected-model' });
+
+  assert.equal(data.images.length, 1);
+  assert.deepEqual(agent.imageRuntimeRequests, [
+    { capability: 'generate', id: 'disabled-selected-model' },
+    { capability: 'generate', id: 'auto' },
+  ]);
+  assert.deepEqual(agent.imageModelCalls, ['fallback-raw']);
 });
 
 test('client image model selection reaches Agent generation even when the public catalog is temporarily empty', async () => {
@@ -3938,6 +4014,6 @@ test('Canvas streamed image delivery reports delivery instead of creative sugges
   assert.equal(agent.images.length, 1);
   assert.equal(status.stage, 'delivery');
   assert.equal(status.message, '图片已生成，正在返回结果…');
-  assert.equal(final.message, '图片已生成。');
+  assert.match(final.message, /不是对原图的直接编辑/);
   assert.doesNotMatch(JSON.stringify(events), /创作建议|产物评审|未评估/);
 });

@@ -49,6 +49,17 @@ export type ImageCapabilityInput = {
   ports: ImageCapabilityPorts;
 };
 
+type ImageModelOperation = 'generate' | 'edit' | 'reference-generate';
+type ImageModelCandidate = RuntimeImage & { operation: ImageModelOperation };
+
+function imageOperationForCapability(capability: 'generate' | 'edit' | 'reference'): ImageModelOperation {
+  return capability === 'reference' ? 'reference-generate' : capability;
+}
+
+function imageCandidateKey(candidate: ImageModelCandidate) {
+  return `${candidate.model.id}:${candidate.operation}`;
+}
+
 function creativeReviewEvidence(report: CreativeReviewReport) {
   return [...report.capability.evidence, ...report.safety.evidence];
 }
@@ -104,7 +115,7 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       );
       // Reference generation is a distinct operation; its provider adapter
       // chooses the correct native image-input contract without changing task semantics.
-      const mode = requestedImageCapability
+      const requestedMode = requestedImageCapability
         ? requestedImageCapability === 'edit' ? 'edit' : 'generate'
         : call.function?.name === 'image_edit' ? 'edit' : 'generate';
       if (latestRefs.some((reference: { kind?: string }) => reference.kind === 'video')) {
@@ -130,30 +141,50 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
       // Model selection is controlled by the client/system settings. Never let
       // the language model override the configured default through tool args.
       const requestedImageModelId = requestedAgentImageModelId;
-      const requiredImageCapability = requestedImageCapability || (mode === 'edit' ? 'edit' : 'generate');
-      const operation = requiredImageCapability === 'reference' ? 'reference-generate' : mode;
-      const explicitlyRequestedImageModel = requestedImageModelId !== 'auto';
-      // The server-side intent decides the capability. Do not let a model
-      // emit an edit tool name and bypass the configured generation model.
-      let imageRuntime = requiredImageCapability === 'generate'
-        ? await getRuntimeImageGenerationModel(requestedImageModelId)
-        : await getRuntimeImageModelForCapability(requestedImageModelId, requiredImageCapability);
-      if (explicitlyRequestedImageModel && (!imageRuntime || imageRuntime.model.id !== requestedImageModelId)) {
-        const error = '本轮选择的生图模型当前不可用，请重新选择或改用自动选择。';
-        results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error }) });
-        return { results };
+      const requestedCapability = requestedImageCapability || (requestedMode === 'edit' ? 'edit' : 'generate');
+      const imageReferences = latestRefs.flatMap((reference) =>
+        reference.kind === 'image' && typeof reference.url === 'string' ? [reference.url] : []);
+      const hasImageReferences = imageReferences.length > 0;
+      // An edit cannot be performed without source pixels. Keep the task moving
+      // with a clearly labeled text-to-image result instead of returning a
+      // tool error or pretending the original image was edited.
+      const requiredImageCapability = requestedCapability !== 'generate' && !hasImageReferences
+        ? 'generate'
+        : requestedCapability;
+      const requestedOperation = requestedCapability === 'reference'
+        ? 'reference-generate'
+        : requestedCapability;
+      const strategyCapabilities: Array<'edit' | 'reference' | 'generate'> = requiredImageCapability === 'edit'
+        ? ['edit', 'reference', 'generate']
+        : requiredImageCapability === 'reference' ? ['reference', 'generate'] : ['generate'];
+      let imageRuntime: ImageModelCandidate | null = null;
+      for (const capability of strategyCapabilities) {
+        const runtime = capability === 'generate'
+          ? await getRuntimeImageGenerationModel(requestedImageModelId)
+          : await getRuntimeImageModelForCapability(requestedImageModelId, capability);
+        if (runtime) {
+          imageRuntime = { ...runtime, operation: imageOperationForCapability(capability) };
+          break;
+        }
+        if (requestedImageModelId !== 'auto') {
+          const automatic = capability === 'generate'
+            ? await getRuntimeImageGenerationModel('auto')
+            : await getRuntimeImageModelForCapability('auto', capability);
+          if (automatic) {
+            imageRuntime = { ...automatic, operation: imageOperationForCapability(capability) };
+            break;
+          }
+        }
       }
       if (!imageRuntime) {
-        const diagnosis = requiredImageCapability === 'reference'
-          ? '没有可用的参考图生图模型：请在模型库启用并发布至少一个声明 reference 能力的图片模型。'
-          : requiredImageCapability === 'edit'
-            ? '没有可用的改图模型：请在模型库启用并发布至少一个支持 edit 的图片模型；文生图模型不能代替改图模型。'
-            : '没有可用的生图模型：请在模型库启用并发布至少一个支持 generate 的图片模型；对话模型不能代替生图模型。';
-        await appendGenerationLog({ status: 'error', mode, operation, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
+        const diagnosis = '当前模型库没有可用的图片生成或图片处理模型。请检查图片模型是否已启用、已发布，所属服务商是否可用。';
+        await appendGenerationLog({ status: 'error', mode: requestedMode, operation: requiredImageCapability, source: sourceForLog, prompt, aspectRatio, count, durationMs: Date.now() - startedAt, error: '没有可用的图片模型', ...taskContext }).catch(() => undefined);
         results.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ ok: false, error: diagnosis, diagnosis }) });
         return { results };
       }
-      let selectedImageRuntime = imageRuntime;
+      let operation: ImageModelOperation = imageRuntime.operation;
+      let mode: 'generate' | 'edit' = operation === 'edit' ? 'edit' : 'generate';
+      let selectedImageRuntime: ImageModelCandidate = imageRuntime;
       const mediaLogId = await startGenerationLog({
         mode,
         operation,
@@ -168,8 +199,6 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
         ...taskContext,
       }).catch(() => null);
       try {
-        const imageReferences = latestRefs.filter((reference: { kind?: string; url?: string }) => reference.kind === 'image' && reference.url).map((reference: { kind?: string; url?: string }) => reference.url!);
-        if (requiredImageCapability !== 'generate' && !imageReferences.length) throw new Error('请先提供图片参考');
         const images: RuntimeImage[] = [];
         const batchId = effectiveRequestedPrompts.length > 1 ? `agent-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined;
         const initialRuntime = imageRuntime;
@@ -181,21 +210,41 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
           try {
             const itemImages = await invokeMediaModelCandidates(
               initialRuntime,
-              async () => getRuntimeImageModelCandidates(requestedAgentImageModelId || 'auto', requiredImageCapability),
+              async () => {
+                const fallbacks: ImageModelCandidate[] = [];
+                const seen = new Set<string>([imageCandidateKey(initialRuntime)]);
+                for (const capability of strategyCapabilities) {
+                  const candidates = await getRuntimeImageModelCandidates(requestedAgentImageModelId || 'auto', capability);
+                  for (const candidate of candidates) {
+                    if (candidate.model.capabilities && !candidate.model.capabilities.includes(capability)) continue;
+                    const planned = { ...candidate, operation: imageOperationForCapability(capability) };
+                    const key = imageCandidateKey(planned);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    fallbacks.push(planned);
+                  }
+                }
+                return fallbacks;
+              },
               async (candidate: typeof initialRuntime) => {
                 itemRuntime = candidate;
-                const candidateImages = mode === 'edit'
+                const candidateImages = candidate.operation === 'edit'
                   ? editImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences, fidelity: 'high' }, requestController.signal)
-                  : requiredImageCapability === 'reference'
+                  : candidate.operation === 'reference-generate'
                     ? generateImageWithReferences(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal)
-                    : generateImage(candidate.provider, candidate.model.rawId, { prompt: itemPrompt, aspectRatio, count, references: imageReferences }, requestController.signal);
+                    : generateImage(candidate.provider, candidate.model.rawId, {
+                      prompt: itemPrompt,
+                      aspectRatio,
+                      count,
+                      references: requestedCapability === 'generate' ? imageReferences : [],
+                    }, requestController.signal);
                 const images = await candidateImages;
                 if (!images.length) {
                   throw Object.assign(new Error('图片模型没有返回可交付图片'), { mediaModelNoOutput: true });
                 }
                 return images;
               },
-              { allowFallbackBeforeProviderSubmission: true },
+              { allowFallbackBeforeProviderSubmission: true, candidateKey: imageCandidateKey },
             );
             void observer?.emit({ operationId: providerOperationId, kind: 'provider', phase: 'completed', at: Date.now(), durationMs: Date.now() - providerStartedAt, status: 'completed', identity: String((itemRuntime.provider as { name?: unknown }).name || 'image') });
             return itemImages.map((image: RuntimeImage) => ({
@@ -263,7 +312,24 @@ export async function executeImageCapability(input: ImageCapabilityInput): Promi
             ? `图片服务未返回可交付结果：${details}`
             : '图片服务没有返回图片，本轮未生成成功');
         }
-        selectedImageRuntime = images.find((image) => image.itemRuntime)?.itemRuntime || initialRuntime;
+        const successfulRuntime = images.find((image) => image.itemRuntime)?.itemRuntime;
+        if (successfulRuntime) {
+          selectedImageRuntime = successfulRuntime as ImageModelCandidate;
+          operation = selectedImageRuntime.operation;
+          mode = operation === 'edit' ? 'edit' : 'generate';
+        }
+        if (skipCaption) {
+          const usedRequestedOperation = operation === requestedOperation;
+          preparedCaption = Promise.resolve(usedRequestedOperation
+            ? '图片已按当前请求生成。'
+            : operation === 'reference-generate'
+              ? '已自动切换到参考图生成模型，基于所选图片生成了新图。'
+              : operation === 'generate'
+                ? !hasImageReferences && requestedOperation === 'edit'
+                  ? '本轮没有可用的原图素材，已按描述生成新图；该结果不是对原图的直接编辑。'
+                  : '当前没有可用的图片编辑接口，已自动切换到生图模型生成新图；该结果不是对原图的直接编辑。'
+                : '已自动切换到兼容的图片模型完成处理。');
+        }
         if (requestController.signal.aborted && !images.length) throw requestController.signal.reason || new Error('AGENT_CANCELLED');
         const providerFinishedAt = Date.now();
         const stored = await persistGenerationResult({

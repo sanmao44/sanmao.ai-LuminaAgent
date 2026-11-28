@@ -119,10 +119,26 @@ test('group downloads include ready media and skip unsupported group members', (
   ]);
 });
 
+test('selected video downloads include only ready selected videos in selection order', () => {
+  const nodes = [
+    { id: 'image', type: 'media', data: { kind: 'image', name: 'still.png', url: '/still.png' } },
+    { id: 'first', type: 'media', data: { kind: 'video', name: 'first.mp4', url: '/first.mp4' } },
+    { id: 'running', type: 'media', data: { kind: 'video', name: 'pending.mp4', url: '/pending.mp4', status: 'running' } },
+    { id: 'second', type: 'media', data: { kind: 'video', name: 'second.webm', url: '/second.webm' } },
+  ];
+  assert.deepEqual(
+    download.selectedCanvasVideoDownloadItems(nodes, new Set(['second', 'image', 'running', 'first'])),
+    [
+      { id: 'second', name: 'second.webm', url: '/second.webm', kind: 'video' },
+      { id: 'first', name: 'first.mp4', url: '/first.mp4', kind: 'video' },
+    ],
+  );
+});
+
 test('group media archives include video bytes with the MIME-derived extension', async () => {
   const result = await download.createCanvasMediaZip([
     { id: 'image', kind: 'image', name: 'photo.png', url: 'image' },
-    { id: 'video', kind: 'video', name: 'clip.png', url: 'video' },
+    { id: 'video', kind: 'video', name: 'clip.mp4', url: 'video' },
   ], async (url) => new Response(new Uint8Array([url === 'video' ? 2 : 1]), {
     headers: { 'content-type': url === 'video' ? 'video/webm' : 'image/png' },
   }));

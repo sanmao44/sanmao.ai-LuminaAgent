@@ -69,7 +69,21 @@ export function orderCanvasImageItems(
     .filter((item): item is CanvasImageDownloadItem => Boolean(item));
 }
 
-function safeStem(name: string | undefined) {
+export function selectedCanvasVideoDownloadItems(
+  nodes: CanvasGroupDownloadNode[],
+  selectedIds: Iterable<string>,
+): CanvasMediaDownloadItem[] {
+  const videos = canvasGroupDownloadItems(nodes).filter((item) => item.kind === "video");
+  const byId = new Map(videos.map((item) => [item.id, item]));
+  return [...selectedIds]
+    .map((id) => byId.get(id))
+    .filter((item): item is CanvasMediaDownloadItem => Boolean(item));
+}
+
+function safeStem(name: string | undefined, kind: CanvasMediaDownloadItem["kind"]) {
+  const mediaExtension = kind === "video"
+    ? /\.(?:m4v|mov|mp4|ogv|webm)$/i
+    : /\.(?:avif|gif|jpe?g|png|svg|webp)$/i;
   const normalized = String(name || "SANMAO素材")
     .trim()
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
@@ -77,7 +91,7 @@ function safeStem(name: string | undefined) {
     .replace(/[. ]+$/g, "")
     .slice(0, 96)
     .trim();
-  return (normalized || "SANMAO素材").replace(/\.(?:avif|gif|jpe?g|png|svg|webp)$/i, "");
+  return (normalized || "SANMAO素材").replace(mediaExtension, "");
 }
 
 function imageExtension(item: CanvasImageDownloadItem, contentType: string) {
@@ -112,7 +126,7 @@ function mediaExtension(item: CanvasMediaDownloadItem, contentType: string) {
 function uniqueFileName(item: CanvasMediaDownloadItem, index: number, total: number, contentType: string, used: Set<string>) {
   const prefix = String(index + 1).padStart(Math.max(2, String(total).length), "0");
   const extension = mediaExtension(item, contentType);
-  const stem = safeStem(item.name);
+  const stem = safeStem(item.name, item.kind);
   const base = `${prefix}-${stem}`;
   let fileName = `${base}.${extension}`;
   let suffix = 2;

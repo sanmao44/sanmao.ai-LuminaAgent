@@ -5,7 +5,7 @@ export type GeneratedFile = { name: string; size: number; [key: string]: unknown
 export type ToolCall = { id?: string; function?: { name?: string; arguments?: string } };
 export type RuntimeImage = {
   provider: unknown;
-  model: { id: string; rawId: string; displayName: string };
+  model: { id: string; rawId: string; displayName: string; capabilities?: readonly string[] };
   itemRuntime?: RuntimeImage;
   batchIndex?: number;
   batchPrompt?: string;

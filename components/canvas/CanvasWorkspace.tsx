@@ -214,6 +214,7 @@ import {
   canvasGroupDownloadItems,
   createCanvasMediaZip,
   orderCanvasImageItems,
+  selectedCanvasVideoDownloadItems,
   type CanvasMediaDownloadItem,
 } from "@/lib/canvas/download";
 import { recordCanvasImages } from "@/lib/creation/history";
@@ -1383,6 +1384,10 @@ export default function SuperCanvas() {
           })),
         selectedIds,
       ),
+    [document.nodes, selectedIds],
+  );
+  const selectedVideoDownloads = useMemo(
+    () => selectedCanvasVideoDownloadItems(document.nodes, selectedIds),
     [document.nodes, selectedIds],
   );
   const selectedSingle = selectedNodes.length === 1 ? selectedNodes[0] : null;
@@ -14843,6 +14848,7 @@ export default function SuperCanvas() {
           <CanvasSelectionToolbar
             selectedCount={selectedNodes.length}
             selectedImageCount={selectedImageDownloads.length}
+            selectedVideoCount={selectedVideoDownloads.length}
             batchDownloading={batchDownloading}
             agentBusy={agentDockBusy}
             alignmentOptions={CANVAS_ALIGNMENT_OPTIONS}
@@ -14850,6 +14856,7 @@ export default function SuperCanvas() {
             onAskAgent={askAgentAboutSelection}
             onMakeGroup={makeGroup}
             onDownloadSelectedImages={() => void downloadSelectedImages()}
+            onDownloadSelectedVideos={() => void downloadSelectedImages(selectedVideoDownloads)}
             onArrange={() => arrangeCanvasAction()}
             onDuplicate={duplicateSelection}
             onFit={() => fitView([...selectedIds])}

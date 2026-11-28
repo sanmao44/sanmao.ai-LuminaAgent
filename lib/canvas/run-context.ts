@@ -49,7 +49,9 @@ export function canvasAgentImageCorrectionIntent(instruction: string, hasImageCo
   if (!text || /(?:为什么|怎么|如何|能不能|是否|请问|解释|分析|讨论|评价|原因)|[?？]/i.test(text)) return false;
   const imageFeedback = /(?:图片|图像|画面|照片|结果).{0,12}(?:不对|不满意|不合适|不符合|不像|偏离|没按|未按)/i.test(text);
   const correctionDirection = /(?:我)?(?:要|想要|希望)(?:的)?是.{1,120}|(?:改成|换成|调整成|更(?:写实|真实|自然|清晰|明亮|暗|电影感))/i.test(text);
-  return imageFeedback && correctionDirection;
+  const directVisualAdjustment = /(?:身材|体型|比例|人物|角色|模特|主体|背景|构图|色调|颜色|光线|服装|姿势|动作).{0,24}(?:太.{1,10}(?:了)?|更|高挑|修长|苗条|丰满|健美|大胆|自然|一点|一些)/i.test(text)
+    || /让.{1,24}(?:身材|体型|人物|角色|模特|主体).{0,16}(?:更|高挑|修长|苗条|丰满|健美|大胆|自然|一点|一些)/i.test(text);
+  return (imageFeedback && correctionDirection) || isImageEditRequest(text) || directVisualAdjustment;
 }
 
 /** Only send visually framed requests to the Canvas-specific intent reviewer. */
@@ -95,7 +97,9 @@ export function canvasAgentTargetOperation(instruction: string, kind: CanvasAgen
   const text = String(instruction || "").replace(/\s+/g, " ").trim();
   if (!text) return "none";
   if (kind === "text" && /(?:修改|改写|改一下|改成|换成|替换|重写|润色|优化|扩写|缩写|精简|调整一下|翻译|更新内容)/.test(text)) return "edit";
-  if (kind === "image" && (isImageEditRequest(text) || /(?:局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/.test(text))) return "edit";
+  if (kind === "image" && (isImageEditRequest(text)
+    || /(?:局部编辑|扩图|抠图|继续修改|再来一版|调整一下)/.test(text)
+    || canvasAgentImageCorrectionIntent(text, true))) return "edit";
 
   const route = resolveCreativeRoute(text, { hasReferences: ["image", "video", "mixed"].includes(kind) });
   if (route.lane !== "image" || route.execution !== "run") return "none";

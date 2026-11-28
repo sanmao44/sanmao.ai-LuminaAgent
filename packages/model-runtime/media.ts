@@ -36,9 +36,10 @@ export function invokeMediaModelCandidates<T extends { model: { id: string } }, 
   initial: T,
   loadFallbacks: () => Promise<readonly T[]>,
   operation: (runtime: T) => Promise<R>,
-  options: { allowFallbackBeforeProviderSubmission?: boolean } = {},
+  options: { allowFallbackBeforeProviderSubmission?: boolean; candidateKey?: (runtime: T) => string } = {},
 ): Promise<R> {
   return invokeModelCandidates(initial, loadFallbacks, operation, (error) =>
     isSafeMediaModelFallbackError(error)
-    || (options.allowFallbackBeforeProviderSubmission === true && isSafeMediaInputFallbackError(error)));
+    || (options.allowFallbackBeforeProviderSubmission === true && isSafeMediaInputFallbackError(error)),
+  options.candidateKey);
 }

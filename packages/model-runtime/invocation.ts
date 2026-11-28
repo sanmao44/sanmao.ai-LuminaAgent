@@ -159,6 +159,7 @@ export async function invokeModelCandidates<T extends { model: { id: string } },
   loadFallbacks: () => Promise<readonly T[]>,
   operation: (runtime: T) => Promise<R>,
   isFallbackSafe: (error: unknown) => boolean,
+  candidateKey: (runtime: T) => string = (runtime) => runtime.model.id,
 ): Promise<R> {
   const candidates: T[] = [initial];
   let fallbacksLoaded = false;
@@ -172,7 +173,13 @@ export async function invokeModelCandidates<T extends { model: { id: string } },
       fallbacksLoaded = true;
       let fallbacks: readonly T[];
       try { fallbacks = await loadFallbacks(); } catch { throw error; }
-      candidates.push(...fallbacks.filter((candidate) => candidate.model.id !== initial.model.id));
+      const existingKeys = new Set(candidates.map(candidateKey));
+      for (const candidate of fallbacks) {
+        const key = candidateKey(candidate);
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        candidates.push(candidate);
+      }
       if (index >= candidates.length - 1) throw error;
     }
   }
